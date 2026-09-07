@@ -1,0 +1,14 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "icons",
+                "permission": {
+                    "rw": [
+                        "put-port-on-desktop"
+                    ]
+                }
+            }
+        ]
+    }
+}

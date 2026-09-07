@@ -1,0 +1,18 @@
+[
+  {
+    "stepTitle": "基础配置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "把端口放到桌面 (put-port-on-desktop) 将监控本机端口并允许您一键将服务映射为飞牛桌面图标。"
+      },
+      {
+        "type": "number",
+        "field": "PORT",
+        "label": "Web 服务端口",
+        "initValue": 5900,
+        "helpText": "管理控制台访问端口，默认 5900"
+      }
+    ]
+  }
+]

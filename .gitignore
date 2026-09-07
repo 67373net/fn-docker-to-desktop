@@ -2,6 +2,8 @@
 put-port-on-desktop
 *.exe
 *.test
+*.fpk
+/fnos-app/app/put-port-on-desktop
 
 # Persistent data
 data/*

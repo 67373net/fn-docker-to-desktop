@@ -1,0 +1,17 @@
+appname         = put-port-on-desktop
+version         = 1.0.0
+display_name    = 把端口放到桌面
+desc            = <b>把端口放到桌面 (put-port-on-desktop)</b><br><br>监控本机端口使用情况与系统资源，将本机现有端口、局域网或广域网服务直接代理并放置在飞牛OS桌面，或生成网页快捷方式。<br><br><b>功能特性</b>：<br>• 本机端口与系统资源实时监控（流式分析内核套接字与进程）<br>• 本机端口一键放到飞牛桌面，自动注册为原生应用<br>• 局域网/广域网服务反向代理并放到桌面（支持连通测试与忽略自签证书）<br>• 网页纯快捷方式图标放置<br>• 支持自定义自身打开方式（飞牛内部弹窗/新标签页）与可见权限（仅管理员/所有用户）<br><br>运行于 Root 权限 | 开源项目
+arch            = x86_64
+platform        = x86
+source          = thirdparty
+maintainer      = 67373net
+maintainer_url  = https://github.com/67373net/put-port-on-desktop
+distributor     = 67373net
+distributor_url = https://github.com/67373net/put-port-on-desktop
+desktop_uidir         = ui
+desktop_applaunchname = put-port-on-desktop.dashboard
+
+ctl_stop     = true
+checkport    = false
+install_type = root
