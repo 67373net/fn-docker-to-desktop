@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>把端口放到桌面 - put-port-on-desktop</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header">
+    <div class="header-brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+        <line x1="8" y1="21" x2="16" y2="21"></line>
+        <line x1="12" y1="17" x2="12" y2="21"></line>
+        <polyline points="10 9 12 7 14 9"></polyline>
+        <line x1="12" y1="7" x2="12" y2="13"></line>
+      </svg>
+      <div class="brand-text">
+        <h1 class="brand-title">把端口放到桌面</h1>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="header-nav">
+      <button class="nav-tab active" data-tab="ports">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span>本机端口</span>
+        <span class="badge" id="port-count-badge">0</span>
+      </button>
+      <button class="nav-tab" data-tab="desktop">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        <span>桌面图标</span>
+        <span class="badge" id="desktop-count-badge">0</span>
+      </button>
+      <button class="nav-tab" data-tab="processes">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+        <span>系统进程</span>
+      </button>
+      <button class="nav-tab" data-tab="system">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+        <span>系统概览</span>
+      </button>
+      <button class="nav-tab" data-tab="settings">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <!-- Header Stats Quick View -->
+    <div class="header-stats">
+      <div class="stat-pill" title="CPU 使用率">
+        <span class="stat-label">CPU</span>
+        <span class="stat-value" id="top-cpu">0%</span>
+      </div>
+      <div class="stat-pill" title="内存使用率">
+        <span class="stat-label">内存</span>
+        <span class="stat-value" id="top-mem">0%</span>
+      </div>
+      <button class="btn btn-icon btn-secondary" id="btn-refresh-manual" title="刷新数据">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container (100% Width) -->
+  <main class="app-main">
+    <!-- ==================== TAB 1: 本机端口 ==================== -->
+    <section class="tab-pane active" id="pane-ports">
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="port-search" placeholder="搜索端口号、进程、Docker 容器...">
+        </div>
+        <div class="filter-chips">
+          <button class="chip active" data-filter="all">全部</button>
+          <button class="chip" data-filter="docker">Docker 容器</button>
+          <button class="chip" data-filter="host">宿主原生</button>
+          <button class="chip" data-filter="listen">监听中</button>
+          <button class="chip" data-filter="tcp">TCP</button>
+          <button class="chip" data-filter="udp">UDP</button>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <button class="btn btn-primary" id="btn-quick-add-desktop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>添加桌面图标</span>
+        </button>
+      </div>
+
+      <!-- Table Container -->
+      <div class="table-container">
+        <table class="data-table" id="ports-table">
+          <thead>
+            <tr>
+              <th style="width: 140px;">端口</th>
+              <th style="width: 100px;">协议</th>
+              <th style="width: 180px;">监听地址</th>
+              <th style="width: 240px;">进程 / 容器</th>
+              <th style="width: 140px;">资源消耗</th>
+              <th style="width: 140px;">桌面状态</th>
+              <th style="width: 160px;">操作</th>
+              <th class="filler-col"></th>
+            </tr>
+          </thead>
+          <tbody id="ports-tbody">
+            <tr><td colspan="8" class="empty-state">正在加载端口数据...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: 桌面图标 ==================== -->
+    <section class="tab-pane" id="pane-desktop">
+      <div class="toolbar">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="desktop-search" placeholder="搜索已创建的桌面图标...">
+        </div>
+        <div class="toolbar-spacer"></div>
+        <button class="btn btn-primary" id="btn-open-create-modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>添加桌面图标</span>
+        </button>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table" id="desktop-table">
+          <thead>
+            <tr>
+              <th style="width: 80px;">图标</th>
+              <th style="width: 200px;">名称</th>
+              <th style="width: 130px;">类型</th>
+              <th style="width: 260px;">目标 / 映射端口</th>
+              <th style="width: 120px;">打开方式</th>
+              <th style="width: 120px;">访问权限</th>
+              <th style="width: 120px;">运行状态</th>
+              <th style="width: 200px;">操作</th>
+              <th class="filler-col"></th>
+            </tr>
+          </thead>
+          <tbody id="desktop-tbody">
+            <tr><td colspan="9" class="empty-state">暂无已创建的桌面图标</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: 系统进程 ==================== -->
+    <section class="tab-pane" id="pane-processes">
+      <div class="toolbar">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="proc-search" placeholder="搜索进程名称、PID、用户...">
+        </div>
+        <div class="filter-chips">
+          <button class="chip active" data-proc-sort="cpu">按 CPU 排序</button>
+          <button class="chip" data-proc-sort="mem">按 内存 排序</button>
+          <button class="chip" data-proc-sort="pid">按 PID 排序</button>
+        </div>
+        <div class="toolbar-spacer"></div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table" id="proc-table">
+          <thead>
+            <tr>
+              <th style="width: 100px;">PID</th>
+              <th style="width: 220px;">进程名称</th>
+              <th style="width: 120px;">用户</th>
+              <th style="width: 110px;">状态</th>
+              <th style="width: 120px;">CPU</th>
+              <th style="width: 130px;">物理内存 (RSS)</th>
+              <th style="width: 150px;">磁盘 I/O</th>
+              <th style="width: 180px;">所属容器</th>
+              <th class="filler-col"></th>
+            </tr>
+          </thead>
+          <tbody id="proc-tbody">
+            <tr><td colspan="9" class="empty-state">正在加载进程数据...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: 系统概览 ==================== -->
+    <section class="tab-pane" id="pane-system">
+      <div class="system-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">CPU 使用率</span>
+            <span class="metric-value" id="card-cpu">0%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="fill-cpu" style="width: 0%;"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">物理内存</span>
+            <span class="metric-value" id="card-mem">0 / 0 GB (0%)</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="fill-mem" style="width: 0%;"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">磁盘空间</span>
+            <span class="metric-value" id="card-disk">0 / 0 GB (0%)</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="fill-disk" style="width: 0%;"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">网络吞吐</span>
+            <span class="metric-value" id="card-net">↓ 0 KB/s  ↑ 0 KB/s</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="fill-net" style="width: 15%;"></div></div>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <h3 class="section-title">宿主机信息</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 180px;">主机名称</th>
+                <th style="width: 180px;">操作系统</th>
+                <th style="width: 180px;">内核版本</th>
+                <th style="width: 120px;">架构</th>
+                <th style="width: 160px;">主 IPv4 地址</th>
+                <th style="width: 160px;">运行时间</th>
+                <th class="filler-col"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td id="host-name">-</td>
+                <td id="host-os">-</td>
+                <td id="host-kernel">-</td>
+                <td id="host-arch">-</td>
+                <td id="host-ip">-</td>
+                <td id="host-uptime">-</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <h3 class="section-title">网络接口</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 140px;">网卡名称</th>
+                <th style="width: 140px;">类型</th>
+                <th style="width: 180px;">MAC 地址</th>
+                <th style="width: 220px;">IPv4 地址</th>
+                <th style="width: 120px;">状态</th>
+                <th class="filler-col"></th>
+              </tr>
+            </thead>
+            <tbody id="iface-tbody">
+              <tr><td colspan="6" class="empty-state">正在获取网络接口...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 5: 设置 ==================== -->
+    <section class="tab-pane" id="pane-settings">
+      <div class="settings-container">
+        <div class="settings-card">
+          <h3 class="settings-card-title">把端口放到桌面 - 自身桌面图标设置</h3>
+          
+          <div class="form-group">
+            <label class="form-label">飞牛桌面显示名称</label>
+            <input type="text" id="setting-portal-name" class="form-input" value="把端口放到桌面">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">飞牛桌面打开方式</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="setting-portal-ui-type" value="iframe">
+                <span>飞牛内部弹窗 (iframe 窗口)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="setting-portal-ui-type" value="url">
+                <span>浏览器新标签页 (url)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">飞牛桌面可见权限</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="setting-portal-all-users" value="false">
+                <span>仅管理员可见</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="setting-portal-all-users" value="true">
+                <span>所有用户可见</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">管理面板服务端口</label>
+            <input type="number" id="setting-portal-port" class="form-input" value="5900">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">访问保护密码 (可选，留空则免密)</label>
+            <input type="password" id="setting-portal-password" class="form-input" placeholder="留空保持不变或不设置密码">
+          </div>
+
+          <div class="form-actions">
+            <button class="btn btn-primary" id="btn-save-settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span>保存并应用到飞牛桌面</span>
+            </button>
+            <span class="save-status" id="settings-save-status"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- Modal: 添加 / 编辑 桌面图标 -->
+  <div class="modal-overlay" id="modal-desktop-item">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="desktop-modal-title">添加桌面图标</h3>
+        <button class="btn btn-icon btn-secondary modal-close" data-close="modal-desktop-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- Mode Tabs -->
+        <div class="mode-selector">
+          <button class="mode-tab active" data-mode="local">本机现有端口</button>
+          <button class="mode-tab" data-mode="proxy">代理服务到本机</button>
+          <button class="mode-tab" data-mode="shortcut">网页快捷方式</button>
+        </div>
+
+        <form id="form-desktop-item">
+          <input type="hidden" id="item-id">
+          <input type="hidden" id="item-mode" value="local">
+
+          <div class="form-group">
+            <label class="form-label">显示名称</label>
+            <input type="text" id="item-name" class="form-input" placeholder="例如：我的服务" required>
+          </div>
+
+          <!-- Section for Local Port -->
+          <div class="mode-field-group" id="fields-local">
+            <div class="form-group">
+              <label class="form-label">本机端口</label>
+              <input type="number" id="item-local-port" class="form-input" placeholder="例如：8080">
+            </div>
+          </div>
+
+          <!-- Section for Proxy -->
+          <div class="mode-field-group" id="fields-proxy" style="display: none;">
+            <div class="form-group">
+              <label class="form-label">局域网/广域网目标地址</label>
+              <div class="input-with-action">
+                <input type="text" id="item-target-url" class="form-input" placeholder="例如：https://192.168.1.100:8006">
+                <button type="button" class="btn btn-secondary" id="btn-test-target">测试连通</button>
+              </div>
+              <div class="test-result" id="test-target-result"></div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">本机代理监听端口</label>
+                <div class="input-with-action">
+                  <input type="number" id="item-proxy-port" class="form-input" placeholder="例如：18006">
+                  <button type="button" class="btn btn-secondary" id="btn-recommend-port">推荐端口</button>
+                </div>
+              </div>
+              <div class="form-group flex-1">
+                <label class="form-label">安全设置</label>
+                <label class="checkbox-label" style="margin-top: 8px;">
+                  <input type="checkbox" id="item-skip-tls">
+                  <span>忽略自签名证书验证 (如 PVE)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section for Shortcut -->
+          <div class="mode-field-group" id="fields-shortcut" style="display: none;">
+            <div class="form-group">
+              <label class="form-label">目标网址</label>
+              <input type="text" id="item-shortcut-url" class="form-input" placeholder="例如：https://github.com">
+            </div>
+          </div>
+
+          <!-- Common Settings -->
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">协议</label>
+              <select id="item-protocol" class="form-select">
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">访问路径</label>
+              <input type="text" id="item-path" class="form-input" value="/" placeholder="/">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">飞牛打开方式</label>
+              <select id="item-ui-type" class="form-select">
+                <option value="url">浏览器新标签页 (url)</option>
+                <option value="iframe">飞牛内部弹窗 (iframe)</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">访问可见权限</label>
+              <select id="item-all-users" class="form-select">
+                <option value="false">仅管理员可见</option>
+                <option value="true">所有用户可见</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">图标文件名或图片URL</label>
+            <div class="input-with-action">
+              <input type="text" id="item-icon" class="form-input" placeholder="留空使用默认图标，或输入图片链接">
+              <label class="btn btn-secondary file-upload-btn">
+                <span>上传本地图标</span>
+                <input type="file" id="icon-file-input" accept=".png,.jpg,.jpeg,.webp,.svg,.ico" style="display: none;">
+              </label>
+            </div>
+            <div class="icon-preview-box" id="icon-preview-box">
+              <img id="icon-preview-img" src="icon.png" alt="图标预览">
+              <span id="icon-preview-name">默认图标</span>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary modal-close" data-close="modal-desktop-item">取消</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-desktop-item">保存并放到桌面</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 端口详情弹窗 -->
+  <div class="modal-overlay" id="modal-port-detail">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="port-detail-title">端口详情</h3>
+        <button class="btn btn-icon btn-secondary modal-close" data-close="modal-port-detail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="port-detail-body">
+        <!-- Filled dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: 密码验证弹窗 (if AUTH_PASSWORD is active) -->
+  <div class="modal-overlay" id="modal-auth">
+    <div class="modal-dialog modal-dialog-sm">
+      <div class="modal-header">
+        <h3 class="modal-title">身份验证</h3>
+      </div>
+      <div class="modal-body">
+        <form id="form-auth">
+          <div class="form-group">
+            <label class="form-label">请输入访问密码</label>
+            <input type="password" id="auth-password" class="form-input" required autofocus>
+          </div>
+          <div class="modal-footer">
+            <button type="submit" class="btn btn-primary" style="width: 100%;">解锁进入</button>
+          </div>
+          <div class="test-result" id="auth-error-msg" style="margin-top: 8px;"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

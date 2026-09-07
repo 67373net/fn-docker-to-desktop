@@ -1,0 +1,20 @@
+# Build output
+put-port-on-desktop
+*.exe
+*.test
+
+# Persistent data
+data/*
+!data/.gitkeep
+!data/icons
+!data/icons/.gitkeep
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+*.swp
+*.log
