@@ -46,7 +46,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		PortalPort:     5900,
 		PortalName:     "把Docker放到桌面",
-		PortalUIType:   "iframe",
+		PortalUIType:   "url",
 		PortalAllUsers: false, // Default admin only
 		PortalIcon:     "icon.png",
 		AuthPassword:   "",

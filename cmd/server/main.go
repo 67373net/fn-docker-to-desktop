@@ -64,15 +64,12 @@ func main() {
 	authMgr := auth.NewManager(authPassword)
 
 	// Determine server port
-	explicitPort := false
 	port := 5900
 	if *portFlag > 0 {
 		port = *portFlag
-		explicitPort = true
 	} else if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil && p > 0 {
 			port = p
-			explicitPort = true
 		}
 	} else if settings.PortalPort > 0 {
 		port = settings.PortalPort
@@ -103,14 +100,21 @@ func main() {
 		}
 	}
 
-	if err != nil && !explicitPort {
-		slog.Warn("默认端口已被占用，正在寻找可用端口...", "port", port, "error", err)
-		port = proxy.RecommendAvailablePort(5910, nil)
-		addr = fmt.Sprintf("%s:%d", host, port)
-		ln, err = net.Listen("tcp", addr)
+	if err != nil {
+		slog.Warn("目标端口已被占用或无法绑定，正在寻找可用替代端口...", "requestedPort", port, "address", addr, "error", err)
+		altPort := proxy.RecommendAvailablePort(5950, nil)
+		altAddr := fmt.Sprintf("%s:%d", host, altPort)
+		altLn, altErr := net.Listen("tcp", altAddr)
+		if altErr == nil {
+			slog.Info("已自动切换至可用端口运行", "originalPort", port, "newPort", altPort, "address", altAddr)
+			port = altPort
+			addr = altAddr
+			ln = altLn
+			err = nil
+		}
 	}
 	if err != nil {
-		slog.Error("无法监听端口，服务退出", "address", addr, "error", err)
+		slog.Error("无法监听任何端口，服务退出", "address", addr, "error", err)
 		os.Exit(1)
 	}
 
