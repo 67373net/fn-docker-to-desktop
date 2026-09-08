@@ -16,21 +16,23 @@ import (
 
 	"fn-docker-to-desktop/internal/auth"
 	"fn-docker-to-desktop/internal/desktop"
+	"fn-docker-to-desktop/internal/logger"
 	"fn-docker-to-desktop/internal/monitor"
 	"fn-docker-to-desktop/internal/proxy"
 )
 
 // Handler handles all HTTP API requests.
 type Handler struct {
-	storage      *desktop.Storage
-	installer    *desktop.Installer
-	proxyMgr     *proxy.Manager
-	watcher      *monitor.Watcher
-	systemSample *monitor.SystemSampler
-	authMgr      *auth.Manager
-	webFS        fs.FS
-	procPath     string
-	iconsDir     string
+	storage        *desktop.Storage
+	installer      *desktop.Installer
+	proxyMgr       *proxy.Manager
+	watcher        *monitor.Watcher
+	systemSample   *monitor.SystemSampler
+	authMgr        *auth.Manager
+	loggerInstance *logger.Logger
+	webFS          fs.FS
+	procPath       string
+	iconsDir       string
 }
 
 // Config holds configuration to instantiate API Handler.
@@ -41,6 +43,7 @@ type Config struct {
 	Watcher      *monitor.Watcher
 	SystemSample *monitor.SystemSampler
 	AuthMgr      *auth.Manager
+	Logger       *logger.Logger
 	WebFS        fs.FS
 	ProcPath     string
 	DataDir      string
@@ -52,15 +55,16 @@ func NewHandler(cfg Config) *Handler {
 	_ = os.MkdirAll(iconsDir, 0755)
 
 	return &Handler{
-		storage:      cfg.Storage,
-		installer:    cfg.Installer,
-		proxyMgr:     cfg.ProxyMgr,
-		watcher:      cfg.Watcher,
-		systemSample: cfg.SystemSample,
-		authMgr:      cfg.AuthMgr,
-		webFS:        cfg.WebFS,
-		procPath:     cfg.ProcPath,
-		iconsDir:     iconsDir,
+		storage:        cfg.Storage,
+		installer:      cfg.Installer,
+		proxyMgr:       cfg.ProxyMgr,
+		watcher:        cfg.Watcher,
+		systemSample:   cfg.SystemSample,
+		authMgr:        cfg.AuthMgr,
+		loggerInstance: cfg.Logger,
+		webFS:          cfg.WebFS,
+		procPath:       cfg.ProcPath,
+		iconsDir:       iconsDir,
 	}
 }
 
@@ -95,6 +99,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("POST /api/auth/login", h.handleAuthLogin)
 	mux.HandleFunc("POST /api/auth/logout", h.handleAuthLogout)
+
+	// Log routes (8 days retention)
+	mux.HandleFunc("GET /api/logs", h.handleGetLogs)
+	mux.HandleFunc("GET /api/logs/download", h.handleDownloadLogs)
 
 	// Static web assets
 	if h.webFS != nil {
@@ -676,4 +684,72 @@ func (h *Handler) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 	})
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
+}
+
+func (h *Handler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	date := r.URL.Query().Get("date")
+	level := r.URL.Query().Get("level")
+	search := r.URL.Query().Get("search")
+	limit := 1000
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+
+	logInst := h.loggerInstance
+	if logInst == nil {
+		logInst = logger.GetDefault()
+	}
+
+	if logInst == nil {
+		h.jsonResponse(w, r, map[string]string{"error": "日志系统未初始化"}, http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := logInst.ReadLogs(date, level, search, limit)
+	if err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "读取日志失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, r, resp, http.StatusOK)
+}
+
+func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	date := r.URL.Query().Get("date")
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	logInst := h.loggerInstance
+	if logInst == nil {
+		logInst = logger.GetDefault()
+	}
+
+	if logInst == nil {
+		http.Error(w, "日志系统未就绪", http.StatusInternalServerError)
+		return
+	}
+
+	filePath := logInst.GetLogFilePath(date)
+	fi, err := os.Stat(filePath)
+	if err != nil || fi.IsDir() {
+		http.Error(w, "未找到对应日期的日志文件", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"fn-docker-to-desktop-%s.log\"", date))
+	http.ServeFile(w, r, filePath)
 }

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+TRIM_PKGVAR="${TRIM_PKGVAR:-/var/apps/fn-docker-to-desktop/var}"
+TRIM_APPDEST="${TRIM_APPDEST:-/var/apps/fn-docker-to-desktop/target}"
+
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 
@@ -9,7 +12,8 @@ if [ -f "${TRIM_APPDEST}/app/fn-docker-to-desktop" ]; then
 fi
 
 log_msg() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
+    mkdir -p "${TRIM_PKGVAR}"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
 }
 
 start_process() {
@@ -19,8 +23,28 @@ start_process() {
 
     log_msg "Starting fn-docker-to-desktop..."
     mkdir -p "${TRIM_PKGVAR}/data"
-    bash -c "${CMD} -data ${TRIM_PKGVAR}/data -icon ${TRIM_APPDEST}/ICON_256.PNG" >> ${LOG_FILE} 2>&1 &
-    printf "%s" "$!" > ${PID_FILE}
+    mkdir -p "${TRIM_PKGVAR}/logs"
+
+    if [ ! -x "${CMD}" ]; then
+        chmod +x "${CMD}" 2>/dev/null || true
+    fi
+
+    ICON_ARG=""
+    if [ -f "${TRIM_APPDEST}/ICON_256.PNG" ]; then
+        ICON_ARG="-icon ${TRIM_APPDEST}/ICON_256.PNG"
+    elif [ -f "${TRIM_APPDEST}/ICON.PNG" ]; then
+        ICON_ARG="-icon ${TRIM_APPDEST}/ICON.PNG"
+    fi
+
+    PORT_ARG=""
+    if [ -n "${PORT}" ]; then
+        PORT_ARG="-port ${PORT}"
+    fi
+
+    "${CMD}" -data "${TRIM_PKGVAR}/data" ${ICON_ARG} ${PORT_ARG} >> "${LOG_FILE}" 2>&1 &
+    local pid=$!
+    printf "%s" "${pid}" > "${PID_FILE}"
+    log_msg "Started fn-docker-to-desktop with PID ${pid}"
     return 0
 }
 

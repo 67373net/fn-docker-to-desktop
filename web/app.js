@@ -14,6 +14,12 @@ let state = {
   procSort: 'cpu',
   eventSource: null,
   activeMode: 'local',
+  logDate: '',
+  logLevel: 'ALL',
+  logSearch: '',
+  logAutoRefresh: true,
+  logTimer: null,
+  logs: [],
 };
 
 // --- Utilities ---
@@ -75,8 +81,15 @@ function switchTab(tab) {
   } else if (tab === 'system') {
     fetchSystem();
     fetchHost();
+  } else if (tab === 'logs') {
+    fetchLogs();
+    startLogTimer();
   } else if (tab === 'settings') {
     fetchSettings();
+  }
+
+  if (tab !== 'logs') {
+    stopLogTimer();
   }
 }
 
@@ -1009,6 +1022,199 @@ function initApp() {
   fetchPorts();
   fetchDesktopItems();
   initEventSource();
+  initLogViewer();
+}
+
+// --- System Logs Viewer (8 Days Retention) ---
+function initLogViewer() {
+  const dateSelect = document.getElementById('log-date-select');
+  if (dateSelect) {
+    dateSelect.addEventListener('change', (e) => {
+      state.logDate = e.target.value;
+      fetchLogs();
+    });
+  }
+
+  document.querySelectorAll('#log-level-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#log-level-chips .chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.logLevel = chip.dataset.logLevel || 'ALL';
+      fetchLogs();
+    });
+  });
+
+  let searchTimeout = null;
+  const searchInput = document.getElementById('log-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        state.logSearch = e.target.value.trim();
+        fetchLogs();
+      }, 300);
+    });
+  }
+
+  const autoRefreshCb = document.getElementById('log-auto-refresh');
+  if (autoRefreshCb) {
+    autoRefreshCb.addEventListener('change', (e) => {
+      state.logAutoRefresh = e.target.checked;
+      if (state.logAutoRefresh && state.currentTab === 'logs') {
+        startLogTimer();
+      } else {
+        stopLogTimer();
+      }
+    });
+  }
+
+  const btnRefresh = document.getElementById('btn-refresh-logs');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => {
+      fetchLogs();
+    });
+  }
+
+  const btnDownload = document.getElementById('btn-download-logs');
+  if (btnDownload) {
+    btnDownload.addEventListener('click', () => {
+      downloadLogFile();
+    });
+  }
+
+  const btnScrollBottom = document.getElementById('btn-scroll-bottom');
+  if (btnScrollBottom) {
+    btnScrollBottom.addEventListener('click', () => {
+      scrollLogsToBottom();
+    });
+  }
+}
+
+function startLogTimer() {
+  stopLogTimer();
+  if (state.logAutoRefresh) {
+    state.logTimer = setInterval(() => {
+      if (state.currentTab === 'logs') {
+        fetchLogs(true);
+      }
+    }, 3000);
+  }
+}
+
+function stopLogTimer() {
+  if (state.logTimer) {
+    clearInterval(state.logTimer);
+    state.logTimer = null;
+  }
+}
+
+async function fetchLogs(isAutoPoll = false) {
+  try {
+    let url = `/api/logs?level=${encodeURIComponent(state.logLevel || 'ALL')}`;
+    if (state.logDate) {
+      url += `&date=${encodeURIComponent(state.logDate)}`;
+    }
+    if (state.logSearch) {
+      url += `&search=${encodeURIComponent(state.logSearch)}`;
+    }
+
+    const res = await fetch(url);
+    if (res.status === 401) return showAuthModal();
+    if (res.ok) {
+      const data = await res.json();
+      state.logs = data.lines || [];
+
+      updateDateDropdown(data.dates, data.current_date);
+
+      const pathEl = document.getElementById('log-path-display');
+      if (pathEl && data.log_path) {
+        pathEl.textContent = data.log_path;
+      }
+      const titleEl = document.getElementById('terminal-title');
+      if (titleEl && data.current_date) {
+        titleEl.textContent = `app-${data.current_date}.log (${formatBytes(data.file_size || 0)})`;
+      }
+      const totalEl = document.getElementById('log-total-count');
+      if (totalEl) {
+        totalEl.textContent = data.total_lines || 0;
+      }
+      const displayEl = document.getElementById('log-display-count');
+      if (displayEl) {
+        displayEl.textContent = state.logs.length;
+      }
+
+      renderLogs(isAutoPoll);
+    }
+  } catch (err) {
+    console.error('Fetch logs error:', err);
+  }
+}
+
+function updateDateDropdown(dates, currentDate) {
+  const select = document.getElementById('log-date-select');
+  if (!select || !dates || dates.length === 0) return;
+
+  const currentVal = state.logDate || select.value || currentDate;
+  const existingOptions = Array.from(select.options).map(o => o.value);
+  const isSame = dates.length === existingOptions.length && dates.every((d, i) => d === existingOptions[i]);
+
+  if (!isSame) {
+    select.innerHTML = '';
+    dates.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d;
+      opt.textContent = d;
+      if (d === currentVal) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+  } else if (currentVal && select.value !== currentVal) {
+    select.value = currentVal;
+  }
+}
+
+function renderLogs(isAutoPoll = false) {
+  const body = document.getElementById('terminal-log-body');
+  if (!body) return;
+
+  if (!state.logs || state.logs.length === 0) {
+    body.innerHTML = '<div class="log-empty-state">暂无日志记录</div>';
+    return;
+  }
+
+  const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+
+  const html = state.logs.map((entry, idx) => {
+    const lineNum = idx + 1;
+    const level = entry.level || 'INFO';
+    const badgeClass = `log-badge-${level.toLowerCase()}`;
+    return `<div class="log-line">
+      <span class="log-num">${lineNum}</span>
+      <span class="log-time">${escapeHtml(entry.timestamp || '')}</span>
+      <span class="log-badge ${badgeClass}">${escapeHtml(level)}</span>
+      <span class="log-text">${escapeHtml(entry.message || entry.raw)}</span>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = html;
+
+  if (!isAutoPoll || wasAtBottom) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+function scrollLogsToBottom() {
+  const body = document.getElementById('terminal-log-body');
+  if (body) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+function downloadLogFile() {
+  const select = document.getElementById('log-date-select');
+  const date = select ? select.value : '';
+  window.open(`/api/logs/download?date=${encodeURIComponent(date)}`, '_blank');
 }
 
 window.addEventListener('DOMContentLoaded', initApp);

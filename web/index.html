@@ -43,6 +43,10 @@
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
         <span>系统概览</span>
       </button>
+      <button class="nav-tab" data-tab="logs">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        <span>系统日志</span>
+      </button>
       <button class="nav-tab" data-tab="settings">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         <span>设置</span>
@@ -270,7 +274,79 @@
       </div>
     </section>
 
-    <!-- ==================== TAB 5: 设置 ==================== -->
+    <!-- ==================== TAB 5: 系统日志 ==================== -->
+    <section class="tab-pane" id="pane-logs">
+      <!-- Logs Toolbar -->
+      <div class="toolbar">
+        <div class="form-row" style="align-items: center; gap: 8px; margin-bottom: 0;">
+          <label class="form-label" style="margin-bottom: 0; white-space: nowrap;">日志日期:</label>
+          <select id="log-date-select" class="form-select" style="width: 140px; padding: 6px 10px; font-size: 13px;"></select>
+        </div>
+
+        <div class="filter-chips" id="log-level-chips">
+          <button class="chip active" data-log-level="ALL">全部级别</button>
+          <button class="chip" data-log-level="INFO">信息 (INFO)</button>
+          <button class="chip" data-log-level="WARN">警告 (WARN)</button>
+          <button class="chip" data-log-level="ERROR">错误 (ERROR)</button>
+        </div>
+
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="log-search-input" placeholder="按关键字搜索日志...">
+        </div>
+
+        <div class="toolbar-spacer"></div>
+
+        <label class="checkbox-label" style="margin-bottom: 0; font-size: 13px;" title="每 3 秒自动轮询最新日志">
+          <input type="checkbox" id="log-auto-refresh" checked>
+          <span>自动刷新</span>
+        </label>
+
+        <button class="btn btn-secondary" id="btn-refresh-logs" title="立即刷新日志">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          <span>刷新</span>
+        </button>
+
+        <button class="btn btn-secondary" id="btn-download-logs" title="下载当前日志文件">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>下载日志</span>
+        </button>
+
+        <button class="btn btn-secondary" id="btn-scroll-bottom" title="滚动到底部">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+          <span>滚到底部</span>
+        </button>
+      </div>
+
+      <!-- Log Info Bar -->
+      <div class="log-info-banner">
+        <div class="log-info-meta">
+          <span class="log-info-tag">存储路径</span>
+          <code id="log-path-display">/var/apps/fn-docker-to-desktop/var/logs/app-YYYY-MM-DD.log</code>
+          <span class="badge badge-neutral" style="margin-left: 8px;">自动保留 8 天</span>
+        </div>
+        <div class="log-info-stats">
+          <span>当前显示 <strong id="log-display-count">0</strong> / 共 <strong id="log-total-count">0</strong> 行</span>
+        </div>
+      </div>
+
+      <!-- Terminal Log Viewer -->
+      <div class="terminal-container">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="terminal-dot dot-red"></span>
+            <span class="terminal-dot dot-yellow"></span>
+            <span class="terminal-dot dot-green"></span>
+          </div>
+          <div class="terminal-title" id="terminal-title">fn-docker-to-desktop.log</div>
+        </div>
+        <div class="terminal-body" id="terminal-log-body">
+          <div class="log-empty-state">正在载入系统日志...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 6: 设置 ==================== -->
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">

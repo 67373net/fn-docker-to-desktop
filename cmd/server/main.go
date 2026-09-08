@@ -16,6 +16,7 @@ import (
 	"fn-docker-to-desktop/internal/api"
 	"fn-docker-to-desktop/internal/auth"
 	"fn-docker-to-desktop/internal/desktop"
+	"fn-docker-to-desktop/internal/logger"
 	"fn-docker-to-desktop/internal/monitor"
 	"fn-docker-to-desktop/internal/proxy"
 	"fn-docker-to-desktop/web"
@@ -28,8 +29,21 @@ func main() {
 	iconPathFlag := flag.String("icon", "icon.png", "Product icon path")
 	flag.Parse()
 
-	logHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(logHandler))
+	// 1. Initialize 8-day rolling logger with auto-pruning
+	logInst, err := logger.Init(*dataDirFlag, 8)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "初始化日志系统失败: %v\n", err)
+	} else {
+		defer logInst.Close()
+	}
+
+	// 2. Global panic recovery to record any crash in logs
+	defer func() {
+		if r := recover(); r != nil {
+			logger.RecoverAndLog("主服务未捕获 Panic", r)
+			os.Exit(2)
+		}
+	}()
 
 	slog.Info("把Docker放到桌面 (fn-docker-to-desktop) 启动中...")
 
@@ -71,9 +85,24 @@ func main() {
 		host = envHost
 	}
 
-	// Try binding to port, if not explicit and occupied, fallback to available port
+	// Output diagnostic information
+	logger.LogDiagnostic(port, host, *dataDirFlag, *iconPathFlag)
+
+	// Try binding to port, with retry logic to avoid race condition on restart
 	addr := fmt.Sprintf("%s:%d", host, port)
 	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Warn("初始端口绑定失败，正在重试 (可能前次进程端口正在释放)...", "address", addr, "error", err)
+		for i := 0; i < 3; i++ {
+			time.Sleep(500 * time.Millisecond)
+			ln, err = net.Listen("tcp", addr)
+			if err == nil {
+				slog.Info("端口重试绑定成功", "address", addr)
+				break
+			}
+		}
+	}
+
 	if err != nil && !explicitPort {
 		slog.Warn("默认端口已被占用，正在寻找可用端口...", "port", port, "error", err)
 		port = proxy.RecommendAvailablePort(5910, nil)
@@ -81,7 +110,7 @@ func main() {
 		ln, err = net.Listen("tcp", addr)
 	}
 	if err != nil {
-		slog.Error("无法监听端口", "address", addr, "error", err)
+		slog.Error("无法监听端口，服务退出", "address", addr, "error", err)
 		os.Exit(1)
 	}
 
@@ -131,6 +160,7 @@ func main() {
 		Watcher:      watcher,
 		SystemSample: systemSampler,
 		AuthMgr:      authMgr,
+		Logger:       logInst,
 		WebFS:        web.Assets,
 		ProcPath:     procPath,
 		DataDir:      *dataDirFlag,

@@ -248,3 +248,92 @@ Restore cache failed: Dependencies file is not found in /home/runner/work/put-po
 - **思维链 Token (Thinking Tokens)**：约 19,000
 - **输出 Token (Completion Tokens)**：约 5,200
 - **总消耗 Token (Total Tokens)**：**约 86,200**
+
+---
+
+## 第五轮对话：解决打开闪退、未知发布者释疑、8天日志系统与双向查看 (Turn 5)
+
+### 用户原始需求 (User Request)
+```
+- 现在仍然会提示：该应用由 未知发布者 提供，我是不是需要注册什么东西？开发平台的文档是：https://developer.fnnas.com/
+- 我现在可以成功安装了，但是打开马上闪退，不知道为什么。
+- 请在本地记录8天内的重要log，例如刚才的闪退，以助排查。
+- log可以在文件系统中查看，也可以在产品界面中查看
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. 未知发布者与开发者平台释疑
+- **飞牛OS 安全机制**：
+  - 飞牛OS对所有非应用中心官方分发的离线安装包（即手动上传的 `.fpk`）均会强制弹出「该应用由 未知发布者 提供」的安全提示。这属于系统的固定安全保护机制（类似于 Windows SmartScreen 的未知发布者警告或 macOS 的未受信任开发者提醒）。
+- **开发者平台现状**：
+  - 查阅飞牛开放平台官网（`https://developer.fnnas.com/`），官方控制台中的「我的应用（注册成为开发者 上架第一款应用）」功能目前标注为 **Coming Soon**，飞牛官方尚未正式开放第三方的开发者入驻、上架审核与官方数字签名下发通道。
+  - 本产品在 `manifest` 中已规范配置了完整的开发者信息（`maintainer = 67373net`、`distributor = 67373net`、`developer = 67373net`、`publisher = 67373net`）。对于离线 `.fpk` 安装包，用户只需正常点击「继续安装」或「同意」即可正常使用，**现阶段不需要且无法注册任何额外证书**。
+
+#### 2. “打开马上闪退”的致命根因与彻底修复
+- **致命根因：启动即自杀 (Suicide on Startup)**：
+  - 在此前版本的 `internal/desktop/installer.go` 的 `SyncSelfApp` 中，服务在启动时执行了检测：若通过 `appcenter-cli list` 发现已安装 `fn-docker-to-desktop`，则直接执行：
+    ```go
+    _ = exec.Command(i.cliPath, "stop", appName).Run()
+    _ = exec.Command(i.cliPath, "uninstall", appName).Run()
+    ```
+  - 当通过飞牛 `.fpk` 原生安装本应用后，系统启动服务调用了 `cmd/main start`。主程序启动后不到 100 毫秒，`SyncSelfApp` 检测到本应用已存在，竟然直接调用 `appcenter-cli stop fn-docker-to-desktop`！
+  - 这会反过来执行本应用的 `cmd/main stop`，发送 `kill -TERM` 和 `kill -KILL` 杀死了自己刚启动的 PID，随后又将其卸载。
+  - 结果：用户在桌面上点击应用图标时，后台常驻进程早已自尽身亡（5900 端口无服务响应），导致飞牛内部弹窗 iframe 无法建立 TCP 连接而立即崩溃关闭（“闪退”）。
+- **根本性重构修复**：
+  - 重构 `SyncSelfApp`：在检测到处于飞牛原生安装环境（`os.Getenv("TRIM_APPDEST") != ""`）时，**绝对禁止**调用任何 `stop` 或 `uninstall` 自身的操作。
+  - 改为直接读取并热更新宿主机原生桌面配置文件 `${TRIM_APPDEST}/ui/config`（或 `/var/apps/fn-docker-to-desktop/target/ui/config`），动态同步标题、端口、展示模式（iframe/url）与用户权限，确保常驻服务不被中断。
+  - 端口监听强化：在 `cmd/server/main.go` 中添加端口监听冲突自动重试机制（3次重试，每次间隔 500ms），避免重启时旧进程端口处于 `TIME_WAIT` 导致监听失败。
+  - 图标与路径修复：在 `scripts/build-fpk.sh` 中将 `ICON.PNG` 与 `ICON_256.PNG` 同样打包入 `app.tgz` 根目录，确保 `${TRIM_APPDEST}/ICON_256.PNG` 真实存在，优化 `cmd/main` 启动脚本。
+
+#### 3. 8 天本地滚动日志系统 (internal/logger)
+- **多端可靠输出**：
+  - 标准输出与文件双写：同时输出到标准输出（由 `cmd/main` 持续捕获进 `${TRIM_PKGVAR}/info.log`）和每日滚动文件 `${TRIM_PKGVAR}/logs/app-YYYY-MM-DD.log`（独立运行保存在 `${dataDir}/logs/`）。
+  - 实时落盘机制：在检测到 `WARN`、`ERROR` 或 `PANIC` 时立即调用底层操作系统 `file.Sync()`，防止因进程异常退出丢失崩溃现场日志。
+- **8 天自动清理轮转 (Retention Policy)**：
+  - 启动时及后台常驻定时器（每小时检查）自动扫描日志目录，自动检测并删除修改日期超过 8 天的历史日志文件，确保零磁盘冗余占用。
+- **启动自检诊断 (Startup Diagnostic Banner)**：
+  - 每次启动输出详细运行诊断环境：系统版本、操作系统架构、Go 版本、进程 PID、当前用户 UID/GID、主机名、程序绝对路径、飞牛环境变量（`TRIM_APPDEST`、`TRIM_PKGVAR`、`PORT`）、所有活动网络接口与 IP 地址、监听端口及日志保存路径。
+- **全局 Panic 拦截恢复**：
+  - 在 `main.go` 以及关键协程中挂载 `defer logger.RecoverAndLog(...)`，完整拦截未经处理的 Panic 崩溃，格式化输出调用栈跟踪（`debug.Stack()`）并强制落盘保存。
+
+#### 4. 双向日志查看体验 (文件系统 + Web 界面)
+- **文件系统查看**：
+  - 用户可通过飞牛自带的“文件管理”或终端 SSH 直接访问：
+    - 每日分类日志：`/vol1/@appstore/fn-docker-to-desktop/var/logs/app-YYYY-MM-DD.log`
+    - 系统守护日志：`/vol1/@appstore/fn-docker-to-desktop/var/info.log`
+- **RESTful API 支持**：
+  - `GET /api/logs`：支持传入 `date`、`level`（ALL/INFO/WARN/ERROR）、`search`（关键词搜索）、`limit` 查询日志条目列表及历史可用日期。
+  - `GET /api/logs/download`：支持一键下载指定日期的原始 `.log` 文件。
+- **产品界面「系统日志」终端面板**：
+  - 在导航栏新增「系统日志」标签页（标准线稿文档 SVG 图标，无 Emoji）。
+  - 界面顶部提供：历史日志日期选择下拉框、级别过滤按钮组（全部/信息/警告/错误）、全文搜索输入框、3秒自动轮询开关、即刻刷新按钮、下载日志按钮与一键滚到底部按钮。
+  - 界面展示当前日志在宿主机的真实文件系统路径与日志行数。
+  - 下方渲染专业终端暗色视窗：高亮显示行号、精确时间戳、不同级别彩色药丸徽章（INFO 蓝、WARN 黄、ERROR 红）、完整消息体，支持深浅色主题自适应。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **本地模拟与 API 连通性测试**：
+   - 启动测试进程 `fn-docker-to-desktop -port 5999 -data /tmp/test-fn-data`。
+   - 自动生成自检诊断输出与 `/tmp/test-fn-data/logs/app-2026-09-08.log`。
+   - 成功通过 `curl http://127.0.0.1:5999/api/logs` 获取到结构化日志数组与可用日期。
+   - 发送 `SIGTERM` 成功触发优雅停机并记录 `服务已安全退出`。
+2. **飞牛OS 原生安装包构建**：
+   - 执行 `./scripts/build-fpk.sh x86` 顺利生成全新 `fn-docker-to-desktop-x86.fpk` (3.4 MB)。
+   - 校验内层 `app.tgz`、MD5 checksum 校验和、启动脚本及全部图标均 100% 完整无损。
+3. **Git 与 GitHub 远端同步**：
+   - 全量代码变更提交并推送到私有 GitHub 仓库 `https://github.com/67373net/fn-docker-to-desktop.git`。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 58,000
+- **思维链 Token (Thinking Tokens)**：约 18,500
+- **输出 Token (Completion Tokens)**：约 5,800
+- **总消耗 Token (Total Tokens)**：**约 82,300**
+

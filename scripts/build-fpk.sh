@@ -58,9 +58,11 @@ else
   cp -r "${FNOS_APP_DIR}/app/ui" "${TMP_BUILD_DIR}/app_staging/"
   cp -r "${FNOS_APP_DIR}/config" "${TMP_BUILD_DIR}/app_staging/"
   cp "${BIN_PATH}" "${TMP_BUILD_DIR}/app_staging/${APP_NAME}"
+  cp "${FNOS_APP_DIR}/ICON.PNG" "${TMP_BUILD_DIR}/app_staging/"
+  cp "${FNOS_APP_DIR}/ICON_256.PNG" "${TMP_BUILD_DIR}/app_staging/"
 
   # 制作 app.tgz
-  tar -czf "${TMP_BUILD_DIR}/app.tgz" -C "${TMP_BUILD_DIR}/app_staging" ui config "${APP_NAME}"
+  tar -czf "${TMP_BUILD_DIR}/app.tgz" -C "${TMP_BUILD_DIR}/app_staging" ui config ICON.PNG ICON_256.PNG "${APP_NAME}"
 
   # 计算 app.tgz 的 MD5 校验和
   CHECKSUM=$(md5sum "${TMP_BUILD_DIR}/app.tgz" | awk '{print $1}')

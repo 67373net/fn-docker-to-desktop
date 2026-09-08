@@ -300,6 +300,41 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 	defer i.mu.Unlock()
 
 	appName := "fn-docker-to-desktop"
+	slog.Info("正在同步自身桌面图标配置...", "appName", appName, "uiType", settings.PortalUIType, "port", settings.PortalPort, "allUsers", settings.PortalAllUsers)
+
+	// 1. If running inside native fnOS package (TRIM_APPDEST is set), directly update ui/config in place!
+	// NEVER call "appcenter-cli stop" or "uninstall" on ourselves, as that will terminate the current process!
+	trimAppDest := os.Getenv("TRIM_APPDEST")
+	var possibleConfigs []string
+	if trimAppDest != "" {
+		possibleConfigs = append(possibleConfigs,
+			filepath.Join(trimAppDest, "ui", "config"),
+			filepath.Join(trimAppDest, "app", "ui", "config"),
+		)
+	}
+	possibleConfigs = append(possibleConfigs,
+		fmt.Sprintf("/var/apps/%s/target/ui/config", appName),
+		fmt.Sprintf("/var/apps/%s/ui/config", appName),
+	)
+
+	updatedNative := false
+	for _, cfgPath := range possibleConfigs {
+		if fi, err := os.Stat(cfgPath); err == nil && !fi.IsDir() {
+			if err := updateUIConfigFile(cfgPath, settings); err == nil {
+				slog.Info("已直接更新原生飞牛桌面配置文件", "path", cfgPath)
+				updatedNative = true
+			} else {
+				slog.Warn("更新原生桌面配置异常", "path", cfgPath, "error", err)
+			}
+		}
+	}
+
+	if updatedNative {
+		slog.Info("产品自身桌面图标配置更新完成 (原生模式)")
+		return nil
+	}
+
+	// 2. If running outside native fnOS or in fallback environment
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
 		AppName:  appName,
 		Title:    settings.PortalName,
@@ -325,21 +360,60 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 	output, err := cmdList.CombinedOutput()
 	isInstalled := err == nil && strings.Contains(string(output), appName)
 
-	if isInstalled {
-		// Update configuration
-		_ = exec.Command(i.cliPath, "stop", appName).Run()
-		_ = exec.Command(i.cliPath, "uninstall", appName).Run()
+	if !isInstalled {
+		// Only install if not present yet. Do NOT stop or uninstall current process!
+		installCmd := exec.Command(i.cliPath, "install-local", "--volume", "1")
+		installCmd.Dir = pkgDir
+		if out, err := installCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("安装自身应用失败: %w (输出: %s)", err, strings.TrimSpace(string(out)))
+		}
+		_ = exec.Command(i.cliPath, "start", appName).Run()
+		slog.Info("产品自身桌面应用初次安装完成", "appName", appName)
+	} else {
+		slog.Info("产品自身桌面应用已处于安装列表中，跳过重新卸载以保证服务平稳运行", "appName", appName)
 	}
 
-	installCmd := exec.Command(i.cliPath, "install-local", "--volume", "1")
-	installCmd.Dir = pkgDir
-	if out, err := installCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("安装自身应用失败: %w (输出: %s)", err, strings.TrimSpace(string(out)))
-	}
-
-	_ = exec.Command(i.cliPath, "start", appName).Run()
-	slog.Info("产品自身桌面图标已更新并就绪", "appName", appName, "uiType", settings.PortalUIType, "allUsers", settings.PortalAllUsers)
 	return nil
+}
+
+func updateUIConfigFile(cfgPath string, settings Settings) error {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return err
+	}
+
+	urlMap, ok := root[".url"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf(".url field not found in %s", cfgPath)
+	}
+
+	for key, val := range urlMap {
+		if entry, ok := val.(map[string]interface{}); ok {
+			if settings.PortalName != "" {
+				entry["title"] = settings.PortalName
+			}
+			if settings.PortalPort > 0 {
+				entry["port"] = strconv.Itoa(settings.PortalPort)
+			}
+			if settings.PortalUIType != "" {
+				entry["type"] = settings.PortalUIType
+			}
+			entry["allUsers"] = settings.PortalAllUsers
+			urlMap[key] = entry
+		}
+	}
+	root[".url"] = urlMap
+
+	newData, err := json.MarshalIndent(root, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cfgPath, newData, 0644)
 }
 
 func sanitizeAppName(id string) string {
