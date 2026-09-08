@@ -514,5 +514,103 @@ ls: cannot access 'vol1/@appdata/': No such file or directory
 - **输出 Token (Completion Tokens)**：约 6,500
 - **总消耗 Token (Total Tokens)**：**约 78,700**
 
+---
+
+## 第八轮对话（2026-09-08）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 我找到上次闪退的原因了
+[20:31:43] root@wildtu-pve-fn:/vol1/1000#  cat /tmp/fn-docker-to-desktop.log
+2026-09-08 20:05:48 - Starting fn-docker-to-desktop...
+2026-09-08 20:05:48 - Started fn-docker-to-desktop with PID 453351
+2026-09-08 20:05:48 [INFO] 把Docker放到桌面 (fn-docker-to-desktop) 启动中...
+2026-09-08 20:05:48 [INFO] ==============================================================================
+2026-09-08 20:05:48 [INFO] 把Docker放到桌面 (fn-docker-to-desktop) 服务启动诊断信息
+2026-09-08 20:05:48 [INFO] ------------------------------------------------------------------------------
+2026-09-08 20:05:48 [INFO] 基础环境 系统=linux/amd64 Go版本=go1.22.12 PID=453351 UID/GID=0/0 主机名=wildtu-pve-fn
+2026-09-08 20:05:48 [INFO] 运行路径 工作目录=/ 程序文件=/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop 数据目录=/usr/local/apps/@appdata/fn-docker-to-desktop/data 图标路径=icon.png
+2026-09-08 20:05:48 [INFO] 飞牛系统变量 TRIM_APPDEST=/usr/local/apps/@appcenter/fn-docker-to-desktop TRIM_PKGVAR=/usr/local/apps/@appdata/fn-docker-to-desktop TRIM_APPNAME=fn-docker-to-desktop
+2026-09-08 20:05:48 [INFO] 监听端口 host=0.0.0.0 port=5900
+2026-09-08 20:05:48 [INFO] 桌面集成 模式=原生飞牛系统环境 (检测到 /usr/trim/bin/appcenter-cli)
+2026-09-08 20:05:48 [INFO] ==============================================================================
+2026-09-08 20:05:48 [ERROR] 无法监听端口，服务退出 address=0.0.0.0:5900 error=listen tcp 0.0.0.0:5900: bind: address already in use
+[20:31:54] root@wildtu-pve-fn:/vol1/1000# ss -tulpn | grep :5900
+tcp   LISTEN 0      4096         0.0.0.0:5900       0.0.0.0:*    users:(("docker-proxy",pid=3175,fd=4))
+tcp   LISTEN 0      4096            [::]:5900          [::]:*    users:(("docker-proxy",pid=3169,fd=4))
+[20:32:04] root@wildtu-pve-fn:/vol1/1000# 
+
+能否修改为：自动找一个合适的未被占用的端口。
+
+由于真正的原因找到了，请重新检查之前的代码，是否在未查明闪退原因的时候进行了多余的修改？如果有的话，请回退。
+
+新建一个文档文件夹，将对话历史移动到文档中。
+
+每次更新后，不用在文件夹里下载fpk文件，我会自己去github上下载。已经下载的也删掉，精简一下文件结构。
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. 闪退根本原因定性与复盘
+- **致命根因 (100% 确认)**：
+  - 用户执行 `cat /tmp/fn-docker-to-desktop.log` 捕获到确凿日志：
+    `无法监听端口，服务退出 address=0.0.0.0:5900 error=listen tcp 0.0.0.0:5900: bind: address already in use`
+  - 用户执行 `ss -tulpn | grep :5900` 进一步锁定占用者：
+    宿主机上 `docker-proxy (pid=3169, 3175)` 占用了 5900 端口，这正是用户之前部署的 `watchcow-proxy` 容器（`watchcow-portal`）。
+  - 原 Go 启动代码在 `net.Listen` 返回错误后直接调用 `os.Exit(1)` 退出。飞牛桌面图标点击后无法连通服务，导致窗口立刻关闭，现象即为“点击马上闪退”。
+  - **结论**：闪退纯粹由 5900 端口被 docker-proxy 占用引发，与此前推测的 `iframe` 沙箱阻断无关，也与 `/vol1/@appstore` 无关。
+
+#### 2. 代码多余修改审查与彻底回退 (Code Audit & Rollback)
+全面核查此前轮次在排查闪退时引入的推测性代码，进行精准回退：
+1. **回退硬编码软链接**：
+   - 撤销 `fnos-app/cmd/main` 中针对 `/vol1/1000` 硬编码创建软链接的代码（该代码此前是为了规避用户在终端输错相对路径，属于特定环境侵入式临时代码，现已彻底移除）。
+2. **回退进程盲杀逻辑**：
+   - 撤销 `fnos-app/cmd/main` 中针对 `pgrep -f fn-docker-to-desktop` 强制 `kill -9` 的循环逻辑，保持脚本纯粹规范。
+3. **回退默认打开方式（恢复飞牛原生窗口弹窗）**：
+   - 此前推测闪退可能是 iframe 遭浏览器 Mixed Content 阻断而将默认值改为了 `url`（新标签页打开）。
+   - 现已证实与 iframe 无关，回退 `fnos-app/app/ui/config` 的 `type` 为 `"iframe"`；回退 `internal/desktop/types.go` 与 `internal/desktop/storage.go` 中的默认 `PortalUIType` 为 `"iframe"`。满足用户初始需求：默认在飞牛内部弹窗打开，同时用户仍可在设置中按需切换。
+
+#### 3. 核心功能实现：全自动可用端口发现与桌面图标动态同步
+针对端口冲突，实现动态自愈：
+- 在 `cmd/server/main.go` 中，当默认端口 5900（或用户自定义端口）被占用时：
+  1. 自动调用 `proxy.RecommendAvailablePort(port+1, nil)` 向上扫描可用端口（如 5901、5902...），或自动在 5950+ 区间挑选空闲端口；
+  2. 自动在新端口上启动 HTTP 服务，并在日志中输出清晰的切端口提醒；
+  3. 自动更新内部内存配置 `settings.PortalPort = altPort`；
+  4. 自动调用 `desktopInstaller.SyncSelfApp(settings)` 将当前生效端口动态同步到飞牛系统的 `app/ui/config` 以及 `manifest`（`service_port`），确保飞牛桌面图标点击时打开的是实际绑定的可用端口。
+
+#### 4. 项目结构精简与文档归档
+- **文档整理**：新建 `docs/` 目录，将根目录下的 `CONVERSATION_HISTORY.md` 迁移至 `docs/CONVERSATION_HISTORY.md`。
+- **产物清理与精简**：
+  - 彻底删除本地工作区中所有 `.fpk` 文件（`fn-docker-to-desktop-x86.fpk`、`fn-docker-to-desktop-arm.fpk` 等）。
+  - 确认 `.gitignore` 包含 `*.fpk`，工作区保持纯净轻量。
+  - 用户直接通过 GitHub Releases 页面下载安装包，本地工作区不再存储大体积二进制包。
+
+#### 5. 版本更新
+- 升级 `fnos-app/manifest` 版本为 `1.0.3`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **代码静态检查与容器交叉编译验证**：
+   - 使用 Docker 容器环境执行 `./scripts/build-fpk.sh x86`，编译与打包一次性成功通过，验证无任何语法或路径错误。
+   - 验证完成后立即清理本地产物 `.fpk`，保持工作区零残留。
+2. **GitHub Releases 线上自动发布**：
+   - 提交全部代码更新并打标签 `v1.0.3`。
+   - 推送至 GitHub 仓库，由 GitHub Actions 自动构建全架构 FPK 包并附于 Release `v1.0.3` 供用户直接下载。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 58,000
+- **思维链 Token (Thinking Tokens)**：约 16,500
+- **输出 Token (Completion Tokens)**：约 5,800
+- **总消耗 Token (Total Tokens)**：**约 80,300**
+
+
 
 

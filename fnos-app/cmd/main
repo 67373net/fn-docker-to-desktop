@@ -18,13 +18,6 @@ log_msg() {
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
     echo "${msg}" >> "${FALLBACK_LOG}" 2>/dev/null || true
     chmod 0666 "${FALLBACK_LOG}" 2>/dev/null || true
-
-    # Link to common user paths so cat tmp/... or cat fn-docker-to-desktop.log works
-    if [ -d "/vol1/1000" ]; then
-        mkdir -p "/vol1/1000/tmp" 2>/dev/null || true
-        ln -sf "${FALLBACK_LOG}" "/vol1/1000/fn-docker-to-desktop.log" 2>/dev/null || true
-        ln -sf "${FALLBACK_LOG}" "/vol1/1000/tmp/fn-docker-to-desktop.log" 2>/dev/null || true
-    fi
 }
 
 start_process() {
@@ -35,18 +28,6 @@ start_process() {
     log_msg "Starting fn-docker-to-desktop..."
     mkdir -p "${TRIM_PKGVAR}/data" 2>/dev/null || true
     mkdir -p "${TRIM_PKGVAR}/logs" 2>/dev/null || true
-
-    # Clean up any stale/orphan instances from old builds to prevent port conflicts
-    local self_pid=$$
-    for p in $(pgrep -f "fn-docker-to-desktop" 2>/dev/null || true); do
-        if [ "$p" != "$self_pid" ] && [ "$p" != "$PPID" ]; then
-            if [ -f "${PID_FILE}" ] && [ "$(cat "${PID_FILE}" 2>/dev/null)" = "$p" ]; then
-                continue
-            fi
-            log_msg "Terminating stale orphan process ${p}..."
-            kill -9 "$p" 2>/dev/null || true
-        fi
-    done
 
     if [ ! -f "${CMD}" ]; then
         log_msg "Executable not at ${CMD}, searching in ${TRIM_APPDEST}..."

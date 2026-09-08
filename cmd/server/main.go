@@ -101,16 +101,21 @@ func main() {
 	}
 
 	if err != nil {
-		slog.Warn("目标端口已被占用或无法绑定，正在寻找可用替代端口...", "requestedPort", port, "address", addr, "error", err)
-		altPort := proxy.RecommendAvailablePort(5950, nil)
-		altAddr := fmt.Sprintf("%s:%d", host, altPort)
-		altLn, altErr := net.Listen("tcp", altAddr)
-		if altErr == nil {
-			slog.Info("已自动切换至可用端口运行", "originalPort", port, "newPort", altPort, "address", altAddr)
-			port = altPort
-			addr = altAddr
-			ln = altLn
-			err = nil
+		slog.Warn("目标端口已被占用，正在自动查找未被占用的合适端口...", "requestedPort", port, "address", addr, "error", err)
+		altPort := proxy.RecommendAvailablePort(port+1, nil)
+		if altPort == 0 {
+			altPort = proxy.RecommendAvailablePort(5950, nil)
+		}
+		if altPort > 0 {
+			altAddr := fmt.Sprintf("%s:%d", host, altPort)
+			altLn, altErr := net.Listen("tcp", altAddr)
+			if altErr == nil {
+				slog.Info("已成功找到并切换至未被占用的合适端口运行", "originalPort", port, "newPort", altPort, "address", altAddr)
+				port = altPort
+				addr = altAddr
+				ln = altLn
+				err = nil
+			}
 		}
 	}
 	if err != nil {

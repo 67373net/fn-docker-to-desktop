@@ -329,6 +329,24 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 		}
 	}
 
+	// Also sync service_port in manifest if found in native installation
+	var possibleManifests []string
+	if trimAppDest != "" {
+		possibleManifests = append(possibleManifests,
+			filepath.Join(trimAppDest, "manifest"),
+			filepath.Join(trimAppDest, "app", "manifest"),
+		)
+	}
+	possibleManifests = append(possibleManifests,
+		fmt.Sprintf("/var/apps/%s/target/manifest", appName),
+		fmt.Sprintf("/var/apps/%s/manifest", appName),
+	)
+	for _, mfPath := range possibleManifests {
+		if fi, err := os.Stat(mfPath); err == nil && !fi.IsDir() {
+			_ = updateManifestServicePort(mfPath, settings.PortalPort)
+		}
+	}
+
 	if updatedNative {
 		slog.Info("产品自身桌面图标配置更新完成 (原生模式)")
 		return nil
@@ -449,4 +467,24 @@ func SanitizeFileName(name string) string {
 		res = "icon.png"
 	}
 	return res
+}
+
+func updateManifestServicePort(mfPath string, port int) error {
+	data, err := os.ReadFile(mfPath)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for idx, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "service_port") {
+			lines[idx] = fmt.Sprintf("service_port          = %d", port)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	return os.WriteFile(mfPath, []byte(strings.Join(lines, "\n")), 0644)
 }

@@ -3,7 +3,7 @@
         "fn-docker-to-desktop.dashboard": {
             "title": "把Docker放到桌面",
             "icon": "images/icon-{0}.png",
-            "type": "url",
+            "type": "iframe",
             "protocol": "http",
             "url": "/",
             "port": "5900",

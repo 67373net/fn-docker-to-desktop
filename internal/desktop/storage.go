@@ -53,7 +53,7 @@ func (s *Storage) loadSettings() {
 				loaded.PortalName = "把Docker放到桌面"
 			}
 			if loaded.PortalUIType == "" {
-				loaded.PortalUIType = "url"
+				loaded.PortalUIType = "iframe"
 			}
 			s.settings = loaded
 			return
