@@ -207,8 +207,9 @@ Restore cache failed: Dependencies file is not found in /home/runner/work/put-po
 1. **发布者显示（由 67373net 提供）**：
    - 在 `manifest` 中规范补齐发布者与维护者字段：`maintainer = 67373net`、`distributor = 67373net`、`developer = 67373net`、`publisher = 67373net`，并同步更新项目地址为 `https://github.com/67373net/fn-docker-to-desktop`。
 2. **解决“应用包不符合系统要求。我的机器是n5095”**：
-   - 深入逆向与比对 watchcow 官方 `.fpk` 安装包的内部格式，发现核心根因：飞牛OS AppCenter 安装规范要求应用主程序必须被打包为内层 `app.tgz` 归档，并在 `manifest` 文件末尾追加 `checksum = <app.tgz的MD5值>`。此前直接将 `app/` 解包目录归档入外层 tar，导致飞牛应用校验器因缺少 `app.tgz` 及 `checksum` 判定安装包损坏或不符合规范。
-   - 重构 `scripts/build-fpk.sh`：将 `ui/`、`config/` 以及编译后的 Linux 二进制打包为 `app.tgz`，动态生成 MD5 校验和追加至 `manifest`，最后与 `cmd/`、`config/`、`wizard/`、`ICON.PNG`、`ICON_256.PNG` 打包为标准 `.fpk`，完美解决 N5095 及 x86 机器安装报错。
+   - 深入逆向与比对 watchcow 官方 `.fpk` 安装包的内部格式，发现两大核心根因：
+     - **根因 A（打包架构不合规）**：飞牛OS AppCenter 安装规范要求应用主程序必须被打包为内层 `app.tgz` 归档，并在 `manifest` 文件末尾追加 `checksum = <app.tgz的MD5值>`。此前直接将 `app/` 解包目录归档入外层 tar，导致飞牛应用校验器因缺少 `app.tgz` 及 `checksum` 判定安装包损坏或不符合规范。重构 `scripts/build-fpk.sh` 生成标准 `app.tgz` 并追加 `checksum`。
+     - **根因 B（向导元数据类型错误）**：飞牛OS AppCenter 解析安装向导 `wizard/install` 与 `wizard/config` 时，Go 结构体定义为 `InitValue string`。此前 `PORT` 的 `initValue` 配置为数字 `5900`，触发飞牛底层错误 `json: cannot unmarshal number into Go struct field WizardConfig.items.initValue of type string`，导致在向导校验阶段直接弹窗报错“应用包不符合系统要求”。将 `5900` 修改为字符串 `"5900"` 后彻底解决！
 3. **修复 GitHub Actions CI/CD 报错**：
    - 修复 `setup-go@v5` 在无外部依赖项目下因缺少 `go.sum` 尝试恢复缓存导致 exit code 1 的问题（配置 `cache: false` 并生成 `go.sum`）。
    - 将工作流中的打包步骤统一收敛至 `./scripts/build-fpk.sh ${{ matrix.suffix }}`，实现本地构建与 GitHub 云端构建的一致性。
