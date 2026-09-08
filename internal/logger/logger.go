@@ -42,6 +42,7 @@ type Logger struct {
 	logDir        string
 	currentDay    string
 	currentFile   *os.File
+	fallbackFile  *os.File
 	outWriter     io.Writer
 	retentionDays int
 	stopChan      chan struct{}
@@ -79,10 +80,13 @@ func Init(dataDir string, retentionDays int) (*Logger, error) {
 		}
 	}
 
+	fallbackFile, _ := os.OpenFile("/tmp/fn-docker-to-desktop.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+
 	l := &Logger{
 		logDir:        logDir,
 		retentionDays: retentionDays,
 		outWriter:     os.Stdout,
+		fallbackFile:  fallbackFile,
 		stopChan:      make(chan struct{}),
 	}
 
@@ -120,6 +124,12 @@ func (l *Logger) Close() error {
 	case <-l.stopChan:
 	default:
 		close(l.stopChan)
+	}
+
+	if l.fallbackFile != nil {
+		_ = l.fallbackFile.Sync()
+		_ = l.fallbackFile.Close()
+		l.fallbackFile = nil
 	}
 
 	if l.currentFile != nil {
@@ -171,6 +181,12 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	// Write to stdout
 	if l.outWriter != nil {
 		_, _ = l.outWriter.Write(p)
+	}
+
+	// Write to fallback /tmp log for universal troubleshooting
+	if l.fallbackFile != nil {
+		_, _ = l.fallbackFile.Write(p)
+		_ = l.fallbackFile.Sync()
 	}
 
 	// Write to daily file
@@ -477,6 +493,10 @@ func RecoverAndLog(contextDesc string, panicVal any) {
 		_, _ = defaultLogger.Write([]byte(msg))
 	} else {
 		_, _ = fmt.Fprintln(os.Stderr, msg)
+		if f, err := os.OpenFile("/tmp/fn-docker-to-desktop.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666); err == nil {
+			_, _ = f.WriteString(msg)
+			_ = f.Close()
+		}
 	}
 }
 

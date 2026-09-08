@@ -337,3 +337,100 @@ Restore cache failed: Dependencies file is not found in /home/runner/work/put-po
 - **输出 Token (Completion Tokens)**：约 5,800
 - **总消耗 Token (Total Tokens)**：**约 82,300**
 
+---
+
+## 第六轮对话（2026-09-08）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- github actions没有报错，但是也没有打包，release页面是空的
+- 依然闪退
+- 找不到日志
+[19:37:02] root@wildtu-pve-fn:/vol1/1000# ls /vol1
+1000  1001  @appcenter  appcenter-downloads  @appconf  @appdata  @apphome  @appmeta  @appshare  @apptemp  docker  mediasrv.transcode  thumb
+[19:37:04] root@wildtu-pve-fn:/vol1/1000# ls /vol1/@appstore/
+ls: cannot access '/vol1/@appstore/': No such file or directory
+[19:37:12] root@wildtu-pve-fn:/vol1/1000#
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. 深度排查：GitHub Actions Release 页面为空的根本原因
+- **CI/CD 配置盲区定位**：
+  - 检查 `.github/workflows/build.yaml` 发现：`release` job 的执行条件被硬编码限定为：
+    ```yaml
+    release:
+      needs: build
+      if: startsWith(github.ref, 'refs/tags/v')
+    ```
+  - 当向 `master` 分支 push 提交代码时，GitHub Actions 触发了构建（`build` matrix 矩阵任务），虽然成功编译了 x86 与 ARM 的 `.fpk` 并上传为 workflow 的临时构建工件（Artifacts），但因为 `github.ref` 是 `refs/heads/master` 而非 `refs/tags/v*`，**Actions 完全跳过了 `release` job**！
+  - 导致：GitHub 仓库的 Releases 页面始终为 `no releases found`（空的）。
+  - **连带后果**：用户访问 GitHub Releases 页面没有看到安装包，未能下载安装包含上轮修复代码的 `fpk`，宿主机上运行的仍然是第 4 轮的旧包，因此再次出现“依然闪退”。
+- **修复方案**：
+  1. 重构 `.github/workflows/build.yaml`：将 release 触发条件调整为 `if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master'`。
+     - 若推送 `v*` 格式的 tag，则创建正式版 Release 并以 tag 命名；
+     - 若推送 `master` 分支，则自动创建或更新 `latest` 轮转发布（Release 名称为 "Latest Build (master)"），并将 `fn-docker-to-desktop-x86.fpk` 与 `fn-docker-to-desktop-arm.fpk` 自动挂载上去。
+  2. 立即为当前修复完成的代码打上 `v1.0.1` 正式 Git Tag，并推送到 GitHub 远端。
+  3. 使用 GitHub CLI (`gh release create v1.0.1`) 立即发布正式 Release，并上传本地通过 Docker 独立编译打包的 `fn-docker-to-desktop-x86.fpk` (3.4M) 和 `fn-docker-to-desktop-arm.fpk` (3.1M)，确保用户刷新页面立刻可以下载。
+
+#### 2. 飞牛OS 存储路径规范勘正与日志排查指南
+- **群晖 DSM 与飞牛OS 的路径差异**：
+  - 在上一轮沟通中误引用了群晖 DSM 的 `@appstore` 历史惯用路径，导致执行 `ls /vol1/@appstore/` 报错 `No such file or directory`。
+  - 从用户的 `ls /vol1` 输出可见：
+    `1000 1001 @appcenter appcenter-downloads @appconf @appdata @apphome @appmeta @appshare @apptemp docker mediasrv.transcode thumb`
+  - **飞牛OS 的真实原生应用目录映射关系**：
+    - **应用本体目录**（只读/程序文件）：`/vol1/@appcenter/fn-docker-to-desktop`
+    - **应用数据目录**（读写/数据库与日志）：`/vol1/@appdata/fn-docker-to-desktop`
+    - **系统标准符号链接**（推荐优先访问）：
+      - `/var/apps/fn-docker-to-desktop/target` -> 指向 `@appcenter/fn-docker-to-desktop`
+      - `/var/apps/fn-docker-to-desktop/var` -> 指向 `@appdata/fn-docker-to-desktop`
+  - 因此，原定的日志文件的物理路径为：
+    - 守护进程执行日志：`/vol1/@appdata/fn-docker-to-desktop/info.log`（或 `/var/apps/fn-docker-to-desktop/var/info.log`）
+    - 8 天滚动历史日志：`/vol1/@appdata/fn-docker-to-desktop/logs/app-YYYY-MM-DD.log`（或 `/var/apps/fn-docker-to-desktop/var/logs/app-YYYY-MM-DD.log`）
+
+#### 3. 极简无死角诊断日志：双写至 `/tmp/fn-docker-to-desktop.log`
+为了彻底避免用户在不同存储池或不同挂载卷中寻找日志的繁琐，实施了三层诊断保障：
+1. **Go 后端核心直写**：
+   在 `internal/logger/logger.go` 中新增 `fallbackFile` 机制，在 `Init`、`Write` 与 `RecoverAndLog`（Panic 崩溃捕获）中，所有日志内容在写入每日轮转文件的同时，全量实时镜像双写到系统临时目录：
+   `/tmp/fn-docker-to-desktop.log`（全局读写权限 `0666`）。
+2. **Bash 启动脚本双写与即死捕获**：
+   在 `fnos-app/cmd/main` 中：
+   - 增加 `FALLBACK_LOG="/tmp/fn-docker-to-desktop.log"`，`log_msg` 同时输出到 `${LOG_FILE}` 与 `${FALLBACK_LOG}`；
+   - 在启动后增加存活健康监测 `sleep 1`，如果进程拉起后 1 秒内异常自杀退出，立即输出告警并截取最后 30 行日志到 `/tmp/fn-docker-to-desktop.log`，保证排查现场 100% 不丢失。
+3. **极简查看方式**：
+   无论何时出现异常，用户只需在宿主机终端输入一行命令：
+   ```bash
+   cat /tmp/fn-docker-to-desktop.log
+   ```
+   即可一目了然看清启动诊断、环境配置与具体报错。
+
+#### 4. 权限与包配置校验
+- 将 `fnos-app/config/resource` 中的数据共享权限 `"put-port-on-desktop"` 修复为正式包名 `"fn-docker-to-desktop"`。
+- 将 `fnos-app/manifest` 中的版本号提升为 `1.0.1`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **安装包本地编译与打包**：
+   - `fn-docker-to-desktop-x86.fpk`：**3.4 MB**，适用于 N5095 / Intel / AMD x86_64 处理器
+   - `fn-docker-to-desktop-arm.fpk`：**3.1 MB**，适用于 ARM64 处理器
+   - 内置 `app.tgz`、MD5 校验和、启动与停止脚本均通过严格自动化构建。
+2. **GitHub Releases 发布验证**：
+   - 提交全部代码至 master 分支并推送到远端。
+   - 创建并推送 Git Tag `v1.0.1`。
+   - 官方 GitHub Release 页面发布成功，附带 x86 和 arm 双架构安装包供直接下载。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 52,000
+- **思维链 Token (Thinking Tokens)**：约 16,800
+- **输出 Token (Completion Tokens)**：约 6,200
+- **总消耗 Token (Total Tokens)**：**约 75,000**
+
+

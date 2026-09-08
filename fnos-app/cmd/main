@@ -5,6 +5,7 @@ TRIM_APPDEST="${TRIM_APPDEST:-/var/apps/fn-docker-to-desktop/target}"
 
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
+FALLBACK_LOG="/tmp/fn-docker-to-desktop.log"
 
 CMD="${TRIM_APPDEST}/fn-docker-to-desktop"
 if [ -f "${TRIM_APPDEST}/app/fn-docker-to-desktop" ]; then
@@ -12,8 +13,10 @@ if [ -f "${TRIM_APPDEST}/app/fn-docker-to-desktop" ]; then
 fi
 
 log_msg() {
-    mkdir -p "${TRIM_PKGVAR}"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+    mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+    echo "${msg}" >> "${FALLBACK_LOG}" 2>/dev/null || true
 }
 
 start_process() {
@@ -22,12 +25,22 @@ start_process() {
     fi
 
     log_msg "Starting fn-docker-to-desktop..."
-    mkdir -p "${TRIM_PKGVAR}/data"
-    mkdir -p "${TRIM_PKGVAR}/logs"
+    mkdir -p "${TRIM_PKGVAR}/data" 2>/dev/null || true
+    mkdir -p "${TRIM_PKGVAR}/logs" 2>/dev/null || true
 
-    if [ ! -x "${CMD}" ]; then
-        chmod +x "${CMD}" 2>/dev/null || true
+    if [ ! -f "${CMD}" ]; then
+        log_msg "Executable not at ${CMD}, searching in ${TRIM_APPDEST}..."
+        FOUND_CMD=$(find "${TRIM_APPDEST}" -type f -name "fn-docker-to-desktop" 2>/dev/null | head -n 1)
+        if [ -n "${FOUND_CMD}" ]; then
+            CMD="${FOUND_CMD}"
+            log_msg "Found executable at ${CMD}"
+        else
+            log_msg "ERROR: Executable fn-docker-to-desktop not found anywhere in ${TRIM_APPDEST}"
+            return 1
+        fi
     fi
+
+    chmod +x "${CMD}" 2>/dev/null || true
 
     ICON_ARG=""
     if [ -f "${TRIM_APPDEST}/ICON_256.PNG" ]; then
@@ -45,6 +58,15 @@ start_process() {
     local pid=$!
     printf "%s" "${pid}" > "${PID_FILE}"
     log_msg "Started fn-docker-to-desktop with PID ${pid}"
+
+    sleep 1
+    if ! check_process "${pid}"; then
+        log_msg "ERROR: Process ${pid} exited immediately after startup! Check ${LOG_FILE} and ${FALLBACK_LOG}"
+        if [ -f "${LOG_FILE}" ]; then
+            tail -n 30 "${LOG_FILE}" >> "${FALLBACK_LOG}" 2>/dev/null || true
+        fi
+        return 1
+    fi
     return 0
 }
 

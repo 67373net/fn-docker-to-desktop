@@ -5,7 +5,7 @@
                 "name": "icons",
                 "permission": {
                     "rw": [
-                        "put-port-on-desktop"
+                        "fn-docker-to-desktop"
                     ]
                 }
             }
