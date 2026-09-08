@@ -153,7 +153,7 @@ async function fetchSettings() {
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const settings = await res.json();
-      document.getElementById('setting-portal-name').value = settings.portal_name || '把端口放到桌面';
+      document.getElementById('setting-portal-name').value = settings.portal_name || '把Docker放到桌面';
       document.getElementById('setting-portal-port').value = settings.portal_port || 5900;
       
       const uiType = settings.portal_ui_type || 'iframe';

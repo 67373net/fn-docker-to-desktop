@@ -13,27 +13,25 @@ import (
 	"syscall"
 	"time"
 
-	"put-port-on-desktop/internal/api"
-	"put-port-on-desktop/internal/auth"
-	"put-port-on-desktop/internal/desktop"
-	"put-port-on-desktop/internal/monitor"
-	"put-port-on-desktop/internal/proxy"
-	"put-port-on-desktop/web"
+	"fn-docker-to-desktop/internal/api"
+	"fn-docker-to-desktop/internal/auth"
+	"fn-docker-to-desktop/internal/desktop"
+	"fn-docker-to-desktop/internal/monitor"
+	"fn-docker-to-desktop/internal/proxy"
+	"fn-docker-to-desktop/web"
 )
 
 func main() {
-	// CLI flags
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
 	hostFlag := flag.String("host", "", "Server host (default: from env HOST or 0.0.0.0)")
 	dataDirFlag := flag.String("data", "data", "Data directory")
 	iconPathFlag := flag.String("icon", "icon.png", "Product icon path")
 	flag.Parse()
 
-	// Configure logger
 	logHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
 	slog.SetDefault(slog.New(logHandler))
 
-	slog.Info("把端口放到桌面 (put-port-on-desktop) 启动中...")
+	slog.Info("把Docker放到桌面 (fn-docker-to-desktop) 启动中...")
 
 	// Storage
 	storage, err := desktop.NewStorage(*dataDirFlag)

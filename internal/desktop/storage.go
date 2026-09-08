@@ -50,7 +50,7 @@ func (s *Storage) loadSettings() {
 				loaded.PortalPort = 5900
 			}
 			if loaded.PortalName == "" {
-				loaded.PortalName = "把端口放到桌面"
+				loaded.PortalName = "把Docker放到桌面"
 			}
 			if loaded.PortalUIType == "" {
 				loaded.PortalUIType = "iframe"
@@ -110,7 +110,7 @@ func (s *Storage) UpdateSettings(settings Settings) error {
 		settings.PortalPort = 5900
 	}
 	if settings.PortalName == "" {
-		settings.PortalName = "把端口放到桌面"
+		settings.PortalName = "把Docker放到桌面"
 	}
 	if settings.PortalUIType == "" {
 		settings.PortalUIType = "iframe"

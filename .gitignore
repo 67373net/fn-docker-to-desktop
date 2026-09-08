@@ -1,8 +1,10 @@
 # Build output
+fn-docker-to-desktop
 put-port-on-desktop
 *.exe
 *.test
 *.fpk
+/fnos-app/app/fn-docker-to-desktop
 /fnos-app/app/put-port-on-desktop
 
 # Persistent data

@@ -1,8 +1,6 @@
-# Put Port On Desktop (把端口放到桌面) Makefile
+# 把Docker放到桌面 (fn-docker-to-desktop) Makefile
 
-DOCKER_COMPOSE ?= docker compose
-
-.PHONY: all fpk build up down rebuild status logs clean
+.PHONY: all fpk build clean run test
 
 # 默认构建飞牛OS .fpk 安装包
 all: fpk
@@ -11,31 +9,17 @@ all: fpk
 fpk:
 	./scripts/build-fpk.sh
 
-# 编译 Docker 镜像
+# 编译本地可执行二进制
 build:
-	$(DOCKER_COMPOSE) build
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o fn-docker-to-desktop ./cmd/server
 
-# 启动 Docker 容器 (可选/调试)
-up:
-	$(DOCKER_COMPOSE) up -d
-
-# 停止 Docker 容器
-down:
-	$(DOCKER_COMPOSE) down
-
-# 重新构建并启动 Docker 容器
-rebuild:
-	$(DOCKER_COMPOSE) up -d --build
-
-# 查看 Docker 容器状态
-status:
-	$(DOCKER_COMPOSE) ps
-
-# 查看 Docker 容器日志
-logs:
-	$(DOCKER_COMPOSE) logs -f --tail=100
+# 本地直接运行测试
+run: build
+	./fn-docker-to-desktop -port 5900
 
 clean:
 	rm -f *.fpk
-	rm -f fnos-app/app/put-port-on-desktop
-	$(DOCKER_COMPOSE) down -v --remove-orphans
+	rm -f fn-docker-to-desktop
+	rm -f fnos-app/app.tgz
+	rm -f fnos-app/app/fn-docker-to-desktop
+

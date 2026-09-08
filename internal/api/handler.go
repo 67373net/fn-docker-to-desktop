@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"put-port-on-desktop/internal/auth"
-	"put-port-on-desktop/internal/desktop"
-	"put-port-on-desktop/internal/monitor"
-	"put-port-on-desktop/internal/proxy"
+	"fn-docker-to-desktop/internal/auth"
+	"fn-docker-to-desktop/internal/desktop"
+	"fn-docker-to-desktop/internal/monitor"
+	"fn-docker-to-desktop/internal/proxy"
 )
 
 // Handler handles all HTTP API requests.

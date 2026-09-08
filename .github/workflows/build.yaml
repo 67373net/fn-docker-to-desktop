@@ -33,6 +33,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: false
 
       - name: Update manifest version from tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -49,40 +50,24 @@ jobs:
           sed -i "s/^platform.*=.*/platform        = ${{ matrix.platform }}/" fnos-app/manifest
           cat fnos-app/manifest
 
-      - name: Build binary
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o fnos-app/app/put-port-on-desktop ./cmd/server
-          chmod +x fnos-app/app/put-port-on-desktop
-          chmod +x fnos-app/cmd/*
-
-      - name: Download fnpack
+      - name: Try download official fnpack
         continue-on-error: true
-        id: fnpack-dl
         run: |
-          curl -L -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.0-linux-amd64 || true
+          curl -fsSL -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.0-linux-amd64 || true
           if [ -s /tmp/fnpack ]; then
             chmod +x /tmp/fnpack
-            echo "has_fnpack=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_fnpack=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Build fpk package
         run: |
-          cd fnos-app
-          if [ "${{ steps.fnpack-dl.outputs.has_fnpack }}" = "true" ]; then
-            /tmp/fnpack build
-            mv put-port-on-desktop.fpk ../put-port-on-desktop-${{ matrix.suffix }}.fpk
-          else
-            echo "Using standard fnOS fpk archive packaging..."
-            tar -czvf ../put-port-on-desktop-${{ matrix.suffix }}.fpk manifest ICON.PNG ICON_256.PNG app cmd config wizard
-          fi
+          chmod +x ./scripts/build-fpk.sh
+          ./scripts/build-fpk.sh ${{ matrix.suffix }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: put-port-on-desktop-${{ matrix.suffix }}-package
-          path: put-port-on-desktop-${{ matrix.suffix }}.fpk
+          name: fn-docker-to-desktop-${{ matrix.suffix }}-package
+          path: fn-docker-to-desktop-${{ matrix.suffix }}.fpk
 
   release:
     needs: build
@@ -100,6 +85,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            put-port-on-desktop-x86.fpk
-            put-port-on-desktop-arm.fpk
+            fn-docker-to-desktop-x86.fpk
+            fn-docker-to-desktop-arm.fpk
           generate_release_notes: true
+

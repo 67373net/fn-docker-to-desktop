@@ -31,10 +31,10 @@ type DesktopItem struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// Settings represents global configuration for put-port-on-desktop itself.
+// Settings represents global configuration for fn-docker-to-desktop itself.
 type Settings struct {
 	PortalPort     int    `json:"portal_port"`      // Default 5900
-	PortalName     string `json:"portal_name"`      // Default "把端口放到桌面"
+	PortalName     string `json:"portal_name"`      // Default "把Docker放到桌面"
 	PortalUIType   string `json:"portal_ui_type"`   // "url" or "iframe"
 	PortalAllUsers bool   `json:"portal_all_users"` // true: all users, false: admin only
 	PortalIcon     string `json:"portal_icon"`      // Icon path
@@ -45,7 +45,7 @@ type Settings struct {
 func DefaultSettings() Settings {
 	return Settings{
 		PortalPort:     5900,
-		PortalName:     "把端口放到桌面",
+		PortalName:     "把Docker放到桌面",
 		PortalUIType:   "iframe",
 		PortalAllUsers: false, // Default admin only
 		PortalIcon:     "icon.png",

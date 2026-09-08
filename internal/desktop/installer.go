@@ -109,8 +109,8 @@ desc=%s
 arch=x86_64
 platform=all
 source=thirdparty
-maintainer=put-port-on-desktop
-distributor=put-port-on-desktop
+maintainer=67373net
+distributor=67373net
 os_min_version=0.9.0
 install_type=root
 desktop_uidir=ui
@@ -294,16 +294,16 @@ func (i *Installer) UninstallItem(itemID string) error {
 	return nil
 }
 
-// SyncSelfApp ensures put-port-on-desktop itself is registered on fnOS desktop with user settings.
+// SyncSelfApp ensures fn-docker-to-desktop itself is registered on fnOS desktop with user settings.
 func (i *Installer) SyncSelfApp(settings Settings) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	appName := "put-port-on-desktop"
+	appName := "fn-docker-to-desktop"
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
 		AppName:  appName,
 		Title:    settings.PortalName,
-		Desc:     "监控本机端口占用，并将服务与端口放置在飞牛OS桌面",
+		Desc:     "把Docker放到桌面 - 监控Docker容器与本机端口，将容器与服务快捷方式放置在飞牛OS桌面",
 		Port:     settings.PortalPort,
 		Protocol: "http",
 		Path:     "/",
