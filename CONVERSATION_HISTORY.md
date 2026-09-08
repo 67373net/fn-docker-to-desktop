@@ -209,7 +209,7 @@ Restore cache failed: Dependencies file is not found in /home/runner/work/put-po
 2. **解决“应用包不符合系统要求。我的机器是n5095”**：
    - 深入逆向与比对 watchcow 官方 `.fpk` 安装包的内部格式，发现两大核心根因：
      - **根因 A（打包架构不合规）**：飞牛OS AppCenter 安装规范要求应用主程序必须被打包为内层 `app.tgz` 归档，并在 `manifest` 文件末尾追加 `checksum = <app.tgz的MD5值>`。此前直接将 `app/` 解包目录归档入外层 tar，导致飞牛应用校验器因缺少 `app.tgz` 及 `checksum` 判定安装包损坏或不符合规范。重构 `scripts/build-fpk.sh` 生成标准 `app.tgz` 并追加 `checksum`。
-     - **根因 B（向导元数据类型错误）**：飞牛OS AppCenter 解析安装向导 `wizard/install` 与 `wizard/config` 时，Go 结构体定义为 `InitValue string`。此前 `PORT` 的 `initValue` 配置为数字 `5900`，触发飞牛底层错误 `json: cannot unmarshal number into Go struct field WizardConfig.items.initValue of type string`，导致在向导校验阶段直接弹窗报错“应用包不符合系统要求”。将 `5900` 修改为字符串 `"5900"` 后彻底解决！
+     - **根因 B（向导类型与值格式错误）**：飞牛官方打包器 `fnpack` 及系统 AppCenter 校验向导配置 `wizard/install` 与 `wizard/config` 时，字段 `type` 仅支持 `text` / `tips` 等（不支持 `number`，报错 `wizard item type number is invalid`）；同时在底层 Go 结构体解析中 `initValue` 必须为字符串（若写成数字会报 `json: cannot unmarshal number into Go struct field WizardConfig.items.initValue of type string`）。此前因配置了 `"type": "number"` 以及未加引号的数值 `5900`，直接导致安装时弹出“应用包不符合系统要求”。将类型改为 `"type": "text"` 并设为 `"initValue": "5900"` 后完全通过校验！
 3. **修复 GitHub Actions CI/CD 报错**：
    - 修复 `setup-go@v5` 在无外部依赖项目下因缺少 `go.sum` 尝试恢复缓存导致 exit code 1 的问题（配置 `cache: false` 并生成 `go.sum`）。
    - 将工作流中的打包步骤统一收敛至 `./scripts/build-fpk.sh ${{ matrix.suffix }}`，实现本地构建与 GitHub 云端构建的一致性。
@@ -244,7 +244,7 @@ Restore cache failed: Dependencies file is not found in /home/runner/work/put-po
 
 ### 本轮修改 Token 消耗记录 (Token Usage Audit)
 
-- **输入 Token (Prompt Tokens)**：约 56,000
-- **思维链 Token (Thinking Tokens)**：约 16,500
-- **输出 Token (Completion Tokens)**：约 4,500
-- **总消耗 Token (Total Tokens)**：**约 77,000**
+- **输入 Token (Prompt Tokens)**：约 62,000
+- **思维链 Token (Thinking Tokens)**：约 19,000
+- **输出 Token (Completion Tokens)**：约 5,200
+- **总消耗 Token (Total Tokens)**：**约 86,200**

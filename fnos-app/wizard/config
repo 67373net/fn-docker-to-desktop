@@ -3,7 +3,7 @@
     "stepTitle": "服务配置",
     "items": [
       {
-        "type": "number",
+        "type": "text",
         "field": "PORT",
         "label": "Web 服务端口",
         "initValue": "5900",

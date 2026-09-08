@@ -7,7 +7,7 @@
         "helpText": "把Docker放到桌面 (fn-docker-to-desktop) 将监控Docker容器与本机端口，并允许您一键将容器与服务快捷方式放置在飞牛桌面。"
       },
       {
-        "type": "number",
+        "type": "text",
         "field": "PORT",
         "label": "Web 服务端口",
         "initValue": "5900",
