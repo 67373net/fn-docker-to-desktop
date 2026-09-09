@@ -356,7 +356,7 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
 		AppName:  appName,
 		Title:    settings.PortalName,
-		Desc:     "把Docker放到桌面 - 监控Docker容器与本机端口，将容器与服务快捷方式放置在飞牛OS桌面",
+		Desc:     "把 Docker 放到桌面 - 监控Docker容器与本机端口，将容器与服务快捷方式放置在飞牛OS桌面",
 		Port:     settings.PortalPort,
 		Protocol: "http",
 		Path:     "/",
@@ -422,6 +422,10 @@ func updateUIConfigFile(cfgPath string, settings Settings) error {
 				entry["type"] = settings.PortalUIType
 			}
 			entry["allUsers"] = settings.PortalAllUsers
+			if _, hasGW := entry["gatewaySocket"]; !hasGW {
+				entry["gatewaySocket"] = "app.sock"
+				entry["gatewayPrefix"] = "/app/fn-docker-to-desktop"
+			}
 			urlMap[key] = entry
 		}
 	}

@@ -1,12 +1,11 @@
 {
     ".url": {
         "fn-docker-to-desktop.dashboard": {
-            "title": "把Docker放到桌面",
+            "title": "把 Docker 放到桌面",
             "icon": "images/icon-{0}.png",
             "type": "iframe",
-            "protocol": "http",
-            "url": "/",
-            "port": "5900",
+            "gatewaySocket": "app.sock",
+            "gatewayPrefix": "/app/fn-docker-to-desktop",
             "allUsers": false,
             "noDisplay": false
         }

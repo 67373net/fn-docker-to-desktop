@@ -116,6 +116,11 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  flex: 1;
+}
+
+.nav-spacer {
+  flex: 1;
 }
 
 .nav-tab {
@@ -338,6 +343,33 @@ html, body {
   color: #ffffff;
 }
 
+.btn-success {
+  background-color: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+}
+
+.btn-success:hover {
+  background-color: #059669;
+  border-color: #059669;
+}
+
+.btn-outline-primary {
+  background-color: transparent;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.btn-outline-primary:hover {
+  background-color: var(--primary-subtle);
+}
+
+.desktop-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .btn-sm {
   padding: 0.28rem 0.6rem;
   font-size: 0.8rem;
@@ -468,6 +500,102 @@ table.data-table td.filler-col {
 
 .tag-host {
   background-color: var(--bg-surface-subtle);
+  color: var(--text-muted);
+}
+
+/* Single line Process / Container Tag (Case preserved) */
+.proc-tag {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-transform: none !important;
+  border: 1px solid var(--border-color);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.proc-tag.tag-docker {
+  background-color: var(--primary-subtle);
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+
+.proc-tag.tag-host {
+  background-color: var(--bg-surface-subtle);
+  border-color: var(--border-color);
+  color: var(--text-muted);
+}
+
+/* Toggle Switch */
+.status-toggle-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-color);
+  border-radius: 20px;
+  transition: all 0.2s ease;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--primary);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(16px);
+}
+
+.status-toggle-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-toggle-label.active {
+  color: #10b981;
+}
+
+.status-toggle-label.paused {
   color: var(--text-muted);
 }
 

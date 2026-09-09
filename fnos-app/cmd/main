@@ -55,7 +55,12 @@ start_process() {
         PORT_ARG="-port ${PORT}"
     fi
 
-    "${CMD}" -data "${TRIM_PKGVAR}/data" ${ICON_ARG} ${PORT_ARG} >> "${LOG_FILE}" 2>&1 &
+    SOCK_ARG=""
+    if [ -n "${TRIM_APPDEST}" ]; then
+        SOCK_ARG="-socket ${TRIM_APPDEST}/app.sock"
+    fi
+
+    "${CMD}" -data "${TRIM_PKGVAR}/data" ${ICON_ARG} ${PORT_ARG} ${SOCK_ARG} >> "${LOG_FILE}" 2>&1 &
     local pid=$!
     printf "%s" "${pid}" > "${PID_FILE}"
     log_msg "Started fn-docker-to-desktop with PID ${pid}"
@@ -98,6 +103,7 @@ stop_process() {
         fi
     fi
 
+    rm -f "${TRIM_APPDEST}/app.sock" 2>/dev/null || true
     return 0
 }
 

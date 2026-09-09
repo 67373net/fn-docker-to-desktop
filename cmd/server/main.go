@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +29,7 @@ func main() {
 	hostFlag := flag.String("host", "", "Server host (default: from env HOST or 0.0.0.0)")
 	dataDirFlag := flag.String("data", "data", "Data directory")
 	iconPathFlag := flag.String("icon", "icon.png", "Product icon path")
+	socketFlag := flag.String("socket", "", "Unix domain socket path for fnOS unified gateway")
 	flag.Parse()
 
 	// 1. Initialize 8-day rolling logger with auto-pruning
@@ -45,7 +48,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("把Docker放到桌面 (fn-docker-to-desktop) 启动中...")
+	slog.Info("把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...")
 
 	// Storage
 	storage, err := desktop.NewStorage(*dataDirFlag)
@@ -178,16 +181,65 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
+	// Middleware to support fnOS Unified Gateway prefix
+	var rootHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const gwPrefix = "/app/fn-docker-to-desktop"
+		if r.URL.Path == gwPrefix {
+			http.Redirect(w, r, gwPrefix+"/", http.StatusMovedPermanently)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, gwPrefix+"/") {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, gwPrefix)
+			if r.URL.Path == "" {
+				r.URL.Path = "/"
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+
 	srv := &http.Server{
-		Handler:      mux,
+		Handler:      rootHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// Determine and initialize fnOS Unified Gateway Unix Domain Socket
+	socketPath := *socketFlag
+	if socketPath == "" {
+		if dest := os.Getenv("TRIM_APPDEST"); dest != "" {
+			socketPath = filepath.Join(dest, "app.sock")
+		} else if _, err := os.Stat("/usr/local/apps/@appcenter/fn-docker-to-desktop"); err == nil {
+			socketPath = "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"
+		} else if _, err := os.Stat("/var/apps/fn-docker-to-desktop/target"); err == nil {
+			socketPath = "/var/apps/fn-docker-to-desktop/target/app.sock"
+		}
+	}
+
+	var sockLn net.Listener
+	if socketPath != "" {
+		_ = os.Remove(socketPath)
+		sl, sockErr := net.Listen("unix", socketPath)
+		if sockErr == nil {
+			_ = os.Chmod(socketPath, 0666)
+			sockLn = sl
+			slog.Info("飞牛统一网关 Unix Socket 监听就绪", "socket", socketPath)
+		} else {
+			slog.Warn("飞牛统一网关 Unix Socket 创建失败", "socket", socketPath, "error", sockErr)
+		}
+	}
+
 	// Graceful shutdown handling
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if sockLn != nil {
+		go func() {
+			if err := srv.Serve(sockLn); err != nil && err != http.ErrServerClosed {
+				slog.Warn("Unix Socket 服务终止", "error", err)
+			}
+		}()
+	}
 
 	go func() {
 		slog.Info("服务监听已就绪", "address", fmt.Sprintf("http://%s", addr), "port", port)
@@ -206,6 +258,13 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+
+	if sockLn != nil {
+		_ = sockLn.Close()
+		if socketPath != "" {
+			_ = os.Remove(socketPath)
+		}
+	}
 
 	slog.Info("服务已安全退出")
 }

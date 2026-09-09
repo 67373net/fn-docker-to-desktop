@@ -1,14 +1,1 @@
-[
-  {
-    "stepTitle": "服务配置",
-    "items": [
-      {
-        "type": "text",
-        "field": "PORT",
-        "label": "Web 服务端口",
-        "initValue": "5900",
-        "helpText": "管理控制台访问端口"
-      }
-    ]
-  }
-]
+[]

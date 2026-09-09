@@ -1,4 +1,4 @@
-# 把Docker放到桌面 (fn-docker-to-desktop)
+# 把 Docker 放到桌面 (fn-docker-to-desktop)
 
 **飞牛OS (fnOS) 原生应用：将 Docker 容器、本机端口与网络服务一键放置在飞牛桌面**
 
@@ -10,6 +10,7 @@
 
 - **飞牛OS (fnOS) 原生应用 (`.fpk`) 架构**：
   - 直接在飞牛「应用中心 -> 手动安装」中安装 `.fpk` 包，由系统原生常驻守护运行。
+  - **飞牛统一网关 (Unified Gateway) 零端口占用**：全面支持飞牛统一网关 Unix Domain Socket (`gatewaySocket: "app.sock"`)，安装时**无需配置或输入任何端口号**，彻底杜绝宿主机端口冲突与端口不同步问题。
   - 拥有宿主机 Root 运行权限，直调 `/usr/bin/appcenter-cli` 原生注册桌面快捷入口，动态绑定宿主机端口，直连 `/var/run/docker.sock`。
 - **极致性能与超低资源占用**：
   - **纯 Go 标准库开发**：零庞大外部框架依赖，单个轻量静态编译二进制。
@@ -17,14 +18,16 @@
   - **零打包纯净前端**：原生 HTML5 + CSS3 + ES6 JavaScript，首屏极速秒开。
 - **容器与端口监控（复刻 wild-monitor）**：
   - **实时端口与进程状态**：流式解析 Linux 内核 `/proc/net` 与 `/proc/[pid]`，聚合展示 TCP/UDP、IPv4/IPv6 端口、进程属主、CPU%、物理内存 RSS、磁盘 I/O。
-  - **Docker 容器智能识别**：直连 Docker Socket，自动映射容器名称、服务状态与镜像。
+  - **Docker 容器智能识别**：直连 Docker Socket，自动映射容器名称、服务状态与镜像；默认优先筛选 Docker 容器。
+  - **多选维度筛选**：支持在 Docker 容器、宿主原生、TCP、UDP 间多维度组合筛选，智能处理“全部”逻辑。
   - **宿主机资源概览**：实时统计 CPU、内存、磁盘与网络实时吞吐。
   - **自身桌面图标自适应**：安装后即刻在飞牛OS桌面出现本产品图标；可随时在面板中设置自身界面是在**飞牛内部弹窗 (iframe)** 还是在**浏览器新标签页 (url)** 打开；支持设置图标是**仅管理员可见**还是**所有用户可见**。
 - **服务与快捷方式上桌面（融合 watchcow + watchcow-proxy）**：
-  - **Docker 容器与本机端口一键放桌面**：在端口列表中点击“放到桌面”，即刻在飞牛OS桌面生成官方原生应用图标。
+  - **Docker 容器与本机端口一键放桌面**：在端口列表中点击高亮“放到桌面”，即刻在飞牛OS桌面生成官方原生应用图标。
+  - **同一端口多桌面快捷方式**：支持为同一个端口创建多个不同路径（如 `/admin`）或名称的桌面图标，已创建图标支持一键查看、列表管理与“另存为新图标”。
   - **局域网/广域网服务反向代理到本机并放桌面**：内置超高性能动态反向代理引擎，支持将 PVE、OpenWrt、NAS、打印机等任意 LAN/WAN 服务代理到本机端口并生成桌面图标，支持一键连通性测试、智能可用端口推荐、自签名证书忽略（跳过 TLS 校验）以及 WebSocket 自动透传。
   - **网页快捷方式图标**：支持添加任意外部网址为桌面单纯快捷方式图标。
-  - **桌面图标统一管理**：统一查看、编辑、启用/停用、连通性测试以及移出桌面。
+  - **桌面图标统一管理与即时开关**：内置 iOS 风格滑动开关，随时启用/停用桌面图标（停用时桌面图标隐去，启用时立刻恢复），支持编辑与移出桌面。
 - **8 天本地滚动日志与启动诊断**：
   - **系统级日志记录**：自动按天轮转记录于文件系统 `${TRIM_PKGVAR}/logs/app-YYYY-MM-DD.log` 及 `${TRIM_PKGVAR}/info.log`。
   - **8 天智能自清理**：后台自动修剪清理超过 8 天的历史日志文件，保持磁盘整洁。
@@ -47,10 +50,10 @@
 
 ### 1. 飞牛OS后台安装
 
-1. 从 Release 下载或本地编译生成 `fn-docker-to-desktop-x86.fpk`（或 ARM 架构 `fn-docker-to-desktop-arm.fpk`）。
+1. 从 Release 下载编译好的 `fn-docker-to-desktop-x86.fpk`（或 ARM 架构 `fn-docker-to-desktop-arm.fpk`）。
 2. 打开飞牛OS后台，进入「**应用中心**」。
-3. 点击右上角「**手动安装**」，上传 `.fpk` 文件。
-4. 安装完成后，飞牛桌面上将立即出现「**把Docker放到桌面**」图标。
+3. 点击右上角「**手动安装**」，上传 `.fpk` 文件（统一网关模式，无需配置任何端口）。
+4. 安装完成后，飞牛桌面上将立即出现「**把 Docker 放到桌面**」图标。
 
 ### 2. 开发者本地构建
 
@@ -80,15 +83,16 @@ fn-docker-to-desktop/
 ├── Makefile                    # 快捷构建控制脚本
 ├── go.mod                      # Go 模块定义
 ├── go.sum                      # Go 校验和
-├── CONVERSATION_HISTORY.md     # 完整对话历史、技术架构与 Token 消耗审计
+├── docs/
+│   └── CONVERSATION_HISTORY.md # 完整对话历史、技术架构与 Token 消耗审计
 ├── fnos-app/                   # 飞牛OS原生应用包定义
-│   ├── manifest                # 应用元数据 (提供者 67373net、Root 权限声明)
+│   ├── manifest                # 应用元数据 (提供者 67373net、Root 权限声明、统一网关)
 │   ├── ICON.PNG                # 飞牛桌面图标 (64x64)
 │   ├── ICON_256.PNG            # 飞牛桌面高清图标 (256x256)
 │   ├── cmd/                    # 飞牛服务生命周期脚本 (main, install, uninstall)
 │   ├── config/                 # 权限 (privilege) 与资源 (resource) 配置
-│   ├── wizard/                 # 安装与配置向导
-│   └── app/ui/config           # 桌面图标启动方式配置 (iframe / url)
+│   ├── wizard/                 # 安装向导 (零端口配置)
+│   └── app/ui/config           # 桌面图标启动方式配置 (iframe / url, gatewaySocket)
 ├── scripts/
 │   └── build-fpk.sh            # 官方规范 fpk 打包脚本 (app.tgz + checksum)
 ├── .github/workflows/

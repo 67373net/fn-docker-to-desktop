@@ -1,4 +1,12 @@
-// --- Put Port On Desktop - Frontend Application ---
+// --- 把 Docker 放到桌面 - 前端应用程序 ---
+
+const BASE_PATH = window.location.pathname.startsWith('/app/fn-docker-to-desktop')
+  ? '/app/fn-docker-to-desktop'
+  : '';
+
+function apiUrl(path) {
+  return BASE_PATH + path;
+}
 
 let state = {
   currentTab: 'ports',
@@ -7,7 +15,7 @@ let state = {
   processes: [],
   system: null,
   host: null,
-  portFilter: 'all',
+  portFilters: new Set(['docker']), // 默认筛选 Docker 容器
   portSearch: '',
   desktopSearch: '',
   procSearch: '',
@@ -96,7 +104,7 @@ function switchTab(tab) {
 // --- Data Fetching ---
 async function fetchPorts() {
   try {
-    const res = await fetch('/api/ports');
+    const res = await fetch(apiUrl('/api/ports'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       state.ports = await res.json();
@@ -110,7 +118,7 @@ async function fetchPorts() {
 
 async function fetchDesktopItems() {
   try {
-    const res = await fetch('/api/desktop/items');
+    const res = await fetch(apiUrl('/api/desktop/items'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       state.desktopItems = await res.json();
@@ -124,7 +132,7 @@ async function fetchDesktopItems() {
 
 async function fetchProcesses() {
   try {
-    const res = await fetch('/api/processes');
+    const res = await fetch(apiUrl('/api/processes'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       state.processes = await res.json();
@@ -137,7 +145,7 @@ async function fetchProcesses() {
 
 async function fetchSystem() {
   try {
-    const res = await fetch('/api/system');
+    const res = await fetch(apiUrl('/api/system'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       state.system = await res.json();
@@ -150,7 +158,7 @@ async function fetchSystem() {
 
 async function fetchHost() {
   try {
-    const res = await fetch('/api/host');
+    const res = await fetch(apiUrl('/api/host'));
     if (res.ok) {
       state.host = await res.json();
       renderHostInfo(state.host);
@@ -162,11 +170,11 @@ async function fetchHost() {
 
 async function fetchSettings() {
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetch(apiUrl('/api/settings'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const settings = await res.json();
-      document.getElementById('setting-portal-name').value = settings.portal_name || '把Docker放到桌面';
+      document.getElementById('setting-portal-name').value = settings.portal_name || '把 Docker 放到桌面';
       document.getElementById('setting-portal-port').value = settings.portal_port || 5900;
       
       const uiType = settings.portal_ui_type || 'iframe';
@@ -187,7 +195,7 @@ function initEventSource() {
   if (state.eventSource) {
     state.eventSource.close();
   }
-  state.eventSource = new EventSource('/api/events');
+  state.eventSource = new EventSource(apiUrl('/api/events'));
   state.eventSource.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
@@ -306,7 +314,6 @@ function renderPortsTable() {
   if (!tbody) return;
 
   const query = state.portSearch.trim().toLowerCase();
-  const filter = state.portFilter;
 
   const filtered = state.ports.filter(p => {
     // Search matching
@@ -318,18 +325,34 @@ function renderPortsTable() {
       if (!matchPort && !matchProc && !matchDocker && !matchExe) return false;
     }
 
-    // Filter chip matching
-    if (filter === 'docker') {
-      return p.docker && p.docker.is_docker;
-    } else if (filter === 'host') {
-      return !(p.docker && p.docker.is_docker);
-    } else if (filter === 'listen') {
-      return p.state === 'LISTEN';
-    } else if (filter === 'tcp') {
-      return (p.protocols || []).includes('tcp') || p.protocol.includes('tcp');
-    } else if (filter === 'udp') {
-      return (p.protocols || []).includes('udp') || p.protocol.includes('udp');
+    // Multi-select Filter chip matching
+    const filters = state.portFilters;
+    if (filters.has('all')) {
+      return true;
     }
+
+    const hasDocker = filters.has('docker');
+    const hasHost = filters.has('host');
+    const isDocker = !!(p.docker && p.docker.is_docker);
+
+    if (hasDocker && !hasHost) {
+      if (!isDocker) return false;
+    } else if (hasHost && !hasDocker) {
+      if (isDocker) return false;
+    }
+
+    const hasTcp = filters.has('tcp');
+    const hasUdp = filters.has('udp');
+    const protoStr = (p.protocol || '').toLowerCase();
+    const isTcp = (p.protocols || []).some(x => x.toLowerCase().includes('tcp')) || protoStr.includes('tcp');
+    const isUdp = (p.protocols || []).some(x => x.toLowerCase().includes('udp')) || protoStr.includes('udp');
+
+    if (hasTcp && !hasUdp) {
+      if (!isTcp) return false;
+    } else if (hasUdp && !hasTcp) {
+      if (!isUdp) return false;
+    }
+
     return true;
   });
 
@@ -343,16 +366,32 @@ function renderPortsTable() {
     const portUrl = getHostTargetUrl(p.local_port, 'http', '/');
     const isDocker = p.docker && p.docker.is_docker;
     const procDisplayName = isDocker ? p.docker.container_name : (p.process_name || '系统服务');
-    const typeTag = isDocker
-      ? `<span class="protocol-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image)}">Docker: ${escapeHtml(p.docker.container_name)}</span>`
-      : `<span class="protocol-tag tag-host">宿主原生</span>`;
+    const procTag = isDocker
+      ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
+      : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`;
 
-    const desktopCell = p.has_desktop
-      ? `<span class="status-badge on-desktop" title="桌面图标：${escapeHtml(p.desktop_name)}">已在桌面</span>`
-      : `<button class="btn btn-sm btn-secondary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}">
+    const matchingItems = (state.desktopItems || []).filter(item => item.port === p.local_port);
+    const count = matchingItems.length || p.desktop_count || (p.has_desktop ? 1 : 0);
+
+    let desktopCell = '';
+    if (count > 0) {
+      desktopCell = `
+        <div class="desktop-btn-group">
+          <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span>已在桌面(${count})</span>
+          </button>
+          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" title="为此端口添加另一个不同路径或名称的桌面图标">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>`;
+    } else {
+      desktopCell = `
+        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
           <span>放到桌面</span>
         </button>`;
+    }
 
     const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '-';
     const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
@@ -369,10 +408,7 @@ function renderPortsTable() {
         <span class="protocol-tag">${escapeHtml(p.protocol)}</span>
       </td>
       <td><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
-      <td>
-        <div><strong>${escapeHtml(procDisplayName)}</strong></div>
-        <div style="margin-top: 3px;">${typeTag}</div>
-      </td>
+      <td>${procTag}</td>
       <td style="font-variant-numeric: tabular-nums;">${resText}</td>
       <td>${desktopCell}</td>
       <td>
@@ -391,6 +427,32 @@ function renderPortsTable() {
 
   // Bind actions
   tbody.querySelectorAll('.btn-add-port-to-desktop').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const port = parseInt(btn.dataset.port, 10);
+      const name = btn.dataset.name || `端口-${port}`;
+      openCreateDesktopModalWithPort(port, name);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-manage-desktop-port').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const port = parseInt(btn.dataset.port, 10);
+      const matching = (state.desktopItems || []).filter(i => i.port === port);
+      if (matching.length === 1) {
+        openEditDesktopModal(matching[0].id);
+      } else if (matching.length > 1) {
+        const portObj = state.ports.find(x => x.local_port === port);
+        const name = portObj && portObj.docker && portObj.docker.is_docker
+          ? portObj.docker.container_name
+          : (portObj && portObj.process_name ? portObj.process_name : `端口-${port}`);
+        openPortDesktopListModal(port, name, matching);
+      } else {
+        openCreateDesktopModalWithPort(port, `端口-${port}`);
+      }
+    });
+  });
+
+  tbody.querySelectorAll('.btn-add-another-desktop').forEach(btn => {
     btn.addEventListener('click', () => {
       const port = parseInt(btn.dataset.port, 10);
       const name = btn.dataset.name || `端口-${port}`;
@@ -438,20 +500,29 @@ function renderDesktopTable() {
 
     const openModeText = item.ui_type === 'iframe' ? '飞牛内部弹窗' : '浏览器新标签';
     const permText = item.all_users ? '所有用户' : '仅管理员';
-    const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
+    const toggleHtml = `
+      <div class="status-toggle-wrapper">
+        <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
+          <input type="checkbox" class="desktop-toggle-checkbox" data-id="${item.id}" ${item.enabled ? 'checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
+          ${item.enabled ? '就绪' : '已停用'}
+        </span>
+      </div>`;
 
-    const iconSrc = item.icon ? (item.icon.startsWith('http') ? item.icon : `/icons/${item.icon.replace('icons/', '')}`) : 'icon.png';
+    const iconSrc = item.icon ? (item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`)) : apiUrl('/icon.png');
 
     html += `<tr>
       <td>
-        <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='icon.png'" alt="图标">
+        <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标">
       </td>
       <td><strong>${escapeHtml(item.name)}</strong></td>
       <td><span class="protocol-tag">${modeText}</span></td>
       <td><code>${escapeHtml(targetText)}</code></td>
       <td>${openModeText}</td>
       <td>${permText}</td>
-      <td>${statusText}</td>
+      <td>${toggleHtml}</td>
       <td>
         <div class="table-actions">
           <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}">
@@ -470,6 +541,28 @@ function renderDesktopTable() {
 
   tbody.innerHTML = html;
 
+  tbody.querySelectorAll('.desktop-toggle-checkbox').forEach(chk => {
+    chk.addEventListener('change', async () => {
+      const id = chk.dataset.id;
+      try {
+        const res = await fetch(apiUrl(`/api/desktop/items/${id}/toggle`), { method: 'POST' });
+        if (res.ok) {
+          const updated = await res.json();
+          const item = state.desktopItems.find(i => i.id === id);
+          if (item) item.enabled = updated.enabled;
+          renderDesktopTable();
+          fetchPorts();
+        } else {
+          alert('切换状态失败');
+          chk.checked = !chk.checked;
+        }
+      } catch (e) {
+        alert('网络请求异常: ' + e.message);
+        chk.checked = !chk.checked;
+      }
+    });
+  });
+
   tbody.querySelectorAll('.btn-edit-desktop').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
@@ -481,7 +574,7 @@ function renderDesktopTable() {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       if (confirm('确定从飞牛桌面移出此图标吗？')) {
-        await fetch(`/api/desktop/items/${id}`, { method: 'DELETE' });
+        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
         await fetchDesktopItems();
         await fetchPorts();
       }
@@ -585,6 +678,22 @@ function initModals() {
     formItem.addEventListener('submit', handleSaveDesktopItem);
   }
 
+  // Save as new button in edit modal
+  const btnSaveAsNew = document.getElementById('btn-save-as-new');
+  if (btnSaveAsNew) {
+    btnSaveAsNew.addEventListener('click', () => {
+      // Clear ID so handleSaveDesktopItem treats it as a brand new item
+      document.getElementById('item-id').value = '';
+      if (formItem) {
+        if (formItem.requestSubmit) {
+          formItem.requestSubmit();
+        } else {
+          formItem.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+    });
+  }
+
   // Test target button
   const btnTest = document.getElementById('btn-test-target');
   if (btnTest) {
@@ -638,14 +747,18 @@ function resetDesktopForm() {
   document.getElementById('item-shortcut-url').value = '';
   document.getElementById('item-protocol').value = 'http';
   document.getElementById('item-path').value = '/';
-  document.getElementById('item-ui-type').value = 'url';
+  document.getElementById('item-ui-type').value = 'iframe';
   document.getElementById('item-all-users').value = 'false';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
-  document.getElementById('icon-preview-img').src = 'icon.png';
+  document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
   document.getElementById('icon-preview-name').textContent = '默认图标';
   document.getElementById('desktop-modal-title').textContent = '添加桌面图标';
+  const btnSaveAsNew = document.getElementById('btn-save-as-new');
+  if (btnSaveAsNew) btnSaveAsNew.style.display = 'none';
+  const btnSave = document.getElementById('btn-save-desktop-item');
+  if (btnSave) btnSave.textContent = '保存并放到桌面';
   setDesktopModalMode('local');
 }
 
@@ -667,9 +780,14 @@ function openEditDesktopModal(id) {
   document.getElementById('item-name').value = item.name;
   document.getElementById('item-protocol').value = item.protocol || 'http';
   document.getElementById('item-path').value = item.path || '/';
-  document.getElementById('item-ui-type').value = item.ui_type || 'url';
+  document.getElementById('item-ui-type').value = item.ui_type || 'iframe';
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
   document.getElementById('item-icon').value = item.icon || '';
+
+  const btnSaveAsNew = document.getElementById('btn-save-as-new');
+  if (btnSaveAsNew) btnSaveAsNew.style.display = 'inline-flex';
+  const btnSave = document.getElementById('btn-save-desktop-item');
+  if (btnSave) btnSave.textContent = '保存并更新桌面';
 
   if (item.mode === 'local') {
     document.getElementById('item-local-port').value = item.port || '';
@@ -685,12 +803,81 @@ function openEditDesktopModal(id) {
   }
 
   if (item.icon) {
-    const src = item.icon.startsWith('http') ? item.icon : `/icons/${item.icon.replace('icons/', '')}`;
+    const src = item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`);
     document.getElementById('icon-preview-img').src = src;
     document.getElementById('icon-preview-name').textContent = item.icon;
+  } else {
+    document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
+    document.getElementById('icon-preview-name').textContent = '默认图标';
   }
 
   openModal('modal-desktop-item');
+}
+
+// 端口多桌面图标列表管理弹窗
+function openPortDesktopListModal(port, procName, items) {
+  document.getElementById('port-desktop-list-title').textContent = `端口 ${port} 的桌面图标 (${items.length})`;
+  const tbody = document.getElementById('port-desktop-list-tbody');
+  if (!tbody) return;
+
+  let html = '';
+  for (const item of items) {
+    const iconSrc = item.icon
+      ? (item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`))
+      : apiUrl('/icon.png');
+    const openModeText = item.ui_type === 'iframe' ? '飞牛内部弹窗' : '浏览器新标签';
+    const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
+
+    html += `<tr>
+      <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标"></td>
+      <td><strong>${escapeHtml(item.name)}</strong></td>
+      <td><code>${escapeHtml(item.path || '/')}</code></td>
+      <td>${openModeText}</td>
+      <td>${statusText}</td>
+      <td>
+        <div class="table-actions">
+          <button class="btn btn-sm btn-secondary btn-edit-from-list" data-id="${item.id}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            <span>编辑</span>
+          </button>
+          <button class="btn btn-sm btn-danger btn-delete-from-list" data-id="${item.id}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            <span>移出</span>
+          </button>
+        </div>
+      </td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+
+  tbody.querySelectorAll('.btn-edit-from-list').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeModal('modal-port-desktop-list');
+      openEditDesktopModal(btn.dataset.id);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-delete-from-list').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (confirm('确定从飞牛桌面移出此图标吗？')) {
+        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+        await fetchDesktopItems();
+        await fetchPorts();
+        closeModal('modal-port-desktop-list');
+      }
+    });
+  });
+
+  const btnAdd = document.getElementById('btn-add-from-list');
+  if (btnAdd) {
+    btnAdd.onclick = () => {
+      closeModal('modal-port-desktop-list');
+      openCreateDesktopModalWithPort(port, procName);
+    };
+  }
+
+  openModal('modal-port-desktop-list');
 }
 
 async function handleSaveDesktopItem(e) {
@@ -722,6 +909,14 @@ async function handleSaveDesktopItem(e) {
     if (!targetUrl) return alert('请输入目标网址');
   }
 
+  let enabled = true;
+  if (id) {
+    const existing = state.desktopItems.find(i => i.id === id);
+    if (existing && existing.enabled !== undefined) {
+      enabled = existing.enabled;
+    }
+  }
+
   const payload = {
     id: id || `item-${Date.now() % 1000000}`,
     name,
@@ -734,11 +929,12 @@ async function handleSaveDesktopItem(e) {
     all_users: allUsers,
     icon,
     skip_tls_verify: skipTls,
+    enabled,
   };
 
   try {
     const method = id ? 'PUT' : 'POST';
-    const url = id ? `/api/desktop/items/${id}` : '/api/desktop/items';
+    const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
     const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -771,7 +967,7 @@ async function handleTestTarget() {
   resEl.textContent = '正在测试连通性...';
 
   try {
-    const res = await fetch('/api/proxy/test', {
+    const res = await fetch(apiUrl('/api/proxy/test'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target_url: targetUrl }),
@@ -792,7 +988,7 @@ async function handleTestTarget() {
 
 async function handleRecommendPort() {
   try {
-    const res = await fetch('/api/ports/available?start=18000');
+    const res = await fetch(apiUrl('/api/ports/available?start=18000'));
     if (res.ok) {
       const data = await res.json();
       if (data.recommended_port) {
@@ -812,14 +1008,15 @@ async function handleIconUpload(e) {
   formData.append('icon', file);
 
   try {
-    const res = await fetch('/api/icons/upload', {
+    const res = await fetch(apiUrl('/api/icons/upload'), {
       method: 'POST',
       body: formData,
     });
     const data = await res.json();
     if (res.ok && data.filename) {
       document.getElementById('item-icon').value = data.filename;
-      document.getElementById('icon-preview-img').src = data.url;
+      const previewSrc = data.url.startsWith('http') ? data.url : apiUrl(data.url);
+      document.getElementById('icon-preview-img').src = previewSrc;
       document.getElementById('icon-preview-name').textContent = data.filename;
     } else {
       alert(data.error || '图标上传失败');
@@ -844,7 +1041,7 @@ async function handleSaveSettings() {
   statusEl.textContent = '正在保存并应用到飞牛桌面...';
 
   try {
-    const res = await fetch('/api/settings', {
+    const res = await fetch(apiUrl('/api/settings'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -938,7 +1135,7 @@ async function handleAuthLogin(e) {
   msgEl.textContent = '';
 
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(apiUrl('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: pwd }),
@@ -961,12 +1158,34 @@ function initApp() {
   initNavigation();
   initModals();
 
-  // Filter chips in Ports tab
-  document.querySelectorAll('.filter-chips .chip[data-filter]').forEach(chip => {
+  // Filter chips in Ports tab (multi-select with special 'all' handling)
+  const portFilterChips = document.querySelectorAll('#port-filter-chips .chip[data-filter]');
+  portFilterChips.forEach(chip => {
     chip.addEventListener('click', () => {
-      document.querySelectorAll('.filter-chips .chip[data-filter]').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.portFilter = chip.dataset.filter;
+      const filter = chip.dataset.filter;
+      if (filter === 'all') {
+        state.portFilters.clear();
+        state.portFilters.add('all');
+        portFilterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'all'));
+      } else {
+        state.portFilters.delete('all');
+        const allChip = document.querySelector('#port-filter-chips .chip[data-filter="all"]');
+        if (allChip) allChip.classList.remove('active');
+
+        if (state.portFilters.has(filter)) {
+          state.portFilters.delete(filter);
+          chip.classList.remove('active');
+        } else {
+          state.portFilters.add(filter);
+          chip.classList.add('active');
+        }
+
+        // If no filter selected, revert back to 'all'
+        if (state.portFilters.size === 0) {
+          state.portFilters.add('all');
+          if (allChip) allChip.classList.add('active');
+        }
+      }
       renderPortsTable();
     });
   });
@@ -1110,7 +1329,7 @@ function stopLogTimer() {
 
 async function fetchLogs(isAutoPoll = false) {
   try {
-    let url = `/api/logs?level=${encodeURIComponent(state.logLevel || 'ALL')}`;
+    let url = apiUrl(`/api/logs?level=${encodeURIComponent(state.logLevel || 'ALL')}`);
     if (state.logDate) {
       url += `&date=${encodeURIComponent(state.logDate)}`;
     }
@@ -1214,7 +1433,7 @@ function scrollLogsToBottom() {
 function downloadLogFile() {
   const select = document.getElementById('log-date-select');
   const date = select ? select.value : '';
-  window.open(`/api/logs/download?date=${encodeURIComponent(date)}`, '_blank');
+  window.open(apiUrl(`/api/logs/download?date=${encodeURIComponent(date)}`), '_blank');
 }
 
 window.addEventListener('DOMContentLoaded', initApp);

@@ -44,6 +44,7 @@ type PortEntry struct {
 	Docker       DockerInfo      `json:"docker"`                  // Docker container information
 	Addresses    []SocketAddress `json:"addresses"`               // All detailed socket endpoints
 	HasDesktop   bool            `json:"has_desktop"`             // Whether this port has a desktop icon configured
+	DesktopCount int             `json:"desktop_count"`           // Number of desktop icons for this port
 	DesktopName  string          `json:"desktop_name,omitempty"`  // Desktop icon title if configured
 }
 

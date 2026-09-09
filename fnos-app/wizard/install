@@ -1,17 +1,10 @@
 [
   {
-    "stepTitle": "基础配置",
+    "stepTitle": "安装说明",
     "items": [
       {
         "type": "tips",
-        "helpText": "把Docker放到桌面 (fn-docker-to-desktop) 将监控Docker容器与本机端口，并允许您一键将容器与服务快捷方式放置在飞牛桌面。"
-      },
-      {
-        "type": "text",
-        "field": "PORT",
-        "label": "Web 服务端口",
-        "initValue": "5900",
-        "helpText": "管理控制台访问端口，默认 5900"
+        "helpText": "<b>把 Docker 放到桌面 (fn-docker-to-desktop)</b><br><br>安装完成后将在飞牛桌面创建快捷入口。支持将任意 Docker 容器与本机端口一键映射到桌面，通过飞牛统一网关无缝直连，零端口占用，免端口配置。"
       }
     ]
   }

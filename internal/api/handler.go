@@ -188,17 +188,22 @@ func (h *Handler) handleGetPorts(w http.ResponseWriter, r *http.Request) {
 
 	ports := monitor.ScanPorts(h.procPath, false)
 	desktopItems := h.storage.GetAllItems()
-	portMap := make(map[int]string)
+	portItemCount := make(map[int]int)
+	portFirstItem := make(map[int]string)
 	for _, item := range desktopItems {
 		if item.Port > 0 {
-			portMap[item.Port] = item.Name
+			portItemCount[item.Port]++
+			if _, ok := portFirstItem[item.Port]; !ok {
+				portFirstItem[item.Port] = item.Name
+			}
 		}
 	}
 
 	for i := range ports {
-		if name, ok := portMap[ports[i].LocalPort]; ok {
+		if count, ok := portItemCount[ports[i].LocalPort]; ok && count > 0 {
 			ports[i].HasDesktop = true
-			ports[i].DesktopName = name
+			ports[i].DesktopCount = count
+			ports[i].DesktopName = portFirstItem[ports[i].LocalPort]
 		}
 	}
 
@@ -259,16 +264,21 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Send initial snapshot
 	initialPorts := monitor.ScanPorts(h.procPath, false)
 	desktopItems := h.storage.GetAllItems()
+	pItemCount := make(map[int]int)
 	pMap := make(map[int]string)
 	for _, item := range desktopItems {
 		if item.Port > 0 {
-			pMap[item.Port] = item.Name
+			pItemCount[item.Port]++
+			if _, ok := pMap[item.Port]; !ok {
+				pMap[item.Port] = item.Name
+			}
 		}
 	}
 	for i := range initialPorts {
-		if name, ok := pMap[initialPorts[i].LocalPort]; ok {
+		if count, ok := pItemCount[initialPorts[i].LocalPort]; ok && count > 0 {
 			initialPorts[i].HasDesktop = true
-			initialPorts[i].DesktopName = name
+			initialPorts[i].DesktopCount = count
+			initialPorts[i].DesktopName = pMap[initialPorts[i].LocalPort]
 		}
 	}
 
@@ -372,12 +382,30 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败"}, http.StatusBadRequest)
+		return
+	}
+
+	var rawMap map[string]interface{}
+	_ = json.Unmarshal(bodyBytes, &rawMap)
+
 	var item desktop.DesktopItem
-	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+	if err := json.Unmarshal(bodyBytes, &item); err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
 	item.ID = id
+
+	// Preserve enabled state if not explicitly specified in payload
+	if _, hasEnabled := rawMap["enabled"]; !hasEnabled {
+		if existing, ok := h.storage.GetItem(id); ok {
+			item.Enabled = existing.Enabled
+		} else {
+			item.Enabled = true
+		}
+	}
 
 	if item.Mode == desktop.ModeProxy && item.Enabled {
 		_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
