@@ -720,6 +720,81 @@ tcp   LISTEN 0      4096            [::]:5900          [::]:*    users:(("docker
 - **输出 Token (Completion Tokens)**：约 6,800
 - **总消耗 Token (Total Tokens)**：**约 96,300**
 
+---
+
+## 第十轮对话（2026-09-09）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+安装后打开app，窗口内套娃显示了一个飞牛桌面,并没有显示我的产品
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. “套娃显示飞牛桌面”根因分析 (100% 确诊)
+- **官方规范查证**：
+  查阅飞牛开放平台官方文档《统一网关》与《应用入口》标准规范：
+  在声明统一网关 (`gatewaySocket` + `gatewayPrefix`) 时，`app/ui/config` 中必须显式声明 `"url"` 与 `"protocol": ""`：
+  ```json
+  {
+    ".url": {
+      "myapp.main": {
+        "title": "My App",
+        "icon": "images/icon_{0}.png",
+        "type": "iframe",
+        "protocol": "",
+        "gatewayPrefix": "/app/myapp",
+        "gatewaySocket": "app.sock",
+        "url": "/app/myapp",
+        "allUsers": true
+      }
+    }
+  }
+  ```
+- **故障链溯源**：
+  - 在 v1.0.4 中，`fnos-app/app/ui/config` 配置了 `gatewaySocket` 和 `gatewayPrefix`，但缺少了 `"url"` 字段。
+  - 飞牛 OS Web 桌面在用户点击图标启动应用时，其前端 JS 逻辑会读取 `app/ui/config` 中的 `entry.url` 作为 iframe 的加载目标。
+  - 由于 `entry.url` 为空且未声明外部端口，飞牛前端降级将 iframe 的 `src` 设定为了系统根路径 `"/"`（即 `http://<fnos-ip>:<fnos-port>/`）。
+  - 最终结果：弹出的应用窗口中的 iframe 重新请求并加载了飞牛自身的 Web 桌面，在视觉上表现为“窗口内套娃显示了一个飞牛桌面”，自己的应用页面完全没有被加载。
+
+#### 2. 根治方案与实施细节
+1. **修正静态应用入口配置 (`fnos-app/app/ui/config`)**：
+   - 补齐 `"protocol": ""`；
+   - 明确指定 `"url": "/app/fn-docker-to-desktop/"`；
+   - 保留 `"gatewayPrefix": "/app/fn-docker-to-desktop"` 与 `"gatewaySocket": "app.sock"`；
+   - 飞牛桌面点击图标时将精准把 iframe `src` 指向 `/app/fn-docker-to-desktop/`，由飞牛网关直接转发至本应用 Unix Domain Socket。
+2. **修正动态配置同步 (`internal/desktop/installer.go`)**：
+   - 在 `updateUIConfigFile` 中，保证运行时动态更新系统级配置时，始终写入规范的 `"protocol": ""`、`"url": "/app/fn-docker-to-desktop/"`、`"gatewayPrefix": "/app/fn-docker-to-desktop"` 和 `"gatewaySocket": "app.sock"`，并彻底移除无用的 `port` 字段。
+   - 在 `SyncSelfApp` 中，将以往向 `manifest` 回写端口的旧逻辑彻底改为 `removeManifestServicePort`，从 `manifest` 中剔除 `service_port`，杜绝系统识别冲突。
+3. **前端相对路径与防无斜杠重定向保障**：
+   - 在 `cmd/server/main.go` 中维持 302 自动补全末尾斜杠；
+   - 在 `web/index.html` 的 `<head>` 首行加入内联防护脚本，若页面在非标准无斜杠路径加载则自动重写为带斜杠的标准路径，确保 `style.css`、`app.js` 等相对路径静态资源与 API 请求绝对可靠。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **本地构建与包完整性校验 (v1.0.5)**：
+   - 执行 `./scripts/build-fpk.sh x86`，编译与打包一次性通过。
+   - 遵循规范清理本地 `.fpk` 产物。
+2. **版本更新与发布**：
+   - 升级 `fnos-app/manifest` 版本号为 `1.0.5`。
+   - 提交代码、打标签 `v1.0.5` 并推送至 GitHub。
+   - GitHub Actions 自动编译生成多架构安装包并在 Release 发布。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 52,000
+- **思维链 Token (Thinking Tokens)**：约 16,000
+- **输出 Token (Completion Tokens)**：约 5,500
+- **总消耗 Token (Total Tokens)**：**约 73,500**
+
+
 
 
 

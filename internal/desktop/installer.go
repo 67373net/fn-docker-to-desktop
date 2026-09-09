@@ -343,7 +343,7 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 	)
 	for _, mfPath := range possibleManifests {
 		if fi, err := os.Stat(mfPath); err == nil && !fi.IsDir() {
-			_ = updateManifestServicePort(mfPath, settings.PortalPort)
+			_ = removeManifestServicePort(mfPath)
 		}
 	}
 
@@ -415,17 +415,15 @@ func updateUIConfigFile(cfgPath string, settings Settings) error {
 			if settings.PortalName != "" {
 				entry["title"] = settings.PortalName
 			}
-			if settings.PortalPort > 0 {
-				entry["port"] = strconv.Itoa(settings.PortalPort)
-			}
 			if settings.PortalUIType != "" {
 				entry["type"] = settings.PortalUIType
 			}
 			entry["allUsers"] = settings.PortalAllUsers
-			if _, hasGW := entry["gatewaySocket"]; !hasGW {
-				entry["gatewaySocket"] = "app.sock"
-				entry["gatewayPrefix"] = "/app/fn-docker-to-desktop"
-			}
+			entry["protocol"] = ""
+			entry["gatewaySocket"] = "app.sock"
+			entry["gatewayPrefix"] = "/app/fn-docker-to-desktop"
+			entry["url"] = "/app/fn-docker-to-desktop/"
+			delete(entry, "port")
 			urlMap[key] = entry
 		}
 	}
@@ -473,22 +471,23 @@ func SanitizeFileName(name string) string {
 	return res
 }
 
-func updateManifestServicePort(mfPath string, port int) error {
+func removeManifestServicePort(mfPath string) error {
 	data, err := os.ReadFile(mfPath)
 	if err != nil {
 		return err
 	}
 	lines := strings.Split(string(data), "\n")
-	found := false
-	for idx, line := range lines {
+	var newLines []string
+	changed := false
+	for _, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "service_port") {
-			lines[idx] = fmt.Sprintf("service_port          = %d", port)
-			found = true
-			break
+			changed = true
+			continue
 		}
+		newLines = append(newLines, line)
 	}
-	if !found {
+	if !changed {
 		return nil
 	}
-	return os.WriteFile(mfPath, []byte(strings.Join(lines, "\n")), 0644)
+	return os.WriteFile(mfPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
