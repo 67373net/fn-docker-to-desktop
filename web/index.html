@@ -366,23 +366,6 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">飞牛桌面打开方式</label>
-            <div class="radio-group">
-              <label class="radio-label">
-                <input type="radio" name="setting-portal-ui-type" value="iframe">
-                <span>飞牛内部弹窗 (iframe 窗口)</span>
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="setting-portal-ui-type" value="url">
-                <span>浏览器新标签页 (url)</span>
-              </label>
-            </div>
-            <div class="form-tip" style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
-              注：决定在飞牛OS桌面上点击该应用图标时，是以系统内置弹窗形态直接运行，还是在浏览器的全新标签页中打开。
-            </div>
-          </div>
-
-          <div class="form-group">
             <label class="form-label">飞牛桌面可见权限</label>
             <div class="radio-group">
               <label class="radio-label">
@@ -516,8 +499,8 @@
             <div class="form-group flex-1">
               <label class="form-label">访问可见权限</label>
               <select id="item-all-users" class="form-select">
+                <option value="true" selected>所有用户可见 (推荐)</option>
                 <option value="false">仅管理员可见</option>
-                <option value="true">所有用户可见</option>
               </select>
             </div>
           </div>

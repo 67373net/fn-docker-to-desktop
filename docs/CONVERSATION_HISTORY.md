@@ -883,6 +883,104 @@ tcp   LISTEN 0      4096            [::]:5900          [::]:*    users:(("docker
 - **输出 Token (Completion Tokens)**：约 5,800
 - **总消耗 Token (Total Tokens)**：**约 81,800**
 
+---
+
+## 第十次修改与深度对标修复（2026-09-09 22:15）
+
+### 用户原始需求 (User Request)
+
+> - 我设置了打开方式为 浏览器新标签页，但还是在内部窗口打开了，是否使用非端口模式时，无法在新窗口打开。如果是这样的话，是否应该将这个选项去掉。
+> - 将图标放到桌面仍然未成功，以下是日志，好像也看不出来为什么。另外日志中还是有端口？
+> 2026-09-09 22:03:39 INFO [INFO] 收到终止信号，正在关闭服务...
+> 2026-09-09 22:03:39 INFO [INFO] 服务已安全退出
+> 2026-09-09 22:03:50 INFO [INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...
+> 2026-09-09 22:03:50 INFO [INFO] ==============================================================================
+> 2026-09-09 22:03:50 INFO [INFO] 把Docker放到桌面 (fn-docker-to-desktop) 服务启动诊断信息
+> 2026-09-09 22:03:50 INFO [INFO] ------------------------------------------------------------------------------
+> 2026-09-09 22:03:50 INFO [INFO] 基础环境 系统=linux/amd64 Go版本=go1.22.12 PID=3010762 UID/GID=0/0 主机名=wildtu-pve-fn
+> 2026-09-09 22:03:50 INFO [INFO] 运行路径 工作目录=/ 程序文件=/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop 数据目录=/usr/local/apps/@appdata/fn-docker-to-desktop/data 图标路径=icon.png
+> 2026-09-09 22:03:50 INFO [INFO] 飞牛系统变量 TRIM_APPDEST=/usr/local/apps/@appcenter/fn-docker-to-desktop TRIM_PKGVAR=/usr/local/apps/@appdata/fn-docker-to-desktop PORT_ENV=
+> 2026-09-09 22:03:50 INFO [INFO] 网络服务 绑定端口=5900 监听主机=0.0.0.0 网卡IP=10.10.10.10, 172.17.0.1
+> 2026-09-09 22:03:50 INFO [INFO] 日志系统 日志存储路径=/usr/local/apps/@appdata/fn-docker-to-desktop/logs 保留天数=8
+> 2026-09-09 22:03:50 INFO [INFO] ==============================================================================
+> 2026-09-09 22:03:50 INFO [INFO] 自身桌面图标配置已存在且有效 path=/usr/local/apps/@appcenter/fn-docker-to-desktop/ui/config
+> 2026-09-09 22:03:50 INFO [INFO] 已直接更新原生飞牛桌面配置文件 path=/usr/local/apps/@appcenter/fn-docker-to-desktop/ui/config
+> 2026-09-09 22:03:50 INFO [INFO] 产品自身桌面图标配置更新完成 (原生模式)
+> 2026-09-09 22:03:51 INFO [INFO] 服务监听已就绪 address=http://0.0.0.0:5900 port=5900
+
+---
+
+### 问题分析与根因定位 (Root Cause Analysis)
+
+#### 1. 自身桌面打开方式：统一网关免端口模式下为何无法以新标签页打开？
+- **飞牛系统桌面机制**：飞牛桌面前端在打开应用时，由 `app/ui/config` 的 `.url[appname]` 定义：
+  - 若配置了独立的宿主机 TCP 端口（如 `port: "5900"`），桌面可以拼出完整的外部访问 URL，因此支持以 `type: "url"` 打开浏览器新标签页。
+  - 当使用飞牛统一网关模式（`gatewaySocket: "app.sock"`, `gatewayPrefix: "/app/fn-docker-to-desktop"`, `protocol: ""`）时，应用完全没有宿主机外部端口，流量完全由飞牛系统内置的反向代理经由 Unix Domain Socket 转接。飞牛 OS 桌面对于免端口的网关应用，仅支持在系统桌面内部的 iframe 弹窗中加载对应前缀的路由。
+- **解决方案**：顺应用户建议，彻底在“自身桌面图标设置”中去掉“飞牛桌面打开方式”这一选项，避免无效设置带来困惑；底层强制将自身 UI 配置的 `type` 设为 `"iframe"`。
+
+#### 2. 为什么日志中依然出现端口 5900 且仍尝试监听？
+- **根因**：`cmd/server/main.go` 中无论是否为 socket 模式，均默认将 `port` 初始化为 `5900`，且无论如何都执行了 `net.Listen("tcp", addr)`。这不仅造成日志中输出“绑定端口=5900”，还会浪费一个无意义的 TCP 端口监听。
+- **解决方案**：
+  - 提前检测 `socketPath`；若处于飞牛统一网关模式，且用户未显式通过命令行或环境变量指定端口，则 `port` 直接置为 `0`；
+  - 仅在 `port > 0` 时才创建 TCP 监听器和启动 TCP HTTP 监听协程；
+  - 更新诊断日志输出：当 `port <= 0` 时，清晰输出 `运行模式: 飞牛统一网关模式 (免端口模式)` 与 Socket 路径，不输出任何 TCP 端口信息。
+
+#### 3. 为什么之前放置到桌面的图标依然没有出现？对标 WatchCow 深度排查
+- **根因一：`cmd/main status` 退出码导致飞牛系统判定应用“已停止”并隐藏图标**：
+  - 在 v1.0.6 中，`cmd/main` 使用 `docker ps | grep CONTAINER_NAME` 校验状态，未匹配到时返回 `exit 3`。
+  - 在很多实际场景中：如果用户放的是宿主机原生端口、局域网代理服务、网页纯快捷方式，或者 Docker 容器名称带有斜杠（如 `/my-container`），或者飞牛 appcenter 守护进程的环境变量 PATH 中没有 `docker` 命令或无权访问 docker socket，`cmd/main status` 就会返回退出码 3！
+  - 飞牛 OS 的 LSB 规范：退出码 0 表示运行正常，退出码 3 表示程序已停止。飞牛系统一旦探测到应用 `status` 退出码为 3，立即将其标记为“已停止”并自动从飞牛桌面上隐藏/撤下！
+  - **修复方案**：对于快捷方式/端口生成的轻量快捷应用，`cmd/main` 的 `start|stop|status` 统一固定返回 `exit 0`！确保应用在飞牛系统中始终被认定为正常运行，图标永久稳固地显示在飞牛桌面与应用中心“已安装”中。
+- **根因二：`appcenter-cli install-local` 之后立即调用 `start` 造成 10500 瞬态冲突**：
+  - 在飞牛 OS 中，`appcenter-cli install-local` 安装完毕后，系统内部会自动注册并异步启动应用。
+  - 原代码在 `install-local` 刚返回后立即同步调用 `appcenter-cli start <appName>`，正好撞上飞牛系统内部正在启动的瞬态状态，导致飞牛抛出 `code 10500`（"app is already starting"）或锁冲突，进而打断了应用上线。
+  - **修复方案**：对标 WatchCow，移除安装成功后的冗余 `start` 调用；仅在间隔检测确认未发现应用时作为兜底触发。
+- **根因三：临时打包目录权限阻断守护进程读取**：
+  - `os.MkdirTemp` 生成的 `/tmp/fndocker-...` 权限为 `0700`（仅 root 拥有读写权）。飞牛 `appcenter-cli` 在非 root 用户（如 `trim`）上下文中读取该目录时会遭遇 Permission Denied。
+  - **修复方案**：打包目录及各级子目录均显式 `os.Chmod(d, 0755)`。
+- **根因四：`allUsers` 默认值导致非管理员用户桌面不可见**：
+  - 原前端和后端的可见权限默认为 `false`（仅管理员可见）。如果飞牛登录用户上下文或权限组未被系统识别为管理员，生成的图标将直接不可见。
+  - **修复方案**：对标 WatchCow，默认 `all_users = true`（所有用户可见，推荐），确保所有登录用户均能第一时间看到图标。
+- **根因五：操作请求无日志与交互反馈**：
+  - 用户点击“保存并放到桌面”后，前端无加载中状态，安装耗时 1~2 秒时容易让用户误以为没有生效；且后台缺少请求到达日志。
+  - **修复方案**：在 API 控制器（创建、更新、删除、切换状态）全流程增加 `slog.Info` 结构化日志；前端增加按钮禁用、“正在安装到飞牛桌面...”动态加载状态以及安装完成弹框提示。
+
+---
+
+### 实施清单 (Implementation Checklist)
+
+1. **消除 TCP 端口监听与优化统一网关启动日志 (`cmd/server/main.go` & `internal/logger/logger.go`)**：
+   - 提前检测 `socketPath`，在统一网关模式下默认 `port = 0`，完全不启动 TCP 监听；
+   - 诊断日志支持按模式输出：免端口模式清晰输出 `飞牛统一网关模式 (免端口模式)` 及 Socket 路径。
+2. **彻底解决桌面图标上线与防停止机制 (`internal/desktop/installer.go`)**：
+   - `BuildPackage` 显式设置临时目录及各子目录权限为 `0755`；
+   - 支持根据运行架构动态设置 manifest 的 `arch`（`x86_64` / `aarch64`）；
+   - `cmd/main` 脚本中的 `start|stop|status` 统一返回 `exit 0`，杜绝退出码 3 导致图标被系统下架；
+   - 优化 `InstallItem`：移除安装后立即 `start` 的冲突调用，等待飞牛系统就绪，记录完整安装输出；
+   - `updateUIConfigFile` 强制锁定自身应用 `type: "iframe"`。
+3. **API 请求全生命周期日志与安全默认值 (`internal/api/handler.go`)**：
+   - 为创建、更新、删除、切换桌面图标增加显式 `slog.Info` 审计日志；
+   - 桌面图标创建时若未传递 `all_users` 默认赋值 `true`。
+4. **前端交互与设置重构 (`web/index.html` & `web/app.js`)**：
+   - 移除“飞牛桌面打开方式”单选设置及其说明；
+   - 桌面图标弹窗中将“访问可见权限”默认项更新为“所有用户可见 (推荐)”；
+   - 提交创建/更新时呈现“正在安装到飞牛桌面...”加载中并禁用按钮，成功后弹出完成提示；
+   - 完善脚本加载兼容逻辑（`document.readyState` 检查）。
+5. **版本升级与验证**：
+   - 升级 `fnos-app/manifest` 版本为 `1.0.7`；
+   - 更新 `README.md` 与 `docs/CONVERSATION_HISTORY.md`；
+   - 经本地 Docker 交叉编译测试与验证成功。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 65,000
+- **思维链 Token (Thinking Tokens)**：约 20,000
+- **输出 Token (Completion Tokens)**：约 5,500
+- **总消耗 Token (Total Tokens)**：**约 90,500**
+
+
 
 
 

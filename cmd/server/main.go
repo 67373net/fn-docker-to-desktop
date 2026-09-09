@@ -66,16 +66,34 @@ func main() {
 	}
 	authMgr := auth.NewManager(authPassword)
 
-	// Determine server port
-	port := 5900
+	// Determine fnOS Unified Gateway Unix Domain Socket
+	socketPath := *socketFlag
+	if socketPath == "" {
+		if dest := os.Getenv("TRIM_APPDEST"); dest != "" {
+			socketPath = filepath.Join(dest, "app.sock")
+		} else if _, err := os.Stat("/usr/local/apps/@appcenter/fn-docker-to-desktop"); err == nil {
+			socketPath = "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"
+		} else if _, err := os.Stat("/var/apps/fn-docker-to-desktop/target"); err == nil {
+			socketPath = "/var/apps/fn-docker-to-desktop/target/app.sock"
+		}
+	}
+
+	// Determine server TCP port:
+	// If in fnOS Unified Gateway socket mode and no port is explicitly requested, do NOT listen on TCP!
+	port := 0
 	if *portFlag > 0 {
 		port = *portFlag
 	} else if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil && p > 0 {
 			port = p
 		}
-	} else if settings.PortalPort > 0 {
-		port = settings.PortalPort
+	} else if socketPath == "" {
+		// Standalone mode without unix socket requires TCP port
+		if settings.PortalPort > 0 {
+			port = settings.PortalPort
+		} else {
+			port = 5900
+		}
 	}
 
 	host := "0.0.0.0"
@@ -86,50 +104,56 @@ func main() {
 	}
 
 	// Output diagnostic information
-	logger.LogDiagnostic(port, host, *dataDirFlag, *iconPathFlag)
+	logger.LogDiagnostic(port, host, *dataDirFlag, *iconPathFlag, socketPath)
 
-	// Try binding to port, with retry logic to avoid race condition on restart
-	addr := fmt.Sprintf("%s:%d", host, port)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		slog.Warn("初始端口绑定失败，正在重试 (可能前次进程端口正在释放)...", "address", addr, "error", err)
-		for i := 0; i < 3; i++ {
-			time.Sleep(500 * time.Millisecond)
-			ln, err = net.Listen("tcp", addr)
-			if err == nil {
-				slog.Info("端口重试绑定成功", "address", addr)
-				break
+	var ln net.Listener
+	var addr string
+
+	if port > 0 {
+		// Try binding to port, with retry logic to avoid race condition on restart
+		addr = fmt.Sprintf("%s:%d", host, port)
+		var err error
+		ln, err = net.Listen("tcp", addr)
+		if err != nil {
+			slog.Warn("初始端口绑定失败，正在重试 (可能前次进程端口正在释放)...", "address", addr, "error", err)
+			for i := 0; i < 3; i++ {
+				time.Sleep(500 * time.Millisecond)
+				ln, err = net.Listen("tcp", addr)
+				if err == nil {
+					slog.Info("端口重试绑定成功", "address", addr)
+					break
+				}
 			}
 		}
-	}
 
-	if err != nil {
-		slog.Warn("目标端口已被占用，正在自动查找未被占用的合适端口...", "requestedPort", port, "address", addr, "error", err)
-		altPort := proxy.RecommendAvailablePort(port+1, nil)
-		if altPort == 0 {
-			altPort = proxy.RecommendAvailablePort(5950, nil)
-		}
-		if altPort > 0 {
-			altAddr := fmt.Sprintf("%s:%d", host, altPort)
-			altLn, altErr := net.Listen("tcp", altAddr)
-			if altErr == nil {
-				slog.Info("已成功找到并切换至未被占用的合适端口运行", "originalPort", port, "newPort", altPort, "address", altAddr)
-				port = altPort
-				addr = altAddr
-				ln = altLn
-				err = nil
+		if err != nil {
+			slog.Warn("目标端口已被占用，正在自动查找未被占用的合适端口...", "requestedPort", port, "address", addr, "error", err)
+			altPort := proxy.RecommendAvailablePort(port+1, nil)
+			if altPort == 0 {
+				altPort = proxy.RecommendAvailablePort(5950, nil)
+			}
+			if altPort > 0 {
+				altAddr := fmt.Sprintf("%s:%d", host, altPort)
+				altLn, altErr := net.Listen("tcp", altAddr)
+				if altErr == nil {
+					slog.Info("已成功找到并切换至未被占用的合适端口运行", "originalPort", port, "newPort", altPort, "address", altAddr)
+					port = altPort
+					addr = altAddr
+					ln = altLn
+					err = nil
+				}
 			}
 		}
-	}
-	if err != nil {
-		slog.Error("无法监听任何端口，服务退出", "address", addr, "error", err)
-		os.Exit(1)
-	}
+		if err != nil {
+			slog.Error("无法监听指定TCP端口，服务退出", "address", addr, "error", err)
+			os.Exit(1)
+		}
 
-	// Save active port in settings
-	if settings.PortalPort != port {
-		settings.PortalPort = port
-		_ = storage.UpdateSettings(settings)
+		// Save active port in settings
+		if settings.PortalPort != port {
+			settings.PortalPort = port
+			_ = storage.UpdateSettings(settings)
+		}
 	}
 
 	// Check proc path (detect host mount)
@@ -204,18 +228,7 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Determine and initialize fnOS Unified Gateway Unix Domain Socket
-	socketPath := *socketFlag
-	if socketPath == "" {
-		if dest := os.Getenv("TRIM_APPDEST"); dest != "" {
-			socketPath = filepath.Join(dest, "app.sock")
-		} else if _, err := os.Stat("/usr/local/apps/@appcenter/fn-docker-to-desktop"); err == nil {
-			socketPath = "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"
-		} else if _, err := os.Stat("/var/apps/fn-docker-to-desktop/target"); err == nil {
-			socketPath = "/var/apps/fn-docker-to-desktop/target/app.sock"
-		}
-	}
-
+	// Initialize fnOS Unified Gateway Unix Domain Socket
 	var sockLn net.Listener
 	if socketPath != "" {
 		_ = os.Remove(socketPath)
@@ -229,25 +242,33 @@ func main() {
 		}
 	}
 
+	if sockLn == nil && ln == nil {
+		slog.Error("无可用网络监听方式 (既无有效TCP端口亦无有效Unix Socket)，服务退出")
+		os.Exit(1)
+	}
+
 	// Graceful shutdown handling
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if sockLn != nil {
 		go func() {
+			slog.Info("飞牛统一网关服务就绪", "socket", socketPath)
 			if err := srv.Serve(sockLn); err != nil && err != http.ErrServerClosed {
 				slog.Warn("Unix Socket 服务终止", "error", err)
 			}
 		}()
 	}
 
-	go func() {
-		slog.Info("服务监听已就绪", "address", fmt.Sprintf("http://%s", addr), "port", port)
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			slog.Error("HTTP 服务异常退出", "error", err)
-			stop()
-		}
-	}()
+	if ln != nil {
+		go func() {
+			slog.Info("独立 HTTP 端口监听就绪", "address", fmt.Sprintf("http://%s", addr), "port", port)
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				slog.Error("HTTP 服务异常退出", "error", err)
+				stop()
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	slog.Info("收到终止信号，正在关闭服务...")

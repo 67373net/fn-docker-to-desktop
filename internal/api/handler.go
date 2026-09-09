@@ -322,8 +322,17 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败"}, http.StatusBadRequest)
+		return
+	}
+
+	var rawMap map[string]interface{}
+	_ = json.Unmarshal(bodyBytes, &rawMap)
+
 	var item desktop.DesktopItem
-	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+	if err := json.Unmarshal(bodyBytes, &item); err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
@@ -343,7 +352,12 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 	if item.Path == "" {
 		item.Path = "/"
 	}
+	if _, hasAllUsers := rawMap["all_users"]; !hasAllUsers {
+		item.AllUsers = true
+	}
 	item.Enabled = true
+
+	slog.Info("收到创建桌面图标请求", "name", item.Name, "mode", item.Mode, "port", item.Port, "container", item.ContainerName, "allUsers", item.AllUsers, "uiType", item.UIType)
 
 	// If mode is proxy, start the reverse proxy
 	if item.Mode == desktop.ModeProxy {
@@ -374,6 +388,7 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	slog.Info("桌面图标创建并安装成功", "appName", item.AppName, "id", item.ID)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 
@@ -414,6 +429,8 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	slog.Info("收到更新桌面图标请求", "id", id, "name", item.Name, "mode", item.Mode, "port", item.Port, "enabled", item.Enabled)
+
 	if item.Mode == desktop.ModeProxy && item.Enabled {
 		_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
 	} else if item.Mode != desktop.ModeProxy {
@@ -437,6 +454,7 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	_ = h.storage.SaveItem(item)
+	slog.Info("桌面图标更新完成", "appName", item.AppName, "id", id)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 
@@ -452,6 +470,7 @@ func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	slog.Info("收到移出桌面图标请求", "id", id)
 	h.proxyMgr.StopProxy(id)
 	if existing, ok := h.storage.GetItem(id); ok {
 		_ = h.installer.UninstallItem(existing)
@@ -460,6 +479,7 @@ func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 	_ = h.storage.DeleteItem(id)
 
+	slog.Info("桌面图标移出成功", "id", id)
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
 }
 
@@ -477,6 +497,7 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	item.Enabled = !item.Enabled
+	slog.Info("收到切换桌面图标状态请求", "id", id, "name", item.Name, "enabled", item.Enabled)
 	if item.AppName == "" {
 		item.AppName = h.installer.DeriveAppName(item)
 	}

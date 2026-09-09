@@ -176,10 +176,6 @@ async function fetchSettings() {
       const settings = await res.json();
       const elName = document.getElementById('setting-portal-name');
       if (elName) elName.value = settings.portal_name || '把 Docker 放到桌面';
-      
-      const uiType = settings.portal_ui_type || 'iframe';
-      const rUi = document.querySelector(`input[name="setting-portal-ui-type"][value="${uiType}"]`);
-      if (rUi) rUi.checked = true;
 
       const allUsers = settings.portal_all_users ? 'true' : 'false';
       const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
@@ -726,9 +722,6 @@ function initModals() {
   if (elPortalName) {
     elPortalName.addEventListener('input', () => triggerSettingsAutoSave(600));
   }
-  document.querySelectorAll('input[name="setting-portal-ui-type"]').forEach(r => {
-    r.addEventListener('change', () => triggerSettingsAutoSave(0));
-  });
   document.querySelectorAll('input[name="setting-portal-all-users"]').forEach(r => {
     r.addEventListener('change', () => triggerSettingsAutoSave(0));
   });
@@ -773,7 +766,7 @@ function resetDesktopForm() {
   document.getElementById('item-protocol').value = 'http';
   document.getElementById('item-path').value = '/';
   document.getElementById('item-ui-type').value = 'iframe';
-  document.getElementById('item-all-users').value = 'false';
+  document.getElementById('item-all-users').value = 'true';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
@@ -964,6 +957,13 @@ async function handleSaveDesktopItem(e) {
     enabled,
   };
 
+  const btnSave = document.getElementById('btn-save-desktop-item');
+  const origBtnText = btnSave ? btnSave.textContent : '保存并放到桌面';
+  if (btnSave) {
+    btnSave.disabled = true;
+    btnSave.textContent = '正在安装到飞牛桌面...';
+  }
+
   try {
     const method = id ? 'PUT' : 'POST';
     const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
@@ -974,15 +974,21 @@ async function handleSaveDesktopItem(e) {
     });
 
     if (!res.ok) {
-      const errData = await res.json();
+      const errData = await res.json().catch(() => ({}));
       return alert(errData.error || '保存失败');
     }
 
     closeModal('modal-desktop-item');
+    alert(`成功${id ? '更新' : '添加'}桌面图标「${name}」！\n已同步至飞牛桌面与应用中心。`);
     await fetchDesktopItems();
     await fetchPorts();
   } catch (err) {
     alert('请求失败: ' + err.message);
+  } finally {
+    if (btnSave) {
+      btnSave.disabled = false;
+      btnSave.textContent = origBtnText;
+    }
   }
 }
 
@@ -1076,9 +1082,6 @@ function triggerSettingsAutoSave(debounceMs = 500) {
 
 async function executeAutoSaveSettings() {
   const name = document.getElementById('setting-portal-name').value.trim();
-  const rUi = document.querySelector('input[name="setting-portal-ui-type"]:checked');
-  const uiType = rUi ? rUi.value : 'iframe';
-
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const allUsers = rAll ? rAll.value === 'true' : false;
 
@@ -1089,7 +1092,7 @@ async function executeAutoSaveSettings() {
 
   const payload = {
     portal_name: name || '把 Docker 放到桌面',
-    portal_ui_type: uiType,
+    portal_ui_type: 'iframe',
     portal_all_users: allUsers,
   };
 
@@ -1524,4 +1527,8 @@ function downloadLogFile() {
   window.open(apiUrl(`/api/logs/download?date=${encodeURIComponent(date)}`), '_blank');
 }
 
-window.addEventListener('DOMContentLoaded', initApp);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}

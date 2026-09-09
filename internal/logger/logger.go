@@ -426,7 +426,7 @@ func parseLogLine(raw string) LogEntry {
 }
 
 // LogDiagnostic outputs detailed startup diagnostics to help investigate environment and startup issues.
-func LogDiagnostic(port int, host, dataDir, iconPath string) {
+func LogDiagnostic(port int, host, dataDir, iconPath string, socketPath ...string) {
 	hostname, _ := os.Hostname()
 	wd, _ := os.Getwd()
 	exePath, _ := os.Executable()
@@ -451,7 +451,7 @@ func LogDiagnostic(port int, host, dataDir, iconPath string) {
 
 	banner := strings.Repeat("=", 78)
 	slog.Info(banner)
-	slog.Info("把Docker放到桌面 (fn-docker-to-desktop) 服务启动诊断信息")
+	slog.Info("把 Docker 放到桌面 (fn-docker-to-desktop) 服务启动诊断信息")
 	slog.Info("------------------------------------------------------------------------------")
 	slog.Info("基础环境",
 		"系统", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
@@ -471,11 +471,24 @@ func LogDiagnostic(port int, host, dataDir, iconPath string) {
 		"TRIM_PKGVAR", os.Getenv("TRIM_PKGVAR"),
 		"PORT_ENV", os.Getenv("PORT"),
 	)
-	slog.Info("网络服务",
-		"绑定端口", port,
-		"监听主机", host,
-		"网卡IP", strings.Join(ipList, ", "),
-	)
+	if port > 0 {
+		slog.Info("网络服务",
+			"运行模式", "TCP 端口独立模式",
+			"绑定端口", port,
+			"监听主机", host,
+			"网卡IP", strings.Join(ipList, ", "),
+		)
+	} else {
+		sock := ""
+		if len(socketPath) > 0 {
+			sock = socketPath[0]
+		}
+		slog.Info("网络服务",
+			"运行模式", "飞牛统一网关模式 (免端口模式)",
+			"Unix Socket", sock,
+			"说明", "零端口占用，免端口配置，告别冲突",
+		)
+	}
 	if defaultLogger != nil {
 		slog.Info("日志系统",
 			"日志存储路径", defaultLogger.LogDir(),
