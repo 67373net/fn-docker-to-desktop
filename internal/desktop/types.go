@@ -17,6 +17,8 @@ type DesktopItem struct {
 	Name          string    `json:"name"`                     // Display title on desktop
 	Desc          string    `json:"desc"`                     // Description
 	Mode          ItemMode  `json:"mode"`                     // "local", "proxy", "shortcut"
+	AppName       string    `json:"app_name,omitempty"`       // fnOS package appname (e.g. fndocker.xxx)
+	ContainerName string    `json:"container_name,omitempty"` // Associated container name (if any)
 	TargetURL     string    `json:"target_url,omitempty"`     // Target backend URL (for proxy / shortcut)
 	Port          int       `json:"port"`                     // Local port (for local port or proxy mode)
 	Protocol      string    `json:"protocol"`                 // "http" or "https" (default: "http")

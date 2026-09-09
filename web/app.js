@@ -174,8 +174,8 @@ async function fetchSettings() {
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const settings = await res.json();
-      document.getElementById('setting-portal-name').value = settings.portal_name || '把 Docker 放到桌面';
-      document.getElementById('setting-portal-port').value = settings.portal_port || 5900;
+      const elName = document.getElementById('setting-portal-name');
+      if (elName) elName.value = settings.portal_name || '把 Docker 放到桌面';
       
       const uiType = settings.portal_ui_type || 'iframe';
       const rUi = document.querySelector(`input[name="setting-portal-ui-type"][value="${uiType}"]`);
@@ -184,6 +184,13 @@ async function fetchSettings() {
       const allUsers = settings.portal_all_users ? 'true' : 'false';
       const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
       if (rAll) rAll.checked = true;
+
+      const pwdEl = document.getElementById('setting-portal-password');
+      const pwdConfirmEl = document.getElementById('setting-portal-password-confirm');
+      const tipEl = document.getElementById('password-match-tip');
+      if (pwdEl) pwdEl.value = '';
+      if (pwdConfirmEl) pwdConfirmEl.value = '';
+      if (tipEl) tipEl.textContent = '';
     }
   } catch (err) {
     console.error('Fetch settings error:', err);
@@ -381,13 +388,13 @@ function renderPortsTable() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
             <span>已在桌面(${count})</span>
           </button>
-          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" title="为此端口添加另一个不同路径或名称的桌面图标">
+          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
         </div>`;
     } else {
       desktopCell = `
-        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}">
+        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
           <span>放到桌面</span>
         </button>`;
@@ -430,7 +437,8 @@ function renderPortsTable() {
     btn.addEventListener('click', () => {
       const port = parseInt(btn.dataset.port, 10);
       const name = btn.dataset.name || `端口-${port}`;
-      openCreateDesktopModalWithPort(port, name);
+      const container = btn.dataset.container || '';
+      openCreateDesktopModalWithPort(port, name, container);
     });
   });
 
@@ -456,7 +464,8 @@ function renderPortsTable() {
     btn.addEventListener('click', () => {
       const port = parseInt(btn.dataset.port, 10);
       const name = btn.dataset.name || `端口-${port}`;
-      openCreateDesktopModalWithPort(port, name);
+      const container = btn.dataset.container || '';
+      openCreateDesktopModalWithPort(port, name, container);
     });
   });
 
@@ -712,10 +721,24 @@ function initModals() {
     fileInput.addEventListener('change', handleIconUpload);
   }
 
-  // Settings save button
-  const btnSaveSettings = document.getElementById('btn-save-settings');
-  if (btnSaveSettings) {
-    btnSaveSettings.addEventListener('click', handleSaveSettings);
+  // Settings auto-save listeners
+  const elPortalName = document.getElementById('setting-portal-name');
+  if (elPortalName) {
+    elPortalName.addEventListener('input', () => triggerSettingsAutoSave(600));
+  }
+  document.querySelectorAll('input[name="setting-portal-ui-type"]').forEach(r => {
+    r.addEventListener('change', () => triggerSettingsAutoSave(0));
+  });
+  document.querySelectorAll('input[name="setting-portal-all-users"]').forEach(r => {
+    r.addEventListener('change', () => triggerSettingsAutoSave(0));
+  });
+  const elPwd = document.getElementById('setting-portal-password');
+  const elPwdConfirm = document.getElementById('setting-portal-password-confirm');
+  if (elPwd) {
+    elPwd.addEventListener('input', () => triggerSettingsAutoSave(600));
+  }
+  if (elPwdConfirm) {
+    elPwdConfirm.addEventListener('input', () => triggerSettingsAutoSave(600));
   }
 
   // Auth form
@@ -741,6 +764,8 @@ function setDesktopModalMode(mode) {
 function resetDesktopForm() {
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
+  const elContainer = document.getElementById('item-container-name');
+  if (elContainer) elContainer.value = '';
   document.getElementById('item-local-port').value = '';
   document.getElementById('item-target-url').value = '';
   document.getElementById('item-proxy-port').value = '';
@@ -762,10 +787,12 @@ function resetDesktopForm() {
   setDesktopModalMode('local');
 }
 
-function openCreateDesktopModalWithPort(port, name) {
+function openCreateDesktopModalWithPort(port, name, containerName) {
   resetDesktopForm();
   document.getElementById('item-local-port').value = port;
   document.getElementById('item-name').value = name;
+  const elContainer = document.getElementById('item-container-name');
+  if (elContainer) elContainer.value = containerName || '';
   setDesktopModalMode('local');
   openModal('modal-desktop-item');
 }
@@ -778,6 +805,8 @@ function openEditDesktopModal(id) {
   document.getElementById('desktop-modal-title').textContent = '编辑桌面图标';
   document.getElementById('item-id').value = item.id;
   document.getElementById('item-name').value = item.name;
+  const elContainer = document.getElementById('item-container-name');
+  if (elContainer) elContainer.value = item.container_name || '';
   document.getElementById('item-protocol').value = item.protocol || 'http';
   document.getElementById('item-path').value = item.path || '/';
   document.getElementById('item-ui-type').value = item.ui_type || 'iframe';
@@ -917,9 +946,12 @@ async function handleSaveDesktopItem(e) {
     }
   }
 
+  const containerName = document.getElementById('item-container-name') ? document.getElementById('item-container-name').value.trim() : '';
+
   const payload = {
     id: id || `item-${Date.now() % 1000000}`,
     name,
+    container_name: containerName,
     mode,
     port,
     target_url: targetUrl,
@@ -1026,42 +1058,98 @@ async function handleIconUpload(e) {
   }
 }
 
-async function handleSaveSettings() {
-  const name = document.getElementById('setting-portal-name').value.trim();
-  const port = parseInt(document.getElementById('setting-portal-port').value, 10);
-  const password = document.getElementById('setting-portal-password').value.trim();
+let settingsAutoSaveTimer = null;
 
+function triggerSettingsAutoSave(debounceMs = 500) {
+  if (settingsAutoSaveTimer) {
+    clearTimeout(settingsAutoSaveTimer);
+  }
+  const statusEl = document.getElementById('settings-save-status');
+  if (statusEl) {
+    statusEl.textContent = '正在保存...';
+    statusEl.style.color = 'var(--text-muted)';
+  }
+  settingsAutoSaveTimer = setTimeout(() => {
+    executeAutoSaveSettings();
+  }, debounceMs);
+}
+
+async function executeAutoSaveSettings() {
+  const name = document.getElementById('setting-portal-name').value.trim();
   const rUi = document.querySelector('input[name="setting-portal-ui-type"]:checked');
   const uiType = rUi ? rUi.value : 'iframe';
 
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const allUsers = rAll ? rAll.value === 'true' : false;
 
+  const pwd = document.getElementById('setting-portal-password').value;
+  const pwdConfirm = document.getElementById('setting-portal-password-confirm').value;
+  const matchTip = document.getElementById('password-match-tip');
   const statusEl = document.getElementById('settings-save-status');
-  statusEl.textContent = '正在保存并应用到飞牛桌面...';
+
+  const payload = {
+    portal_name: name || '把 Docker 放到桌面',
+    portal_ui_type: uiType,
+    portal_all_users: allUsers,
+  };
+
+  // Password confirmation check
+  if (pwd !== '' || pwdConfirm !== '') {
+    if (pwd !== pwdConfirm) {
+      if (matchTip) {
+        matchTip.textContent = '两次输入的密码不一致，密码未更新';
+        matchTip.style.color = 'var(--color-danger, #ef4444)';
+      }
+      if (statusEl) {
+        statusEl.textContent = '设置已保存（密码未更新，请确保两次密码一致）';
+        statusEl.style.color = 'var(--color-warning, #f59e0b)';
+      }
+      // Still save other non-password settings
+      try {
+        await fetch(apiUrl('/api/settings'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {}
+      return;
+    } else {
+      payload.auth_password = pwd;
+      if (matchTip) {
+        matchTip.textContent = '两次密码一致，已更新密码';
+        matchTip.style.color = 'var(--color-success, #10b981)';
+      }
+    }
+  } else {
+    if (matchTip) {
+      matchTip.textContent = '';
+    }
+  }
 
   try {
     const res = await fetch(apiUrl('/api/settings'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        portal_name: name,
-        portal_port: port,
-        portal_ui_type: uiType,
-        portal_all_users: allUsers,
-        auth_password: password,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (res.ok) {
-      statusEl.textContent = '设置已保存并同步至飞牛桌面！';
-      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      if (statusEl) {
+        statusEl.textContent = '设置已自动保存并即时生效';
+        statusEl.style.color = 'var(--color-success, #10b981)';
+      }
     } else {
-      const data = await res.json();
-      statusEl.textContent = data.error || '保存失败';
+      const data = await res.json().catch(() => ({}));
+      if (statusEl) {
+        statusEl.textContent = data.error || '保存失败';
+        statusEl.style.color = 'var(--color-danger, #ef4444)';
+      }
     }
   } catch (err) {
-    statusEl.textContent = '请求失败: ' + err.message;
+    if (statusEl) {
+      statusEl.textContent = '保存失败: ' + err.message;
+      statusEl.style.color = 'var(--color-danger, #ef4444)';
+    }
   }
 }
 

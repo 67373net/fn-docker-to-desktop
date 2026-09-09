@@ -377,6 +377,9 @@
                 <span>浏览器新标签页 (url)</span>
               </label>
             </div>
+            <div class="form-tip" style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
+              注：决定在飞牛OS桌面上点击该应用图标时，是以系统内置弹窗形态直接运行，还是在浏览器的全新标签页中打开。
+            </div>
           </div>
 
           <div class="form-group">
@@ -394,21 +397,19 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">管理面板服务端口</label>
-            <input type="number" id="setting-portal-port" class="form-input" value="5900">
-          </div>
-
-          <div class="form-group">
             <label class="form-label">访问保护密码 (可选，留空则免密)</label>
-            <input type="password" id="setting-portal-password" class="form-input" placeholder="留空保持不变或不设置密码">
+            <input type="password" id="setting-portal-password" class="form-input" placeholder="输入新密码，留空保持当前设置">
           </div>
 
-          <div class="form-actions">
-            <button class="btn btn-primary" id="btn-save-settings">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
-              <span>保存并应用到飞牛桌面</span>
-            </button>
-            <span class="save-status" id="settings-save-status"></span>
+          <div class="form-group" id="group-password-confirm">
+            <label class="form-label">确认新密码</label>
+            <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
+            <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
+          </div>
+
+          <div class="settings-auto-save-bar" style="margin-top: 20px; display: flex; align-items: center; gap: 8px;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+            <span class="save-status" id="settings-save-status" style="font-size: 13px; color: var(--text-muted);">设置项修改后将自动保存并即时生效</span>
           </div>
         </div>
       </div>
@@ -437,6 +438,7 @@
         <form id="form-desktop-item">
           <input type="hidden" id="item-id">
           <input type="hidden" id="item-mode" value="local">
+          <input type="hidden" id="item-container-name">
 
           <div class="form-group">
             <label class="form-label">显示名称</label>

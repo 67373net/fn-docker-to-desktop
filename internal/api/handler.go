@@ -356,9 +356,16 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Derive app name
+	if item.AppName == "" {
+		item.AppName = h.installer.DeriveAppName(item)
+	}
+
 	// Install to fnOS desktop
 	if err := h.installer.InstallItem(item); err != nil {
-		slog.Warn("安装到桌面遇到告警", "error", err)
+		slog.Error("安装到飞牛桌面失败", "appName", item.AppName, "error", err)
+		h.jsonResponse(w, r, map[string]string{"error": "安装到飞牛桌面失败: " + err.Error()}, http.StatusInternalServerError)
+		return
 	}
 	item.Installed = true
 
@@ -413,11 +420,19 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		h.proxyMgr.StopProxy(item.ID)
 	}
 
+	if item.AppName == "" {
+		item.AppName = h.installer.DeriveAppName(item)
+	}
+
 	if item.Enabled {
-		_ = h.installer.InstallItem(item)
+		if err := h.installer.InstallItem(item); err != nil {
+			slog.Error("更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
+			return
+		}
 		item.Installed = true
 	} else {
-		_ = h.installer.UninstallItem(item.ID)
+		_ = h.installer.UninstallItem(item)
 		item.Installed = false
 	}
 
@@ -438,7 +453,11 @@ func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	h.proxyMgr.StopProxy(id)
-	_ = h.installer.UninstallItem(id)
+	if existing, ok := h.storage.GetItem(id); ok {
+		_ = h.installer.UninstallItem(existing)
+	} else {
+		_ = h.installer.UninstallItemByID(id)
+	}
 	_ = h.storage.DeleteItem(id)
 
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
@@ -458,17 +477,25 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	item.Enabled = !item.Enabled
+	if item.AppName == "" {
+		item.AppName = h.installer.DeriveAppName(item)
+	}
+
 	if item.Enabled {
 		if item.Mode == desktop.ModeProxy {
 			_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
 		}
-		_ = h.installer.InstallItem(item)
+		if err := h.installer.InstallItem(item); err != nil {
+			slog.Error("启用飞牛桌面应用失败", "appName", item.AppName, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "启用桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
+			return
+		}
 		item.Installed = true
 	} else {
 		if item.Mode == desktop.ModeProxy {
 			h.proxyMgr.StopProxy(item.ID)
 		}
-		_ = h.installer.UninstallItem(item.ID)
+		_ = h.installer.UninstallItem(item)
 		item.Installed = false
 	}
 
@@ -493,29 +520,34 @@ func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var newSettings desktop.Settings
-	if err := json.NewDecoder(r.Body).Decode(&newSettings); err != nil {
+	var req struct {
+		desktop.Settings
+		ClearPassword bool `json:"clear_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
 
 	current := h.storage.GetSettings()
-	if newSettings.AuthPassword != "" {
-		current.AuthPassword = newSettings.AuthPassword
+	if req.ClearPassword {
+		current.AuthPassword = ""
 		if h.authMgr != nil {
-			h.authMgr.SetPassword(newSettings.AuthPassword)
+			h.authMgr.SetPassword("")
+		}
+	} else if req.AuthPassword != "" {
+		current.AuthPassword = req.AuthPassword
+		if h.authMgr != nil {
+			h.authMgr.SetPassword(req.AuthPassword)
 		}
 	}
-	if newSettings.PortalPort > 0 {
-		current.PortalPort = newSettings.PortalPort
+	if req.PortalName != "" {
+		current.PortalName = req.PortalName
 	}
-	if newSettings.PortalName != "" {
-		current.PortalName = newSettings.PortalName
+	if req.PortalUIType != "" {
+		current.PortalUIType = req.PortalUIType
 	}
-	if newSettings.PortalUIType != "" {
-		current.PortalUIType = newSettings.PortalUIType
-	}
-	current.PortalAllUsers = newSettings.PortalAllUsers
+	current.PortalAllUsers = req.PortalAllUsers
 
 	if err := h.storage.UpdateSettings(current); err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "更新配置失败: " + err.Error()}, http.StatusInternalServerError)

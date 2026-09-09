@@ -794,6 +794,96 @@ tcp   LISTEN 0      4096            [::]:5900          [::]:*    users:(("docker
 - **输出 Token (Completion Tokens)**：约 5,500
 - **总消耗 Token (Total Tokens)**：**约 73,500**
 
+---
+
+## 对话轮次 11 (2026-09-09) - 设置项清理、自动保存与密码二次确认、桌面图标安装失败根治及对标 WatchCow 重构
+
+### 用户原始需求 (User Request)
+
+> 1. 设置界面中，飞牛桌面打开方式这个设置是不是没有作用了；端口是不是也没有作用了；去掉保存按钮，改为输入后自动保存，密码输入后需要二次确认。
+> 2. 我测试了几个端口，都无法放到桌面，请看一下是不是有什么问题。如果看不出来的话，可以观察原版watchcow的实现方式，对比一下。原版watchcow安装后，如果有桌面图标，可以在应用中心的“已安装”中看到生成的app
+
+---
+
+### 问题分析与对标 WatchCow 根因定位 (Analysis & WatchCow Comparison)
+
+#### 1. 设置项效用澄清与交互重构
+- **飞牛桌面打开方式 (iframe vs url) 是否有效？**
+  - **有效且关键**。该配置对应飞牛 OS 桌面应用清单中 `.url[appname].type` 属性：
+    - `iframe`：在飞牛 Web 桌面内以弹出式视窗直接运行面板；
+    - `url`：在浏览器的新标签页中跳转打开面板。
+  - **优化**：在设置界面增加详细辅助注解，便于用户按操作习惯自由选择。
+- **管理面板服务端口是否有效？**
+  - **已完全无效**。自 v1.0.5 引入飞牛统一网关（Unified Gateway）后，面板完全由反向代理通过 Unix Domain Socket (`app.sock`) 承接 `/app/fn-docker-to-desktop/`，不再占用、绑定或依赖宿主机的任何固定 TCP 端口。
+  - **处理**：彻底从设置界面和前端数据流中移除该字段。
+- **自动保存与密码二次确认**：
+  - 去掉传统的“保存并应用”按钮，改用防抖（Debounce 500ms）自动保存模式，并给出轻量直观的即时保存状态反馈；
+  - 密码输入区拆分为“访问保护密码”与“确认新密码”两级输入框，实时校验一致性，仅在两次输入相符时才触发更新提交，有效防止输入错误导致用户被锁定。
+
+#### 2. “端口无法放到桌面”对标 WatchCow 全面深度排查
+通过对比原版 WatchCow (`watchcow/internal/fpkgen/`) 与本项目生成逻辑，精准锁定导致飞牛无法成功安装应用并在“已安装”列表显示的 7 大核心原因：
+
+| 维度 | 原 fn-docker-to-desktop 缺陷 | WatchCow 标准实现与修复方案 |
+| :--- | :--- | :--- |
+| **应用根目录图标** | 根目录**完全缺失** `ICON.PNG` 与 `ICON_256.PNG` | 飞牛 App Center 严格要求安装包根目录必须提供 `ICON.PNG` 与 `ICON_256.PNG`，否则应用中心视其为非法包拒绝显示。本项目内嵌默认高清图标并实现图像缩放补齐。 |
+| **桌面图标路径** | 仅生成一个字面量名为 `icon_{0}.png` 的单文件 | 飞牛桌面 `{0}` 模板替换规范要求生成 `icon_64.png` 和 `icon_256.png`。原代码导致桌面解析不到真实图标图片。现统一输出全套完整尺寸。 |
+| **生命周期脚本** | 仅生成了 5 个 `cmd/` 脚本，缺失 upgrade/config 脚本 | 飞牛包规范必须提供全部 9 个脚本：`main`、`install_init`、`install_callback`、`uninstall_init`、`uninstall_callback`、`upgrade_init`、`upgrade_callback`、`config_init`、`config_callback`（全部赋 `0755` 权限）。 |
+| **应用运行状态检测** | `cmd/main status` 简单固定 `exit 0` | 注入 `CONTAINER_NAME`。若绑定 Docker 容器，`status` 调用 `docker ps` 检测运行状态（运行返 0，停止返 3）；非容器端口则返回 0，与飞牛应用管理心跳完美契合。 |
+| **安装存储卷动态识别** | 粗暴硬编码 `--volume 1` | 调用 `appcenter-cli default-volume` 动态识别系统默认存储卷编号，如机器多存储池或默认安装在其他卷时杜绝安装失败。 |
+| **卸载与重装机制** | 每次安装前均无条件执行 `appcenter-cli uninstall` | 若应用尚未安装，盲目 uninstall 会导致 appcenter 抛出异常或锁冲突。对齐 WatchCow，通过解析 `appcenter-cli list` 检测实际安装状态，仅在确实存在旧版本时才进行停止并卸载。 |
+| **包名规范与错误处理** | 使用过时的 `put-port.` 前缀，且 API 错误被静默吞没 | 改用标准的 `fndocker.` 命名空间，强制约束长度在 3~32 字符且符合飞牛正则；API 遇到安装错误时明确返回 HTTP 错误及飞牛原生报错详情，并在日志中全量记录。 |
+
+---
+
+### 实施清单 (Implementation Checklist)
+
+1. **内嵌默认图标与图像处理引擎 (`internal/desktop/icons.go` & `assets/`)**：
+   - 提取并内嵌系统默认 64x64 与 256x256 图标 (`//go:embed assets/ICON.PNG` / `ICON_256.PNG`)；
+   - 纯 Go 标准库实现透明背景正方形裁切补齐（Pad to Square）与双向缩放算法，支持处理本地文件、HTTP 链接与 Base64 Data URI；
+   - 在生成包时，全自动向根目录及 `app/ui/images/` 写入全量图标变体（`ICON.PNG`、`ICON_256.PNG`、`icon_64.png`、`icon_256.png`、`icon_{0}.png`、`icon-64.png`、`icon-256.png`、`icon.png`）。
+
+2. **重构飞牛桌面应用安装器 (`internal/desktop/installer.go`)**：
+   - 实现 `DeriveAppName` 与 `ValidateAppName`，生成符合规范的 `fndocker.<name>` 唯一标识；
+   - 新增 `resolveInstallVolume`，优先读取飞牛系统 `appcenter-cli default-volume`；
+   - 新增 `isAppInstalled`，通过解析 `appcenter-cli list` 制表输出精准判断应用存续；
+   - 补齐所有 9 个生命周期脚本并赋 `0755` 权限；在 `cmd/main` 中根据 `CONTAINER_NAME` 实时探测容器状态；
+   - 修正 `manifest` 与 `app/ui/config`，清理无用的 `service_port` 与 `noDisplay` 字段，确保 `desc` 非空。
+
+3. **模型与 API 层联动完善 (`internal/desktop/types.go` & `internal/api/handler.go`)**：
+   - `DesktopItem` 扩展 `AppName` 与 `ContainerName` 字段；
+   - `handleCreateDesktopItem`、`handleUpdateDesktopItem`、`handleToggleDesktopItem` 在安装失败时中断执行并向前端如实返回错误原因；
+   - `handleUpdateSettings` 支持 `clear_password` 并联动运行时鉴权器与系统桌面原生更新。
+
+4. **前端交互与设置重构 (`web/index.html` & `web/app.js`)**：
+   - 剔除无用的面板端口输入框，保留并强化“飞牛桌面打开方式”的作用指引说明；
+   - 增加“确认新密码”输入框及动态一致性检查提示，仅在密码一致且非空时更新；
+   - 移除“保存并应用到飞牛桌面”按钮，改为基于防抖（Debounce 500ms）的即时自动保存，并呈现保存状态徽标；
+   - 本机端口列表中向“放到桌面”弹窗精准透传 Docker 容器名 (`container_name`)。
+
+5. **构建脚本与版本发布**：
+   - 更新 `scripts/build-fpk.sh` 挂载 `/tmp/gocache` 编译缓存以大幅提升编译效率；
+   - 升级 `fnos-app/manifest` 版本为 `1.0.6`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **本地 Docker 交叉编译与打包验证**：
+   - 执行 `./scripts/build-fpk.sh x86`，编译与打包成功生成 3.5MB 安装包。
+   - 严格遵循规范彻底清理工作区临时 `.fpk` 文件。
+2. **Git 仓库与发布**：
+   - 提交全部源码与内嵌资源，打标签 `v1.0.6` 并推送到 GitHub 触发自动化流水线发布。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 58,000
+- **思维链 Token (Thinking Tokens)**：约 18,000
+- **输出 Token (Completion Tokens)**：约 5,800
+- **总消耗 Token (Total Tokens)**：**约 81,800**
+
+
 
 
 

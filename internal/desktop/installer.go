@@ -7,18 +7,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 )
 
+const (
+	MinAppNameLength = 3
+	MaxAppNameLength = 32
+)
+
+var validAppNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidateAppName validates the identifier according to fnOS package naming rules.
+func ValidateAppName(appName string) error {
+	if len(appName) < MinAppNameLength {
+		return fmt.Errorf("应用标识 %q 过短: 必须至少包含 %d 个字符", appName, MinAppNameLength)
+	}
+	if len(appName) > MaxAppNameLength {
+		return fmt.Errorf("应用标识 %q 过长: 不能超过 %d 个字符 (当前: %d)", appName, MaxAppNameLength, len(appName))
+	}
+	if !validAppNamePattern.MatchString(appName) {
+		return fmt.Errorf("应用标识 %q 包含非法字符: 需为字母数字开头且仅含字母、数字、点号、下划线与短横线", appName)
+	}
+	return nil
+}
+
 // Installer handles fnOS application packaging and appcenter-cli interaction.
 type Installer struct {
-	mu               sync.Mutex
-	cliPath          string
-	appsDir          string
-	rootIconPath     string
-	hasAppcenterCLI  bool
+	mu              sync.Mutex
+	cliPath         string
+	appsDir         string
+	rootIconPath    string
+	hasAppcenterCLI bool
 }
 
 // NewInstaller creates a new fnOS package installer.
@@ -36,9 +58,9 @@ func NewInstaller(dataDir string, rootIconPath string) *Installer {
 	}
 
 	if found {
-		slog.Info("Found fnOS appcenter-cli", "path", cliPath)
+		slog.Info("检测到飞牛官方包管理工具 appcenter-cli", "path", cliPath)
 	} else {
-		slog.Info("fnOS appcenter-cli not found (running in standalone/simulation mode)")
+		slog.Info("未检测到 appcenter-cli (运行于独立环境或模拟模式)")
 	}
 
 	return inst
@@ -71,23 +93,125 @@ func findAppcenterCLI() (string, bool) {
 	return "", false
 }
 
-// AppcenterPackageConfig holds fields to generate an fnOS package.
-type AppcenterPackageConfig struct {
-	AppName     string
-	Title       string
-	Desc        string
-	Port        int
-	Protocol    string
-	Path        string
-	UIType      string // "url" or "iframe"
-	AllUsers    bool
-	IconPath    string
+// DeriveAppName generates a valid, unique fnOS package identifier.
+func (i *Installer) DeriveAppName(item DesktopItem) string {
+	if item.AppName != "" && ValidateAppName(item.AppName) == nil {
+		return item.AppName
+	}
+
+	base := ""
+	if item.ContainerName != "" {
+		base = item.ContainerName
+	} else if item.Port > 0 {
+		base = fmt.Sprintf("port-%d", item.Port)
+	} else if item.Name != "" && isASCIIAlphanumeric(item.Name) {
+		base = item.Name
+	} else {
+		base = item.ID
+	}
+
+	sanitized := SanitizeAppNamePart(base)
+	appName := "fndocker." + sanitized
+	if len(appName) > MaxAppNameLength {
+		appName = appName[:MaxAppNameLength]
+		appName = strings.TrimRight(appName, ".-_")
+	}
+
+	if len(appName) < MinAppNameLength {
+		appName = "fndocker.app"
+	}
+	return appName
 }
 
-// BuildPackage creates the fnOS app structure on disk.
+func isASCIIAlphanumeric(s string) bool {
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// SanitizeAppNamePart normalizes a string for fnOS package identifiers.
+func SanitizeAppNamePart(name string) string {
+	name = strings.ToLower(strings.TrimPrefix(name, "/"))
+	name = strings.ReplaceAll(name, "_", "-")
+	var sb strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			sb.WriteRune(c)
+		}
+	}
+	res := strings.Trim(sb.String(), "-")
+	if res == "" {
+		return "app"
+	}
+	return res
+}
+
+func (i *Installer) resolveInstallVolume() string {
+	if i.cliPath != "" {
+		cmd := exec.Command(i.cliPath, "default-volume")
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			trimmed := strings.TrimSpace(string(output))
+			if v, err := strconv.Atoi(trimmed); err == nil && v > 0 {
+				slog.Info("检测到飞牛默认存储卷", "volume", trimmed)
+				return strconv.Itoa(v)
+			}
+		} else {
+			slog.Debug("获取默认存储卷未返回有效值，将回退到默认卷1", "error", err)
+		}
+	}
+	return "1"
+}
+
+func (i *Installer) isAppInstalled(appName string) bool {
+	if i.cliPath == "" {
+		return false
+	}
+	cmd := exec.Command(i.cliPath, "list")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		slog.Debug("appcenter-cli list 检查失败", "error", err)
+		return false
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "│") {
+			parts := strings.Split(line, "│")
+			if len(parts) >= 2 {
+				installedApp := strings.TrimSpace(parts[1])
+				if installedApp == appName {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// AppcenterPackageConfig holds fields to generate an fnOS package.
+type AppcenterPackageConfig struct {
+	AppName       string
+	Title         string
+	Desc          string
+	Port          int
+	Protocol      string
+	Path          string
+	UIType        string // "url" or "iframe"
+	AllUsers      bool
+	IconPath      string
+	ContainerName string
+}
+
+// BuildPackage creates the fnOS app structure on disk in a temporary directory.
 func (i *Installer) BuildPackage(cfg AppcenterPackageConfig) (string, error) {
-	pkgDir := filepath.Join(i.appsDir, cfg.AppName)
-	_ = os.RemoveAll(pkgDir)
+	pkgDir, err := os.MkdirTemp("", "fndocker-"+cfg.AppName+"-")
+	if err != nil {
+		return "", fmt.Errorf("创建临时打包目录失败: %w", err)
+	}
 
 	dirs := []string{
 		pkgDir,
@@ -97,11 +221,21 @@ func (i *Installer) BuildPackage(cfg AppcenterPackageConfig) (string, error) {
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0755); err != nil {
+			_ = os.RemoveAll(pkgDir)
 			return "", fmt.Errorf("创建目录失败 %s: %w", d, err)
 		}
 	}
 
 	// 1. Manifest
+	title := cfg.Title
+	if title == "" {
+		title = "桌面应用"
+	}
+	desc := cfg.Desc
+	if desc == "" {
+		desc = fmt.Sprintf("由 把 Docker 放到桌面 生成的快捷方式 - %s", title)
+	}
+
 	manifestContent := fmt.Sprintf(`appname=%s
 version=1.0.0
 display_name=%s
@@ -115,14 +249,14 @@ os_min_version=0.9.0
 install_type=root
 desktop_uidir=ui
 desktop_applaunchname=%s
-checkport=false
-`, cfg.AppName, cfg.Title, cfg.Desc, cfg.AppName)
+`, cfg.AppName, title, desc, cfg.AppName)
 
 	if cfg.Port > 0 {
-		manifestContent += fmt.Sprintf("service_port=%d\n", cfg.Port)
+		manifestContent += fmt.Sprintf("service_port=%d\ncheckport=false\n", cfg.Port)
 	}
 
 	if err := os.WriteFile(filepath.Join(pkgDir, "manifest"), []byte(manifestContent), 0644); err != nil {
+		_ = os.RemoveAll(pkgDir)
 		return "", err
 	}
 
@@ -144,53 +278,79 @@ checkport=false
 		uiType = "url"
 	}
 
+	entryMap := map[string]interface{}{
+		"title":    title,
+		"icon":     "images/icon_{0}.png",
+		"type":     uiType,
+		"protocol": proto,
+		"url":      urlPath,
+		"allUsers": cfg.AllUsers,
+	}
+	if portStr != "" {
+		entryMap["port"] = portStr
+	}
+
 	uiConfigMap := map[string]interface{}{
 		".url": map[string]interface{}{
-			cfg.AppName: map[string]interface{}{
-				"title":     cfg.Title,
-				"icon":      "images/icon_{0}.png",
-				"type":      uiType,
-				"protocol":  proto,
-				"port":      portStr,
-				"url":       urlPath,
-				"allUsers":  cfg.AllUsers,
-				"noDisplay": false,
-			},
+			cfg.AppName: entryMap,
 		},
 	}
 	uiJson, err := json.MarshalIndent(uiConfigMap, "", "    ")
 	if err != nil {
+		_ = os.RemoveAll(pkgDir)
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(pkgDir, "app", "ui", "config"), uiJson, 0644); err != nil {
+		_ = os.RemoveAll(pkgDir)
 		return "", err
 	}
 
-	// 3. Icon
-	destIcon := filepath.Join(pkgDir, "app", "ui", "images", "icon_{0}.png")
-	i.copyIcon(cfg.IconPath, destIcon)
+	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
+	if err := WritePackageIcons(pkgDir, cfg.IconPath, i.rootIconPath); err != nil {
+		slog.Warn("写入图标警告", "error", err)
+	}
 
-	// 4. Lifecycle scripts
-	mainScript := `#!/bin/bash
+	// 4. Lifecycle scripts (all 9 scripts with 0755 permissions)
+	mainScript := fmt.Sprintf(`#!/bin/bash
+# Generated by 把 Docker 放到桌面 (fn-docker-to-desktop)
+CONTAINER_NAME="%s"
+
 case $1 in
 start|stop)
     exit 0
     ;;
 status)
-    exit 0
+    if [ -n "${CONTAINER_NAME}" ]; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+            exit 0
+        else
+            exit 3
+        fi
+    else
+        exit 0
+    fi
     ;;
 *)
     exit 1
     ;;
 esac
-`
+`, cfg.ContainerName)
+
 	if err := os.WriteFile(filepath.Join(pkgDir, "cmd", "main"), []byte(mainScript), 0755); err != nil {
+		_ = os.RemoveAll(pkgDir)
 		return "", err
 	}
 
 	emptyScript := "#!/bin/bash\nexit 0\n"
-	for _, s := range []string{"install_init", "install_callback", "uninstall_init", "uninstall_callback"} {
+	cmdScripts := []string{
+		"install_init", "install_callback",
+		"uninstall_init", "uninstall_callback",
+		"upgrade_init", "upgrade_callback",
+		"config_init", "config_callback",
+	}
+	for _, s := range cmdScripts {
 		if err := os.WriteFile(filepath.Join(pkgDir, "cmd", s), []byte(emptyScript), 0755); err != nil {
+			_ = os.RemoveAll(pkgDir)
 			return "", err
 		}
 	}
@@ -201,26 +361,10 @@ esac
 	_ = os.WriteFile(filepath.Join(pkgDir, "config", "resource"), []byte("{}"), 0644)
 
 	// 6. License
-	licenseText := fmt.Sprintf("MIT License\n\nGenerated by PutPortOnDesktop for %s\n", cfg.Title)
+	licenseText := fmt.Sprintf("MIT License\n\nGenerated by 把 Docker 放到桌面 for %s\n", title)
 	_ = os.WriteFile(filepath.Join(pkgDir, "LICENSE"), []byte(licenseText), 0644)
 
 	return pkgDir, nil
-}
-
-func (i *Installer) copyIcon(srcPath, destPath string) {
-	if srcPath != "" {
-		if data, err := os.ReadFile(srcPath); err == nil && len(data) > 0 {
-			_ = os.WriteFile(destPath, data, 0644)
-			return
-		}
-	}
-	// Fallback to product icon
-	if i.rootIconPath != "" {
-		if data, err := os.ReadFile(i.rootIconPath); err == nil && len(data) > 0 {
-			_ = os.WriteFile(destPath, data, 0644)
-			return
-		}
-	}
 }
 
 // InstallItem registers a DesktopItem into fnOS.
@@ -228,82 +372,138 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	appName := "put-port." + sanitizeAppName(item.ID)
+	appName := i.DeriveAppName(item)
+	if err := ValidateAppName(appName); err != nil {
+		return err
+	}
+
 	port := item.Port
 	path := item.Path
 	if item.Mode == ModeShortcut {
-		// Pure shortcut
 		port = 0
 		path = item.TargetURL
 	}
 
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
-		AppName:  appName,
-		Title:    item.Name,
-		Desc:     item.Desc,
-		Port:     port,
-		Protocol: item.Protocol,
-		Path:     path,
-		UIType:   item.UIType,
-		AllUsers: item.AllUsers,
-		IconPath: item.Icon,
+		AppName:       appName,
+		Title:         item.Name,
+		Desc:          item.Desc,
+		Port:          port,
+		Protocol:      item.Protocol,
+		Path:          path,
+		UIType:        item.UIType,
+		AllUsers:      item.AllUsers,
+		IconPath:      item.Icon,
+		ContainerName: item.ContainerName,
 	})
 	if err != nil {
 		return fmt.Errorf("构建应用包失败: %w", err)
 	}
+	defer os.RemoveAll(pkgDir)
 
 	if !i.hasAppcenterCLI {
-		slog.Info("应用包已构建 (模拟模式)", "appName", appName, "pkgDir", pkgDir)
+		slog.Info("应用包已构建 (模拟/开发模式)", "appName", appName, "pkgDir", pkgDir)
 		return nil
 	}
 
-	// Uninstall first if exists to ensure clean reinstall
-	_ = exec.Command(i.cliPath, "uninstall", appName).Run()
+	// If already installed, stop & uninstall first for clean update
+	if i.isAppInstalled(appName) {
+		slog.Info("应用已在系统中安装，先停止并卸载旧版本以应用更新...", "appName", appName)
+		_ = exec.Command(i.cliPath, "stop", appName).Run()
+		out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
+		if err != nil {
+			slog.Warn("卸载旧应用产生输出", "appName", appName, "output", strings.TrimSpace(string(out)))
+		}
+	}
 
-	cmd := exec.Command(i.cliPath, "install-local", "--volume", "1")
+	volume := i.resolveInstallVolume()
+	slog.Info("正在通过 appcenter-cli 安装飞牛桌面应用...", "appName", appName, "volume", volume)
+
+	cmd := exec.Command(i.cliPath, "install-local", "--volume", volume)
 	cmd.Dir = pkgDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("appcenter-cli install-local 失败: %w (详情: %s)", err, strings.TrimSpace(string(output)))
+		errMsg := strings.TrimSpace(string(output))
+		slog.Error("appcenter-cli install-local 失败", "appName", appName, "error", err, "output", errMsg)
+		return fmt.Errorf("appcenter-cli install-local 失败: %w (详情: %s)", err, errMsg)
 	}
 
-	_ = exec.Command(i.cliPath, "start", appName).Run()
-	slog.Info("成功注册桌面应用", "appName", appName)
+	// Start the app
+	startCmd := exec.Command(i.cliPath, "start", appName)
+	startOut, startErr := startCmd.CombinedOutput()
+	if startErr != nil {
+		slog.Warn("appcenter-cli start 出现警告", "appName", appName, "output", strings.TrimSpace(string(startOut)))
+	}
+
+	// Verify installation
+	if i.isAppInstalled(appName) {
+		slog.Info("成功注册桌面应用并上线", "appName", appName, "volume", volume)
+	} else {
+		slog.Warn("应用已执行安装，但在 appcenter-cli list 中未发现", "appName", appName)
+	}
+
 	return nil
 }
 
 // UninstallItem unregisters a DesktopItem from fnOS.
-func (i *Installer) UninstallItem(itemID string) error {
+func (i *Installer) UninstallItem(item DesktopItem) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	appName := "put-port." + sanitizeAppName(itemID)
-	pkgDir := filepath.Join(i.appsDir, appName)
-	_ = os.RemoveAll(pkgDir)
-
-	if !i.hasAppcenterCLI {
-		slog.Info("应用包已删除 (模拟模式)", "appName", appName)
-		return nil
+	var candidates []string
+	if item.AppName != "" {
+		candidates = append(candidates, item.AppName)
 	}
+	derived := i.DeriveAppName(item)
+	if derived != item.AppName {
+		candidates = append(candidates, derived)
+	}
+	legacy := "put-port." + sanitizeAppName(item.ID)
+	candidates = append(candidates, legacy)
 
-	_ = exec.Command(i.cliPath, "stop", appName).Run()
-	output, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
-	if err != nil {
-		slog.Warn("卸载应用失败", "appName", appName, "output", strings.TrimSpace(string(output)))
+	for _, appName := range candidates {
+		i.uninstallSingleApp(appName)
 	}
 	return nil
 }
 
-// SyncSelfApp ensures fn-docker-to-desktop itself is registered on fnOS desktop with user settings.
+// UninstallItemByID unregisters an item using its ID.
+func (i *Installer) UninstallItemByID(itemID string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.uninstallSingleApp("fndocker." + SanitizeAppNamePart(itemID))
+	i.uninstallSingleApp("put-port." + sanitizeAppName(itemID))
+	return nil
+}
+
+func (i *Installer) uninstallSingleApp(appName string) {
+	if !i.hasAppcenterCLI {
+		slog.Info("应用已清理 (模拟模式)", "appName", appName)
+		return
+	}
+
+	if i.isAppInstalled(appName) {
+		slog.Info("正在从飞牛系统卸载桌面应用...", "appName", appName)
+		_ = exec.Command(i.cliPath, "stop", appName).Run()
+		out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
+		if err != nil {
+			slog.Warn("卸载应用产生警告", "appName", appName, "output", strings.TrimSpace(string(out)))
+		} else {
+			slog.Info("成功卸载桌面应用", "appName", appName)
+		}
+	}
+}
+
+// SyncSelfApp updates fn-docker-to-desktop itself on fnOS desktop with user settings.
 func (i *Installer) SyncSelfApp(settings Settings) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	appName := "fn-docker-to-desktop"
-	slog.Info("正在同步自身桌面图标配置...", "appName", appName, "uiType", settings.PortalUIType, "port", settings.PortalPort, "allUsers", settings.PortalAllUsers)
+	slog.Info("正在同步自身桌面图标配置...", "appName", appName, "uiType", settings.PortalUIType, "allUsers", settings.PortalAllUsers)
 
-	// 1. If running inside native fnOS package (TRIM_APPDEST is set), directly update ui/config in place!
-	// NEVER call "appcenter-cli stop" or "uninstall" on ourselves, as that will terminate the current process!
+	// In-place update of native ui/config
 	trimAppDest := os.Getenv("TRIM_APPDEST")
 	var possibleConfigs []string
 	if trimAppDest != "" {
@@ -329,7 +529,7 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 		}
 	}
 
-	// Also sync service_port in manifest if found in native installation
+	// Clean service_port from manifest
 	var possibleManifests []string
 	if trimAppDest != "" {
 		possibleManifests = append(possibleManifests,
@@ -350,45 +550,6 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 	if updatedNative {
 		slog.Info("产品自身桌面图标配置更新完成 (原生模式)")
 		return nil
-	}
-
-	// 2. If running outside native fnOS or in fallback environment
-	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
-		AppName:  appName,
-		Title:    settings.PortalName,
-		Desc:     "把 Docker 放到桌面 - 监控Docker容器与本机端口，将容器与服务快捷方式放置在飞牛OS桌面",
-		Port:     settings.PortalPort,
-		Protocol: "http",
-		Path:     "/",
-		UIType:   settings.PortalUIType,
-		AllUsers: settings.PortalAllUsers,
-		IconPath: i.rootIconPath,
-	})
-	if err != nil {
-		return fmt.Errorf("构建自身应用包失败: %w", err)
-	}
-
-	if !i.hasAppcenterCLI {
-		slog.Info("产品自身桌面包已准备就绪 (模拟模式)", "appName", appName, "pkgDir", pkgDir)
-		return nil
-	}
-
-	// Check if already installed
-	cmdList := exec.Command(i.cliPath, "list")
-	output, err := cmdList.CombinedOutput()
-	isInstalled := err == nil && strings.Contains(string(output), appName)
-
-	if !isInstalled {
-		// Only install if not present yet. Do NOT stop or uninstall current process!
-		installCmd := exec.Command(i.cliPath, "install-local", "--volume", "1")
-		installCmd.Dir = pkgDir
-		if out, err := installCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("安装自身应用失败: %w (输出: %s)", err, strings.TrimSpace(string(out)))
-		}
-		_ = exec.Command(i.cliPath, "start", appName).Run()
-		slog.Info("产品自身桌面应用初次安装完成", "appName", appName)
-	} else {
-		slog.Info("产品自身桌面应用已处于安装列表中，跳过重新卸载以保证服务平稳运行", "appName", appName)
 	}
 
 	return nil
