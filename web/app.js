@@ -8,6 +8,57 @@ function apiUrl(path) {
   return BASE_PATH + path;
 }
 
+// Client-side audit & error reporting to backend logs
+function reportClientLog(type, action, message, details, stack) {
+  try {
+    const payload = JSON.stringify({
+      level: type === 'error' ? 'error' : 'info',
+      type: type || 'action',
+      action: action || '',
+      message: message || '',
+      details: details || {},
+      stack: stack || ''
+    });
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: 'application/json' });
+      navigator.sendBeacon(apiUrl('/api/logs/client'), blob);
+    } else {
+      fetch(apiUrl('/api/logs/client'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('Failed to send client log:', e);
+  }
+}
+
+// Automatically report runtime JS errors to backend logs
+window.addEventListener('error', function (event) {
+  reportClientLog(
+    'error',
+    'WindowError',
+    event.message || '前端脚本错误',
+    { filename: event.filename, lineno: event.lineno, colno: event.colno },
+    event.error ? event.error.stack : ''
+  );
+});
+
+// Automatically report unhandled Promise rejections to backend logs
+window.addEventListener('unhandledrejection', function (event) {
+  const reason = event.reason;
+  const msg = reason ? (reason.message || String(reason)) : '未处理的Promise拒绝';
+  reportClientLog(
+    'error',
+    'UnhandledPromiseRejection',
+    msg,
+    {},
+    reason && reason.stack ? reason.stack : ''
+  );
+});
+
 let state = {
   currentTab: 'ports',
   ports: [],
@@ -230,6 +281,10 @@ function updatePortCountBadge() {
 function updateDesktopCountBadge() {
   const badge = document.getElementById('desktop-count-badge');
   if (badge) badge.textContent = state.desktopItems.length;
+}
+
+function updateDesktopBadge() {
+  updateDesktopCountBadge();
 }
 
 function updateSystemMetrics(sys) {
@@ -562,6 +617,8 @@ function renderDesktopTable() {
       const label = wrapper ? wrapper.querySelector('.status-toggle-label') : null;
       const originalText = label ? label.textContent.trim() : '';
 
+      reportClientLog('action', '用户切换桌面图标状态', `ID: ${id}, 目标状态: ${chk.checked ? '启用' : '停用'}`, { id, checked: chk.checked });
+
       // Immediately disable checkbox and show loading state
       chk.disabled = true;
       if (label) {
@@ -575,11 +632,13 @@ function renderDesktopTable() {
           const updated = await res.json();
           const item = state.desktopItems.find(i => i.id === id);
           if (item) item.enabled = updated.enabled;
+          showToast(`已成功${updated.enabled ? '启用' : '停用'}桌面图标`, 'success');
           renderDesktopTable();
           fetchPorts();
         } else {
           const errData = await res.json().catch(() => ({}));
-          alert('切换状态失败: ' + (errData.error || res.statusText));
+          const errMsg = errData.error || res.statusText;
+          showToast('切换状态失败: ' + errMsg, 'error', 5000);
           chk.checked = !chk.checked;
           if (label) {
             label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
@@ -588,7 +647,7 @@ function renderDesktopTable() {
           chk.disabled = false;
         }
       } catch (e) {
-        alert('网络请求异常: ' + e.message);
+        showToast('网络请求异常: ' + e.message, 'error', 5000);
         chk.checked = !chk.checked;
         if (label) {
           label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
@@ -766,6 +825,7 @@ function initModals() {
     chip.addEventListener('click', async () => {
       const iconName = chip.dataset.icon;
       if (!iconName) return;
+      reportClientLog('action', '用户选择预置官方图标', `图标: ${iconName}`, { iconName });
       const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
       const elIcon = document.getElementById('item-icon');
       const imgEl = document.getElementById('icon-preview-img');
@@ -974,15 +1034,50 @@ function openEditDesktopModal(id) {
     btnDel.onclick = async () => {
       if (!confirm(`确定从飞牛桌面移出图标「${item.name}」吗？`)) return;
       closeModal('modal-desktop-item');
-      state.desktopItems = state.desktopItems.filter(i => i.id !== id);
-      updateDesktopBadge();
-      renderDesktopTable();
-      renderPortsTable();
-      showToast(`已从桌面移出「${item.name}」`, 'info');
+
+      reportClientLog('action', '用户确认移出桌面图标', `移出图标: ${item.name} (ID: ${id}, 包名: ${item.app_name})`, { id, name: item.name, app_name: item.app_name });
+
+      // Optimistic row update with loading spinner so user sees immediate feedback
+      const target = state.desktopItems.find(i => i.id === id);
+      if (target) {
+        target._updating = true;
+        target._error = false;
+        target._statusText = '正在移出中...';
+        renderDesktopTable();
+      }
+      showToast(`正在从桌面移出「${item.name}」...`, 'info');
+
       try {
-        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+        // Attempt POST /delete first for reverse-proxy compatibility, fallback to DELETE
+        let res = await fetch(apiUrl(`/api/desktop/items/${id}/delete`), { method: 'POST' });
+        if (!res.ok) {
+          res = await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+        }
+        if (res.ok) {
+          showToast(`已成功从桌面移出「${item.name}」`, 'success');
+          state.desktopItems = state.desktopItems.filter(i => i.id !== id);
+          updateDesktopCountBadge();
+          renderDesktopTable();
+          renderPortsTable();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.error || `移出失败 (HTTP ${res.status})`;
+          showToast(errMsg, 'error', 6000);
+          if (target) {
+            target._updating = false;
+            target._error = true;
+            target._statusText = '移出失败: ' + errMsg;
+            renderDesktopTable();
+          }
+        }
       } catch (err) {
-        showToast('移出失败: ' + err.message, 'error');
+        showToast('移出网络异常: ' + err.message, 'error', 6000);
+        if (target) {
+          target._updating = false;
+          target._error = true;
+          target._statusText = '网络异常: ' + err.message;
+          renderDesktopTable();
+        }
       } finally {
         await fetchDesktopItems();
         await fetchPorts();
@@ -1062,10 +1157,25 @@ function openPortDesktopListModal(port, procName, items) {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       if (confirm('确定从飞牛桌面移出此图标吗？')) {
-        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
-        await fetchDesktopItems();
-        await fetchPorts();
-        closeModal('modal-port-desktop-list');
+        reportClientLog('action', '用户从多图标列表移出桌面图标', `ID: ${id}`, { id });
+        try {
+          let res = await fetch(apiUrl(`/api/desktop/items/${id}/delete`), { method: 'POST' });
+          if (!res.ok) {
+            res = await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+          }
+          if (res.ok) {
+            showToast('已从桌面移出图标', 'success');
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            showToast('移出失败: ' + (errData.error || res.statusText), 'error');
+          }
+        } catch (e) {
+          showToast('移出网络异常: ' + e.message, 'error');
+        } finally {
+          await fetchDesktopItems();
+          await fetchPorts();
+          closeModal('modal-port-desktop-list');
+        }
       }
     });
   });
@@ -1195,18 +1305,41 @@ async function handleSaveDesktopItem(e) {
         created_at: new Date().toISOString(),
       });
     }
-    updateDesktopBadge();
+    updateDesktopCountBadge();
     renderPortsTable();
     renderDesktopTable();
 
     const method = id ? 'PUT' : 'POST';
     const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
 
-    fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    reportClientLog(
+      'action',
+      id ? '用户保存更新桌面图标' : '用户创建新桌面图标',
+      `名称: ${name}, 包名: ${appName}, 端口: ${port}, 模式: ${mode}`,
+      { id, name, app_name: appName, port, mode, url }
+    );
+
+    const doFetch = async () => {
+      let res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      // Fallback: if PUT fails on gateway, try POST /api/desktop/items/{id}
+      if (!res.ok && id && method === 'PUT') {
+        const fallbackRes = await fetch(apiUrl(`/api/desktop/items/${id}`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+        if (fallbackRes && fallbackRes.ok) {
+          res = fallbackRes;
+        }
+      }
+      return res;
+    };
+
+    doFetch()
       .then(async res => {
         const respData = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -1346,6 +1479,8 @@ async function handleIconUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
+  reportClientLog('action', '用户上传本地图标文件', `文件名: ${file.name}, 大小: ${file.size}字节`, { name: file.name, size: file.size, type: file.type });
+
   try {
     const pngDataUrl = await convertFileToPngDataUrl(file);
     document.getElementById('item-icon').value = pngDataUrl;
@@ -1385,6 +1520,8 @@ async function executeAutoSaveSettings() {
   const name = document.getElementById('setting-portal-name').value.trim();
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const allUsers = rAll ? rAll.value === 'true' : false;
+
+  reportClientLog('action', '用户保存系统设置', `名称: ${name}, 用户范围: ${allUsers ? '所有用户' : '仅管理员'}`, { name, allUsers });
 
   const pwd = document.getElementById('setting-portal-password').value;
   const pwdConfirm = document.getElementById('setting-portal-password-confirm').value;

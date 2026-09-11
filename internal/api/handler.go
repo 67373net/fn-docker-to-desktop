@@ -88,8 +88,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/desktop/items", h.handleGetDesktopItems)
 	mux.HandleFunc("POST /api/desktop/items", h.handleCreateDesktopItem)
 	mux.HandleFunc("PUT /api/desktop/items/{id}", h.handleUpdateDesktopItem)
+	mux.HandleFunc("POST /api/desktop/items/{id}", h.handleUpdateDesktopItem)
 	mux.HandleFunc("DELETE /api/desktop/items/{id}", h.handleDeleteDesktopItem)
+	mux.HandleFunc("POST /api/desktop/items/{id}/delete", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/toggle", h.handleToggleDesktopItem)
+
+	mux.HandleFunc("POST /api/logs/client", h.handleClientLog)
 
 	mux.HandleFunc("GET /api/settings", h.handleGetSettings)
 	mux.HandleFunc("POST /api/settings", h.handleUpdateSettings)
@@ -174,22 +178,32 @@ func RequestLoggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 
-		// Don't spam logs with routine high-frequency SSE or static assets
-		isHighFreq := r.URL.Path == "/api/events" || r.URL.Path == "/api/system"
-		isStatic := strings.HasPrefix(r.URL.Path, "/icons/") ||
-			strings.HasSuffix(r.URL.Path, ".png") ||
-			strings.HasSuffix(r.URL.Path, ".ico") ||
-			strings.HasSuffix(r.URL.Path, ".css") ||
-			strings.HasSuffix(r.URL.Path, ".js")
+		// Immediate audit entry for any non-idempotent operation (POST, PUT, DELETE)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			slog.Info("[HTTP-IN] 收到操作请求", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+		}
 
 		next.ServeHTTP(rec, r)
 
 		duration := time.Since(start)
 
-		if isHighFreq || isStatic {
+		// Routine high-frequency telemetry & static assets
+		isHighFreq := r.URL.Path == "/api/events" || r.URL.Path == "/api/system"
+		isAsset := strings.HasPrefix(r.URL.Path, "/icons/") ||
+			strings.HasSuffix(r.URL.Path, ".png") ||
+			strings.HasSuffix(r.URL.Path, ".ico") ||
+			strings.HasSuffix(r.URL.Path, ".css")
+
+		if isHighFreq || isAsset {
 			if rec.statusCode >= 400 {
 				slog.Warn("[HTTP] 异常响应", "method", r.Method, "path", r.URL.Path, "status", rec.statusCode, "duration", duration, "remote", r.RemoteAddr)
 			}
+			return
+		}
+
+		// Log page access and JS bundle load specifically so version loading can be verified
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/app.js") {
+			slog.Info("[HTTP] 访问前端页面与核心脚本", "path", r.URL.Path, "status", rec.statusCode, "duration", duration, "remote", r.RemoteAddr)
 			return
 		}
 
@@ -617,31 +631,82 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	slog.Info("===> [API] 收到移出桌面图标请求", "id", id, "remote", r.RemoteAddr)
+	slog.Info("===> [AUDIT] 收到移出/删除桌面图标请求", "id", id, "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 
 	if !h.checkAuth(r) {
-		slog.Warn("[API] 移出桌面图标鉴权未通过", "remote", r.RemoteAddr)
+		slog.Warn("[AUDIT] 移出桌面图标鉴权未通过", "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
 		return
 	}
 
 	if id == "" {
+		slog.Warn("[AUDIT] 移出桌面图标缺少ID参数", "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "缺少ID"}, http.StatusBadRequest)
 		return
 	}
 
 	h.proxyMgr.StopProxy(id)
 	if existing, ok := h.storage.GetItem(id); ok {
-		slog.Info("[API] 正在卸载注销桌面应用...", "appName", existing.AppName, "id", id)
-		_ = h.installer.UninstallItem(existing)
+		slog.Info("[AUDIT] 找到桌面图标，正在通过 appcenter-cli 停止并注销飞牛桌面应用...",
+			"id", id,
+			"appName", existing.AppName,
+			"name", existing.Name,
+			"port", existing.Port,
+			"mode", existing.Mode,
+		)
+		if err := h.installer.UninstallItem(existing); err != nil {
+			slog.Warn("[AUDIT] 桌面应用卸载产生输出/警告", "appName", existing.AppName, "error", err)
+		} else {
+			slog.Info("[AUDIT] 飞牛桌面应用已成功卸载并注销", "appName", existing.AppName)
+		}
 	} else {
-		slog.Info("[API] 未在存储中找到图标记录，尝试按 ID 注销...", "id", id)
+		slog.Info("[AUDIT] 未在存储中找到图标记录，尝试按 ID 派生标识执行注销...", "id", id)
 		_ = h.installer.UninstallItemByID(id)
 	}
-	_ = h.storage.DeleteItem(id)
 
-	slog.Info("<=== [API] 桌面图标已成功移出桌面并从数据库删除", "id", id)
+	if err := h.storage.DeleteItem(id); err != nil {
+		slog.Error("[AUDIT] 从数据库删除桌面图标记录失败", "id", id, "error", err)
+		h.jsonResponse(w, r, map[string]string{"error": "删除失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("<=== [AUDIT] 桌面图标已成功从飞牛桌面注销并从存储数据库移除", "id", id)
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
+}
+
+type clientLogRequest struct {
+	Level   string      `json:"level"`
+	Type    string      `json:"type"`
+	Action  string      `json:"action"`
+	Message string      `json:"message"`
+	Stack   string      `json:"stack"`
+	Details interface{} `json:"details"`
+}
+
+func (h *Handler) handleClientLog(w http.ResponseWriter, r *http.Request) {
+	var req clientLogRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败"}, http.StatusBadRequest)
+		return
+	}
+
+	if req.Level == "error" || req.Type == "error" {
+		slog.Error("[AUDIT-CLIENT] 前端捕获异常",
+			"action", req.Action,
+			"message", req.Message,
+			"stack", req.Stack,
+			"details", req.Details,
+			"remote", r.RemoteAddr,
+		)
+	} else {
+		slog.Info("[AUDIT-CLIENT] 前端用户操作",
+			"action", req.Action,
+			"message", req.Message,
+			"details", req.Details,
+			"remote", r.RemoteAddr,
+		)
+	}
+	h.jsonResponse(w, r, map[string]bool{"ok": true}, http.StatusOK)
 }
 
 func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request) {
@@ -723,6 +788,7 @@ func (h *Handler) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAuth(r) {
+		slog.Warn("[AUDIT] 修改系统设置鉴权未通过", "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
@@ -732,9 +798,19 @@ func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		ClearPassword bool `json:"clear_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("[AUDIT] 修改系统设置参数解析失败", "error", err, "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
+
+	slog.Info("[AUDIT] 收到修改系统设置请求",
+		"portalName", req.PortalName,
+		"portalUIType", req.PortalUIType,
+		"portalAllUsers", req.PortalAllUsers,
+		"hasNewPassword", req.AuthPassword != "",
+		"clearPassword", req.ClearPassword,
+		"remote", r.RemoteAddr,
+	)
 
 	current := h.storage.GetSettings()
 	if req.ClearPassword {
@@ -757,14 +833,16 @@ func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	current.PortalAllUsers = req.PortalAllUsers
 
 	if err := h.storage.UpdateSettings(current); err != nil {
+		slog.Error("[AUDIT] 保存系统设置失败", "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "更新配置失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.installer.SyncSelfApp(current); err != nil {
-		slog.Warn("同步自身桌面图标遇到告警", "error", err)
+		slog.Warn("[AUDIT] 同步自身桌面图标遇到告警", "error", err)
 	}
 
+	slog.Info("<=== [AUDIT] 系统设置更新保存成功并即时生效！")
 	current.AuthPassword = ""
 	h.jsonResponse(w, r, current, http.StatusOK)
 }
@@ -835,17 +913,20 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 // /api/icons/upload
 func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAuth(r) {
+		slog.Warn("[AUDIT] 上传图标鉴权未通过", "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		slog.Warn("[AUDIT] 上传图标文件解析失败", "error", err, "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "文件解析失败"}, http.StatusBadRequest)
 		return
 	}
 
 	file, header, err := r.FormFile("icon")
 	if err != nil {
+		slog.Warn("[AUDIT] 未获取到上传文件", "error", err, "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "未获取到上传文件"}, http.StatusBadRequest)
 		return
 	}
@@ -853,6 +934,7 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".svg" && ext != ".ico" {
+		slog.Warn("[AUDIT] 上传图标格式不受支持", "filename", header.Filename, "ext", ext, "remote", r.RemoteAddr)
 		h.jsonResponse(w, r, map[string]string{"error": "仅支持 PNG/JPG/WebP/SVG/ICO 图标"}, http.StatusBadRequest)
 		return
 	}
@@ -861,18 +943,23 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), cleanBase)
 	destPath := filepath.Join(h.iconsDir, filename)
 
+	slog.Info("[AUDIT] 正在保存用户上传的图标...", "originalFilename", header.Filename, "savedAs", filename, "sizeBytes", header.Size, "remote", r.RemoteAddr)
+
 	out, err := os.Create(destPath)
 	if err != nil {
+		slog.Error("[AUDIT] 创建图标文件失败", "destPath", destPath, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "创建文件失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, file); err != nil {
+		slog.Error("[AUDIT] 写入图标文件数据失败", "destPath", destPath, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "保存文件失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 
+	slog.Info("<=== [AUDIT] 用户上传图标成功保存", "filename", filename, "url", "/icons/"+filename)
 	h.jsonResponse(w, r, map[string]string{"filename": filename, "url": "/icons/" + filename}, http.StatusOK)
 }
 

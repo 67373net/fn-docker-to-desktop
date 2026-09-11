@@ -1,2 +1,43 @@
 #!/bin/bash
+# ==============================================================================
+# fn-docker-to-desktop 卸载回调清理脚本 (uninstall_callback)
+# ==============================================================================
+
+LOG_FILE="/tmp/fn-docker-to-desktop-uninstall.log"
+log_msg() {
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') - [callback] $1"
+    echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+    chmod 0666 "${LOG_FILE}" 2>/dev/null || true
+}
+
+# 确保残留的 fndocker.* 和 put-port.* 应用被全部注销
+CLI=""
+for candidate in \
+    "/var/apps/appcenter/target/bin/appcenter-cli" \
+    "/usr/bin/appcenter-cli" \
+    "/usr/local/bin/appcenter-cli" \
+    "/host/root/usr/bin/appcenter-cli" \
+    "/host/root/var/apps/appcenter/target/bin/appcenter-cli"; do
+    if [ -x "${candidate}" ]; then
+        CLI="${candidate}"
+        break
+    fi
+done
+
+if [ -z "${CLI}" ] && command -v appcenter-cli >/dev/null 2>&1; then
+    CLI=$(command -v appcenter-cli)
+fi
+
+if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
+    matched_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
+    for app in ${matched_apps}; do
+        if [ -n "${app}" ]; then
+            log_msg "清理残留应用: ${app}"
+            "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
+            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+        fi
+    done
+fi
+
+rm -rf /tmp/fndocker_* 2>/dev/null || true
 exit 0

@@ -24,7 +24,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.2"
+const appVersion = "1.1.3"
 
 func main() {
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
@@ -106,7 +106,7 @@ func main() {
 	}
 
 	// Output diagnostic information
-	logger.LogDiagnostic(port, host, *dataDirFlag, *iconPathFlag, socketPath)
+	logger.LogDiagnostic(appVersion, port, host, *dataDirFlag, *iconPathFlag, socketPath)
 
 	var ln net.Listener
 	var addr string

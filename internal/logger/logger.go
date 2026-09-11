@@ -438,7 +438,7 @@ func parseLogLine(raw string) LogEntry {
 }
 
 // LogDiagnostic outputs detailed startup diagnostics to help investigate environment and startup issues.
-func LogDiagnostic(port int, host, dataDir, iconPath string, socketPath ...string) {
+func LogDiagnostic(version string, port int, host, dataDir, iconPath string, socketPath ...string) {
 	hostname, _ := os.Hostname()
 	wd, _ := os.Getwd()
 	exePath, _ := os.Executable()
@@ -463,11 +463,15 @@ func LogDiagnostic(port int, host, dataDir, iconPath string, socketPath ...strin
 
 	banner := strings.Repeat("=", 78)
 	slog.Info(banner)
-	slog.Info("把 Docker 放到桌面 (fn-docker-to-desktop) 服务启动诊断信息")
+	slog.Info(fmt.Sprintf("把 Docker 放到桌面 (fn-docker-to-desktop) 服务启动诊断信息 [版本: %s]", version))
 	slog.Info("------------------------------------------------------------------------------")
-	slog.Info("基础环境",
-		"系统", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+	slog.Info("应用信息",
+		"版本号", version,
+		"程序标识", "fn-docker-to-desktop",
+		"系统架构", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		"Go版本", runtime.Version(),
+	)
+	slog.Info("基础环境",
 		"PID", os.Getpid(),
 		"UID/GID", fmt.Sprintf("%d/%d", os.Getuid(), os.Getgid()),
 		"主机名", hostname,

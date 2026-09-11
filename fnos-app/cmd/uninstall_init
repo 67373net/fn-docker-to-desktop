@@ -1,2 +1,76 @@
 #!/bin/bash
+# ==============================================================================
+# fn-docker-to-desktop 卸载清理脚本 (uninstall_init)
+# 功能：当用户在飞牛应用中心卸载本应用时，自动注销清理本应用创建的所有桌面图标与子包
+# ==============================================================================
+
+LOG_FILE="/tmp/fn-docker-to-desktop-uninstall.log"
+log_msg() {
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+    chmod 0666 "${LOG_FILE}" 2>/dev/null || true
+}
+
+log_msg "=== 开始执行 把 Docker 放到桌面 (fn-docker-to-desktop) 卸载清理 ==="
+
+# 1. 定位 appcenter-cli 工具
+CLI=""
+for candidate in \
+    "/var/apps/appcenter/target/bin/appcenter-cli" \
+    "/usr/bin/appcenter-cli" \
+    "/usr/local/bin/appcenter-cli" \
+    "/host/root/usr/bin/appcenter-cli" \
+    "/host/root/var/apps/appcenter/target/bin/appcenter-cli"; do
+    if [ -x "${candidate}" ]; then
+        CLI="${candidate}"
+        break
+    fi
+done
+
+if [ -z "${CLI}" ] && command -v appcenter-cli >/dev/null 2>&1; then
+    CLI=$(command -v appcenter-cli)
+fi
+
+log_msg "检测 appcenter-cli 路径: ${CLI:-未找到}"
+
+# 2. 如果存在 appcenter-cli，清理所有由本程序创建的桌面子应用 (fndocker.* 或 put-port.*)
+if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
+    # 从数据文件读取已记录的应用包名
+    DATA_DIRS=(
+        "${TRIM_PKGVAR}/data"
+        "/usr/local/apps/@appdata/fn-docker-to-desktop/data"
+        "/var/apps/fn-docker-to-desktop/var/data"
+        "/var/apps/fn-docker-to-desktop/target/data"
+    )
+    for d in "${DATA_DIRS[@]}"; do
+        json_file="${d}/desktop_items.json"
+        if [ -f "${json_file}" ]; then
+            log_msg "正在从 ${json_file} 读取已创建应用包名..."
+            app_list=$(grep -oE '"app_name"\s*:\s*"[^"]+"' "${json_file}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+            for app in ${app_list}; do
+                if [ -n "${app}" ] && [ "${app}" != "null" ]; then
+                    log_msg "正在注销子应用 (from items.json): ${app}"
+                    "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
+                    "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+                fi
+            done
+        fi
+    done
+
+    # 进一步从 appcenter-cli list 扫描所有未卸载的 fndocker.* 和 put-port.* 应用
+    log_msg "正在通过 appcenter-cli list 扫描残留桌面子应用..."
+    matched_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
+    for app in ${matched_apps}; do
+        if [ -n "${app}" ]; then
+            log_msg "正在注销残留子应用 (from cli list): ${app}"
+            "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
+            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+        fi
+    done
+fi
+
+# 3. 清理临时打包目录
+rm -rf /tmp/fndocker_* 2>/dev/null || true
+
+log_msg "=== 卸载清理完成 ==="
 exit 0

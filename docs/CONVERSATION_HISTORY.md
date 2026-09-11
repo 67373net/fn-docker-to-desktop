@@ -1557,4 +1557,127 @@ INFO
 - **输出 Token (Completion Tokens)**：约 7,800
 - **总消耗 Token (Total Tokens)**：**约 108,300**
 
+---
+
+## 轮次 16 (Turn 16) - 2026-09-11
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 在 桌面图标 中移除了图标，结果条目还在，只是点击编辑按钮没反应了，桌面上的图标也没消失。过了一会儿，点击编辑按钮又能弹窗了，依然什么都没改变。
+- 我把这个app卸载了，结果这个app生成的桌面图标还在。
+- 能不能每次我的操作和后台行为都加一个log？你现在这个log依然无法排查你到底犯了什么错，你为什么不吸取教训？我的新增图标、上传图片、删除等等行为和后台行为无法在log中反映，到处都是bug！你的log是不是连版本号这种基础信息都缺失？？log里面什么都看不出来，废物一样。
+2026-09-11 19:52:30
+INFO
+[INFO] 收到终止信号，正在关闭服务...
+2026-09-11 19:52:30
+INFO
+[INFO] 服务已安全退出
+2026-09-11 19:52:41
+INFO
+[INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...
+2026-09-11 19:52:41
+INFO
+[INFO] ==============================================================================
+...
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. “移除了图标但条目还在、点击编辑无反应、过一会儿又恢复原样”的致命根本原因深挖
+
+- **现象严谨复盘**：
+  用户在“桌面图标”Tab 点击“编辑”打开弹窗，随后点击弹窗底部的“移出桌面”按钮并确认。结果：
+  1. 弹窗关闭，但条目仍然在表格中（“结果条目还在”）；
+  2. 用户再次点击该行的“编辑”按钮没有任何弹窗反应（“只是点击编辑按钮没反应了”）；
+  3. 飞牛桌面上的对应图标并未被删除（“桌面上的图标也没消失”）；
+  4. 过了一会儿（后台轮询或 SSE 刷新），再次点击“编辑”按钮又能弹窗了，但图标配置依然毫无改变（“过了一会儿，点击编辑按钮又能弹窗了，依然什么都没改变”）。
+- **根因彻底查明 (100% 确认)**：
+  - **前端致命 ReferenceError 阻断整个网络请求**：
+    在 `web/app.js` 的 `openEditDesktopModal` 移出回调中：
+    ```javascript
+    closeModal('modal-desktop-item');
+    state.desktopItems = state.desktopItems.filter(i => i.id !== id);
+    updateDesktopBadge(); // <--- ReferenceError: updateDesktopBadge is not defined!
+    renderDesktopTable();
+    await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+    ```
+    系统中定义的统计角标函数全名为 `updateDesktopCountBadge`，此前在 `v1.1.1` 误写为 `updateDesktopBadge()`。
+    当用户点击“移出桌面”并确认后：
+    1. 内存数组 `state.desktopItems` 先移除了该项；
+    2. 执行到 `updateDesktopBadge()` 时，浏览器抛出未捕获异常 `ReferenceError: updateDesktopBadge is not defined`，**脚本执行即刻中断**！
+    3. 后续的 `renderDesktopTable()` **完全没有执行**，因此 DOM 表格仍然停留在旧状态，没有更新视图（表现为“结果条目还在”）；
+    4. 核心的网络请求 `fetch(..., { method: 'DELETE' })` **根本未能发出**！飞牛后台未收到任何删除请求，因此系统桌面图标依然存在；
+    5. 用户看到表格条目还在，试图再次点击“编辑”按钮。在 `openEditDesktopModal(id)` 中由于第一步已经从 `state.desktopItems` 中把该 ID 过滤掉了，找不到对象直接 `return`，因而点击编辑毫无反应；
+    6. 随后，后台 SSE 事件或轮询机制触发 `fetchDesktopItems()`，从后端重新获取了未被删除的完整列表，`state.desktopItems` 重新被填回，于是用户又可以点击编辑打开弹窗了，但一切未变。
+  - 同理，在 `handleSaveDesktopItem` 保存更新图标处，原先也调用了 `updateDesktopBadge()`，导致部分情况下保存未向后端发送网络请求。
+- **修复方案**：
+  1. 纠正所有调用点为 `updateDesktopCountBadge()`，并显式声明 `updateDesktopBadge` 作为兜底安全别名；
+  2. 移出逻辑增加完整的 `try...catch` 与状态保护，移出时表格行立即显示“正在移出中...”旋转动画；
+  3. 兼容反向代理与网关对 HTTP 谓词的限制，注册并支持 `POST /api/desktop/items/{id}/delete` 与 `DELETE /api/desktop/items/{id}` 双重机制；
+  4. 增加全局未捕获异常捕获器（`window.onerror` 与 `unhandledrejection`），一旦前端发生脚本错误立即通过 Beacon / POST 上报到后台日志。
+
+---
+
+#### 2. “卸载主 App 后桌面图标残留”的根本原因与全自动卸载清理机制
+
+- **现象复盘**：用户在飞牛 OS 应用中心卸载 `fn-docker-to-desktop`，结果该 App 曾经创建的桌面图标（`fndocker.*`）依然留存在飞牛桌面上。
+- **根因分析**：
+  - 飞牛 OS 应用中心在用户点击卸载时，会执行应用包内部的 `fnos-app/cmd/uninstall_init` 和 `fnos-app/cmd/uninstall_callback`；
+  - 检查项目代码，此两份脚本内容此前仅为默认的占位符 `exit 0`，**完全未包含任何卸载子包的清理逻辑**！
+  - 当主应用被飞牛卸载并删除时，本程序启动的常驻服务退出，但所有此前通过 `appcenter-cli install-local` 注册至飞牛系统的子应用包（`fndocker.*`）未被清理，导致孤立图标遗留在桌面上。
+- **修复方案**：
+  - 在 `fnos-app/cmd/uninstall_init` 和 `fnos-app/cmd/uninstall_callback` 中植入全自动子包清理逻辑：
+    1. 自动定位宿主机 `appcenter-cli` 工具；
+    2. 读取已持久化存储的 `desktop_items.json`，注销所有记录的包名；
+    3. 执行 `appcenter-cli list` 扫描所有以 `fndocker.` 或 `put-port.` 为前缀的残留子应用；
+    4. 对所有匹配到的子包逐个执行 `appcenter-cli stop` 与 `appcenter-cli uninstall`；
+    5. 清理 `/tmp/fndocker_*` 打包缓存，并将卸载执行日志输出至 `/tmp/fn-docker-to-desktop-uninstall.log`。
+  - 用户从应用中心卸载本应用时，飞牛桌面上的所有生成图标将被干净彻底地一并移除！
+
+---
+
+#### 3. 全局审计日志体系（Audit Logging）与启动诊断版本号补齐
+
+- **用户痛点**：
+  1. 日志中缺失应用版本号这一基础信息，升级后无法确认当前运行版本；
+  2. 新增图标、上传图片、移出图标、修改设置等用户前端操作与后端执行行为在日志中无法反映，排查问题如同盲人摸象。
+- **彻底改造与增强**：
+  1. **启动诊断信息置顶输出版本号**：
+     - `internal/logger/logger.go` 中 `LogDiagnostic` 新增版本参数，在启动横幅正下方清晰打印：
+       `[INFO] 应用信息 版本号=v1.1.3 程序标识=fn-docker-to-desktop 系统架构=linux/amd64 Go版本=...`
+  2. **全面引入 `[AUDIT]` 审计日志规范**：
+     - **创建图标**：`[AUDIT] 用户提交创建桌面图标`，打印名称、包名、端口、模式、打开方式、可见权限；
+     - **更新图标**：`[AUDIT] 用户提交更新桌面图标`，打印新旧包名、端口、代理地址；
+     - **移出图标**：`[AUDIT] 收到移出/删除桌面图标请求`，明确打印被注销的应用包名及执行结果；
+     - **切换状态**：`[AUDIT] 用户切换桌面图标状态`，打印目标启用/停用状态；
+     - **上传图标**：`[AUDIT] 用户上传图标文件`，打印文件名、文件大小、存储路径；
+     - **修改设置**：`[AUDIT] 收到修改系统设置请求`，打印门户名称、打开方式、权限范围与密码变动；
+     - **HTTP 写入追踪**：所有非 GET 请求进入时即刻输出 `[HTTP-IN] 收到操作请求`；
+     - **核心页面与脚本加载追踪**：专门记录 `[HTTP] 访问前端页面与核心脚本`，可直观确认浏览器请求的是否为带有全新 `?v=1.1.3` 的最新代码。
+  3. **新增前端操作与异常上报接口 `POST /api/logs/client`**：
+     - 前端的重要用户行为（如确认移出图标、上传图标、保存设置）均通过客户端日志接口上报，标记为 `[AUDIT-CLIENT] 前端用户操作`；
+     - 前端若发生任何未捕获的 JS 异常或 Promise 拒绝，自动通过 `[AUDIT-CLIENT] 前端捕获异常` 写入系统日志文件中，彻底终结前端静默报错！
+
+---
+
+#### 4. 版本发布与构建
+
+- 版本全量升级为 **`v1.1.3`**：
+  - `fnos-app/manifest`：`version = 1.1.3`；
+  - `cmd/server/main.go`：`appVersion = "1.1.3"`；
+  - `web/index.html`：`把 Docker 放到桌面 v1.1.3 - 自身桌面图标设置`、`app.js?v=1.1.3`、`style.css?v=1.1.3`。
+- 使用 Docker 容器环境执行 `./scripts/build-fpk.sh x86` 完成标准 `.fpk` 构建与 MD5 校验和封装。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 85,000
+- **思维链 Token (Thinking Tokens)**：约 32,000
+- **输出 Token (Completion Tokens)**：约 8,200
+- **总消耗 Token (Total Tokens)**：**约 125,200**
+
 
