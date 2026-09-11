@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -68,7 +69,12 @@ func (s *Storage) loadItems() {
 	if err == nil {
 		var list []DesktopItem
 		if err := json.Unmarshal(data, &list); err == nil {
-			for _, item := range list {
+			now := time.Now()
+			for idx, item := range list {
+				// If legacy item has zero CreatedAt, assign deterministic decreasing time based on file order
+				if item.CreatedAt.IsZero() {
+					item.CreatedAt = now.Add(-time.Duration(idx) * time.Minute)
+				}
 				s.items[item.ID] = item
 			}
 		}
@@ -84,10 +90,7 @@ func (s *Storage) saveSettingsLocked() error {
 }
 
 func (s *Storage) saveItemsLocked() error {
-	list := make([]DesktopItem, 0, len(s.items))
-	for _, item := range s.items {
-		list = append(list, item)
-	}
+	list := s.getAllItemsLocked()
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
@@ -119,14 +122,24 @@ func (s *Storage) UpdateSettings(settings Settings) error {
 	return s.saveSettingsLocked()
 }
 
-// GetAllItems returns a list of all desktop items.
+// GetAllItems returns a list of all desktop items stably sorted by CreatedAt descending (newest first).
 func (s *Storage) GetAllItems() []DesktopItem {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.getAllItemsLocked()
+}
+
+func (s *Storage) getAllItemsLocked() []DesktopItem {
 	list := make([]DesktopItem, 0, len(s.items))
 	for _, item := range s.items {
 		list = append(list, item)
 	}
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].CreatedAt.After(list[j].CreatedAt)
+		}
+		return list[i].ID > list[j].ID
+	})
 	return list
 }
 

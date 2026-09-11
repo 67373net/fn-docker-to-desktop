@@ -167,7 +167,55 @@ async function fetchDesktopItems() {
     const res = await fetch(apiUrl('/api/desktop/items'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
-      state.desktopItems = await res.json();
+      const serverItems = await res.json();
+
+      // Collect existing pending / in-flight items
+      const pendingMap = new Map();
+      (state.desktopItems || []).forEach(item => {
+        if (item && (item._updating || item._error)) {
+          pendingMap.set(item.id, item);
+        }
+      });
+
+      const merged = [];
+      const seenIds = new Set();
+
+      // 1. Preserve any newly added items still in progress that server has not yet returned
+      pendingMap.forEach((pendingItem, id) => {
+        const onServer = serverItems.find(s => s.id === id);
+        if (!onServer && pendingItem._statusText !== '正在移出中...') {
+          merged.push(pendingItem);
+          seenIds.add(id);
+        }
+      });
+
+      // 2. Merge server items with any active in-flight status
+      serverItems.forEach(serverItem => {
+        const pendingItem = pendingMap.get(serverItem.id);
+        if (pendingItem) {
+          if (pendingItem._statusText === '正在移出中...') {
+            merged.push({
+              ...serverItem,
+              _updating: true,
+              _statusText: pendingItem._statusText,
+              _error: pendingItem._error,
+            });
+          } else {
+            merged.push({
+              ...serverItem,
+              ...pendingItem,
+              _updating: pendingItem._updating,
+              _statusText: pendingItem._statusText,
+              _error: pendingItem._error,
+            });
+          }
+        } else {
+          merged.push(serverItem);
+        }
+        seenIds.add(serverItem.id);
+      });
+
+      state.desktopItems = merged;
       renderDesktopTable();
       updateDesktopCountBadge();
     }
@@ -808,6 +856,7 @@ function initModals() {
           const shortId = state.appShortId || Math.floor(100000 + Math.random() * 900000).toString();
           state.appShortId = shortId;
           elAppName.value = ('fndocker.' + (baseCandidate || 'app') + '-' + shortId).slice(0, 32);
+          checkAppNameDuplicate();
         }
       }
     });
@@ -817,6 +866,7 @@ function initModals() {
   if (elAppName) {
     elAppName.addEventListener('input', () => {
       state.appNameDirty = true;
+      checkAppNameDuplicate();
     });
   }
 
@@ -890,6 +940,34 @@ function initModals() {
   }
 }
 
+function checkAppNameDuplicate() {
+  const elAppName = document.getElementById('item-app-name');
+  const tipEl = document.getElementById('item-app-name-duplicate-tip');
+  if (!elAppName || !tipEl) return null;
+
+  const currentId = (document.getElementById('item-id') ? document.getElementById('item-id').value.trim() : '');
+  const val = elAppName.value.trim();
+  if (!val) {
+    tipEl.style.display = 'none';
+    tipEl.textContent = '';
+    elAppName.style.borderColor = '';
+    return null;
+  }
+
+  const conflict = (state.desktopItems || []).find(item => item.id !== currentId && item.app_name === val);
+  if (conflict) {
+    tipEl.style.display = 'block';
+    tipEl.textContent = `⚠️ 该应用包名已被桌面图标「${conflict.name}」占用，保存时将产生冲突，请修改！`;
+    elAppName.style.borderColor = 'var(--danger, #ef4444)';
+    return conflict;
+  } else {
+    tipEl.style.display = 'none';
+    tipEl.textContent = '';
+    elAppName.style.borderColor = '';
+    return null;
+  }
+}
+
 function setDesktopModalMode(mode) {
   state.activeMode = mode;
   document.getElementById('item-mode').value = mode;
@@ -901,6 +979,19 @@ function setDesktopModalMode(mode) {
   document.getElementById('fields-local').style.display = mode === 'local' ? 'block' : 'none';
   document.getElementById('fields-proxy').style.display = mode === 'proxy' ? 'block' : 'none';
   document.getElementById('fields-shortcut').style.display = mode === 'shortcut' ? 'block' : 'none';
+
+  const rowProtoPath = document.getElementById('row-protocol-path');
+  if (rowProtoPath) {
+    rowProtoPath.style.display = mode === 'shortcut' ? 'none' : 'flex';
+  }
+  const groupUiType = document.getElementById('group-ui-type');
+  if (groupUiType) {
+    groupUiType.style.display = mode === 'shortcut' ? 'none' : 'block';
+  }
+  if (mode === 'shortcut') {
+    const elUiType = document.getElementById('item-ui-type');
+    if (elUiType) elUiType.value = 'url';
+  }
 }
 
 function resetDesktopForm() {
@@ -913,6 +1004,13 @@ function resetDesktopForm() {
   const formEl = document.getElementById('form-desktop-item');
   if (formEl) delete formEl.dataset.image;
 
+  const tipEl = document.getElementById('item-app-name-duplicate-tip');
+  if (tipEl) {
+    tipEl.style.display = 'none';
+    tipEl.textContent = '';
+  }
+  if (elAppName) elAppName.style.borderColor = '';
+
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = '';
   document.getElementById('item-local-port').value = '';
@@ -921,8 +1019,8 @@ function resetDesktopForm() {
   document.getElementById('item-shortcut-url').value = '';
   document.getElementById('item-protocol').value = 'http';
   document.getElementById('item-path').value = '/';
-  document.getElementById('item-ui-type').value = 'iframe';
-  document.getElementById('item-all-users').value = 'true';
+  document.getElementById('item-ui-type').value = 'url';
+  document.getElementById('item-all-users').value = 'false';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
@@ -960,6 +1058,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   const elAppName = document.getElementById('item-app-name');
   if (elAppName) elAppName.value = defaultAppName;
   state.appNameDirty = false;
+  checkAppNameDuplicate();
 
   // Auto-resolve or recommend official icon from Homarr CDN for Docker containers or port services
   let iconCandidate = '';
@@ -1008,6 +1107,7 @@ function openEditDesktopModal(id) {
   const elAppName = document.getElementById('item-app-name');
   if (elAppName) elAppName.value = item.app_name || '';
   state.appNameDirty = true;
+  checkAppNameDuplicate();
 
   const formEl = document.getElementById('form-desktop-item');
   if (formEl && item.image) {
@@ -1018,7 +1118,7 @@ function openEditDesktopModal(id) {
   if (elContainer) elContainer.value = item.container_name || '';
   document.getElementById('item-protocol').value = item.protocol || 'http';
   document.getElementById('item-path').value = item.path || '/';
-  document.getElementById('item-ui-type').value = item.ui_type || 'iframe';
+  document.getElementById('item-ui-type').value = item.ui_type || 'url';
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
   document.getElementById('item-icon').value = item.icon || '';
 
@@ -1219,6 +1319,12 @@ async function handleSaveDesktopItem(e) {
       }
     }
 
+    const conflict = checkAppNameDuplicate();
+    if (conflict) {
+      if (appNameInput) appNameInput.focus();
+      return showToast(`应用包名标识已被桌面图标「${conflict.name}」占用，请更改包名！`, 'error');
+    }
+
     let port = 0;
     let targetUrl = '';
     let skipTls = false;
@@ -1246,6 +1352,9 @@ async function handleSaveDesktopItem(e) {
       if (!targetUrl) {
         document.getElementById('item-shortcut-url').focus();
         return showToast('请输入目标网址', 'error');
+      }
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = 'https://' + targetUrl;
       }
     }
 
@@ -1282,9 +1391,7 @@ async function handleSaveDesktopItem(e) {
     // Close modal immediately
     closeModal('modal-desktop-item');
 
-    // Automatically switch to Desktop tab so the user sees the new icon and progress immediately!
-    switchTab('desktop');
-
+    // Update in-memory state FIRST so table and badges have it before any tab switch or fetch
     if (id) {
       const existing = state.desktopItems.find(i => i.id === id);
       if (existing) {
@@ -1308,6 +1415,9 @@ async function handleSaveDesktopItem(e) {
     updateDesktopCountBadge();
     renderPortsTable();
     renderDesktopTable();
+
+    // Automatically switch to Desktop tab so the user sees the new icon and progress immediately!
+    switchTab('desktop');
 
     const method = id ? 'PUT' : 'POST';
     const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
@@ -1355,6 +1465,11 @@ async function handleSaveDesktopItem(e) {
           }
         } else {
           showToast(`桌面图标「${name}」已成功同步至飞牛桌面！`, 'success');
+          const target = state.desktopItems.find(i => i.id === payload.id);
+          if (target) {
+            target._updating = false;
+            target._statusText = '';
+          }
           await fetchDesktopItems();
           await fetchPorts();
         }

@@ -316,9 +316,6 @@ desktop_applaunchname=%s
 		portStr = strconv.Itoa(cfg.Port)
 	}
 	proto := cfg.Protocol
-	if proto == "" {
-		proto = "http"
-	}
 	urlPath := cfg.Path
 	if urlPath == "" {
 		urlPath = "/"
@@ -328,17 +325,28 @@ desktop_applaunchname=%s
 		uiType = "url"
 	}
 
+	isExternalURL := strings.HasPrefix(urlPath, "http://") || strings.HasPrefix(urlPath, "https://")
+
 	entryMap := map[string]interface{}{
 		"title":     title,
 		"icon":      "images/icon-{0}.png",
 		"type":      uiType,
-		"protocol":  proto,
 		"url":       urlPath,
 		"allUsers":  cfg.AllUsers,
 		"noDisplay": false,
 	}
-	if portStr != "" {
-		entryMap["port"] = portStr
+
+	if isExternalURL {
+		// External pure URL shortcut: do NOT include protocol or port in entryMap, ensure type is url
+		entryMap["type"] = "url"
+	} else {
+		if proto == "" {
+			proto = "http"
+		}
+		entryMap["protocol"] = proto
+		if portStr != "" {
+			entryMap["port"] = portStr
+		}
 	}
 
 	uiConfigMap := map[string]interface{}{
@@ -425,21 +433,29 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 
 	port := item.Port
 	path := item.Path
+	protocol := item.Protocol
+	uiType := item.UIType
 	if item.Mode == ModeShortcut {
 		port = 0
-		path = item.TargetURL
+		target := strings.TrimSpace(item.TargetURL)
+		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			target = "https://" + target
+		}
+		path = target
+		protocol = ""
+		uiType = "url"
 	}
 
-	slog.Info("开始构建飞牛应用安装包", "appName", appName, "title", item.Name, "port", port, "id", item.ID)
+	slog.Info("开始构建飞牛应用安装包", "appName", appName, "title", item.Name, "port", port, "id", item.ID, "mode", item.Mode, "path", path)
 
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
 		AppName:       appName,
 		Title:         item.Name,
 		Desc:          item.Desc,
 		Port:          port,
-		Protocol:      item.Protocol,
+		Protocol:      protocol,
 		Path:          path,
-		UIType:        item.UIType,
+		UIType:        uiType,
 		AllUsers:      item.AllUsers,
 		IconPath:      item.Icon,
 		ContainerName: item.ContainerName,

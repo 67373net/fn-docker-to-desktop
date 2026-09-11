@@ -1680,4 +1680,129 @@ INFO
 - **输出 Token (Completion Tokens)**：约 8,200
 - **总消耗 Token (Total Tokens)**：**约 125,200**
 
+---
+
+## 第十八轮对话：深度修复状态反馈延迟、排序跳动、包名重名提示、表单默认项优化与修复网页快捷方式外链 Bug (v1.1.4)
+
+### 用户反馈与核心诉求
+
+1. **添加图标反馈延迟与列表空白**：
+   - 添加图标后，界面立即跳转到了桌面图标标签页，但此时条目还没生成（列表中没有这一项，约十多秒后才突然出现），体验怪异。
+   - **诉求**：必须先在列表中即时生成条目，并注明好运行状态（如“正在创建中...”）。
+2. **编辑图标缺少运行状态注明**：
+   - 编辑图标后，虽然跳转到了桌面图标，但运行状态没有改变。
+   - **诉求**：应明确注明运行状态（如“正在更新中...”）。
+3. **删除图标时状态丢失与图标顺序随机打乱**：
+   - 删除图标后，立刻切换到进程列表，又立刻切换回桌面图标，发现列表中图标顺序变了，过了十几秒后条目才消失。
+   - **诉求**：条目消失是正常的，但图标顺序绝不能随机改变；且在注销过程中运行状态必须始终注明（如“正在移出中...”）。
+4. **新建图标弹窗默认选项与文案优化**：
+   - 默认打开方式设为：**浏览器新标签页**；
+   - 移除选项后方的 `(url)` 和 `(iframe)` 括号英文；
+   - 默认访问权限设为：**仅管理员可见**。
+5. **应用包名标识标签文案与提示清理**：
+   - 标签名称改为：`应用包名标识 (fnOS Package ID，以字母数字开头，仅含字母数字点号短横线，3-32位)`；
+   - 移除原下方的说明文案（`<div class="form-tip">...</div>`）。
+6. **应用包名重名校验与适时提示**：
+   - 对应用包名重名进行校验，在适当的时候对用户进行明确提示与阻止。
+7. **网页快捷方式表单精简与核心外链 URL Bug 根因修复**：
+   - 对于网页快捷方式，隐藏协议、访问路径和打开方式（既然是外部网站，打开方式必然是浏览器新标签页，配置项冗余）；
+   - **核心 Bug**：添加 `https://www.baidu.com` 的网页快捷方式后，在飞牛桌面上点击打开，浏览器跳转到的 URL 竟是 `http://192.168.1.147:12588/https://www.baidu.com`，飞牛提示“这里暂时没有装入页面”。必须彻底排查并修复，使其直接打开目标网址。
+
+---
+
+### 问题根本原因深度剖析 (Root Cause Analysis)
+
+1. **创建/更新/删除反馈延迟与状态丢失根因**：
+   - 之前在 `handleSaveDesktopItem` 中，先调用了 `switchTab('desktop')`，随后才去向 `state.desktopItems` 中写入 `_updating = true` 的项。
+   - 并且 `switchTab('desktop')` 会立即触发 `fetchDesktopItems()` 发起异步 `GET /api/desktop/items` 请求。
+   - 旧逻辑在收到服务端响应后直接执行 `state.desktopItems = await res.json()`，将前端本地状态全部暴力覆盖。
+   - 由于服务端此时还在后台执行耗时 10~15 秒的 `appcenter-cli install-local`，服务端返回的数据中根本没有新项，或者没有 `_updating` 标志。
+   - **结果**：刚插入的新条目或更新状态被服务端旧数据立刻冲掉；用户切换到其他 Tab 再切回桌面图标时，删除状态 `正在移出中...` 同样被直接冲掉。
+2. **图标列表顺序随机跳动根因**：
+   - `internal/desktop/storage.go` 中的 `GetAllItems()` 原先直接遍历 Go 原生 `map[string]DesktopItem`，而 Go runtime 会在每次 map 遍历时随机生成哈希种子打乱顺序！
+   - **结果**：每次前端获取列表或切换 Tab，数据顺序完全随机洗牌。
+3. **网页快捷方式拼接本机宿主地址 Bug 根因**：
+   - 在 `internal/desktop/installer.go` 的 `BuildPackage` 中，先前为所有应用生成 `ui/config` 时，总是默认写入了 `"protocol": "http"`：
+     ```json
+     {
+       "title": "百度",
+       "type": "url",
+       "protocol": "http",
+       "url": "https://www.baidu.com"
+     }
+     ```
+   - 飞牛 OS 桌面端前端逻辑：一旦配置中存在 `protocol`，飞牛桌面会认为这是一个运行在本机的内部服务，强制按 `${protocol}://${window.location.host}${port ? ':' + port : ''}${url}` 组装最终打开的 URL，从而导致拼接成 `http://192.168.1.147:12588/https://www.baidu.com`！
+   - 只有当 `url` 是以 `http://` 或 `https://` 开头的完整外链且**完全不提供 `protocol` 和 `port` 字段**时，飞牛桌面才会直接调用 `window.open(url)` 打开目标外部网页。
+
+---
+
+### 具体改造与实施细节
+
+#### 1. 列表稳定排序（Deterministic Stable Sorting）
+- 修改 `internal/desktop/storage.go`：
+  - `GetAllItems()` 与 `getAllItemsLocked()` 统一引入 `sort.Slice`，按照 `CreatedAt` 倒序排序（最新创建的排在最前），若创建时间一致则按 `ID` 倒序；
+  - `saveItemsLocked()` 在持久化写盘时同步保存有序数组；
+  - `loadItems()` 兼容旧版历史数据，若缺失 `CreatedAt` 则根据索引赋予确定性的递减时间戳，杜绝任何随机性。
+
+#### 2. 前端智能状态合并机制（Smart In-Flight State Merge）
+- 修改 `web/app.js` 中的 `fetchDesktopItems()`：
+  - 发起 `GET` 请求拿到 `serverItems` 后，先提取本地处于 `_updating` 或 `_error` 的项建立 `pendingMap`；
+  - **保留正在创建的项**：若服务端尚未包含该项且其并非“正在移出中”，将其优先置顶并保留在列表中；
+  - **保留正在更新与正在移出的项**：将服务端的最新数据与本地的 `_updating: true` 及 `_statusText`（如“正在更新中...”、“正在移出中...”）深度合并；
+  - 无论用户如何频繁切换 Tab，均绝不丢失正在执行操作的加载状态！
+- 修改 `web/app.js` 中的 `handleSaveDesktopItem`：
+  - 先在本地状态 `state.desktopItems` 中置顶插入或更新条目，并立即调用 `renderDesktopTable()` 渲染出黄色加载徽章与禁用操作按钮；
+  - 随后再切换至桌面图标标签页 `switchTab('desktop')`，确保用户操作保存的一瞬间视觉零延迟呈现！
+  - 保存成功后清除该条目的 `_updating` 标志并刷新数据；保存失败时原地展示红色失败提示与详情。
+
+#### 3. 彻底修复网页快捷方式外链 Bug
+- 修改 `internal/desktop/installer.go`：
+  - 在 `InstallItem` 中：对于 `ModeShortcut`，强制 `port = 0`、`protocol = ""`、`uiType = "url"`，并自动清洗补齐 `https://` 前缀；
+  - 在 `BuildPackage` 中：判断若 `urlPath` 以 `http://` 或 `https://` 开头，**坚决不向 `ui/config` 的 `entryMap` 写入 `protocol` 与 `port`**，且强制 `type = "url"`；
+  - 清理 `manifest` 生成逻辑：当 `port == 0` 时不再写入 `service_port` 与 `checkport`；
+- 修改 `internal/api/handler.go`：
+  - 在 `handleCreateDesktopItem` 与 `handleUpdateDesktopItem` 中同步清理 `ModeShortcut` 的端口、协议与路径字段，严格规范外链数据格式；
+- 彻底解决点击桌面图标跳转宿主机反向端口前缀的问题，点击直达外链！
+
+#### 4. 网页快捷方式表单项动态隐藏与精简
+- 修改 `web/index.html`：
+  - 协议与访问路径行赋予容器 ID `row-protocol-path`；
+  - 打开方式表单组赋予容器 ID `group-ui-type`；
+- 修改 `web/app.js` 的 `setDesktopModalMode`：
+  - 切换到 `shortcut`（网页快捷方式）模式时，自动隐藏“协议与访问路径”及“打开方式”行；
+  - 切换回 `local`（本机端口）或 `proxy`（反向代理）模式时，恢复正常网格排版展示。
+
+#### 5. 应用包名标识重名即时校验与拦截
+- 修改 `web/index.html`：
+  - 标签更新为 `应用包名标识 (fnOS Package ID，以字母数字开头，仅含字母数字点号短横线，3-32位)`；
+  - 移除 `.form-tip`，新增专用红色提示容器 `<div id="item-app-name-duplicate-tip"></div>`；
+- 修改 `web/app.js`：
+  - 新增 `checkAppNameDuplicate()` 实时查重函数；
+  - 当用户在弹窗中输入包名、修改名称导致自动推导包名、或打开新建/编辑弹窗时，实时比对当前列表中除自身外的其他条目；
+  - 发现重名时，输入框即刻显示红色警示边框，并在下方展示黄色警示图标与占用来源图标名称；
+  - 在点击保存时执行严格查重，若重名则自动聚焦输入框并弹窗提示拦截，阻止向后台发送冲突请求。
+
+#### 6. 默认选项与文案优化
+- 修改 `web/index.html` 与 `web/app.js`：
+  - 打开方式选项文案精简为“浏览器新标签页”与“飞牛内部弹窗”，去掉多余英文；
+  - 新建图标时默认打开方式设为：`url`（浏览器新标签页）；
+  - 新建图标时默认可见权限设为：`false`（仅管理员可见）；
+  - 后端接口 `handleCreateDesktopItem` 在缺省 `all_users` 参数时同步默认解析为 `false`。
+
+#### 7. 版本升级与构建发布
+- 全量升级至 **`v1.1.4`**：
+  - `fnos-app/manifest`：`version = 1.1.4`；
+  - `cmd/server/main.go`：`appVersion = "1.1.4"`；
+  - `web/index.html`：`把 Docker 放到桌面 v1.1.4 - 自身桌面图标设置`、`app.js?v=1.1.4`、`style.css?v=1.1.4`。
+- 本地使用 Docker 编译并打包验证无误后，已执行清理移除本地 `.fpk` 文件。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 92,000
+- **思维链 Token (Thinking Tokens)**：约 36,000
+- **输出 Token (Completion Tokens)**：约 8,500
+- **总消耗 Token (Total Tokens)**：**约 136,500**
+
 

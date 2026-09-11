@@ -449,9 +449,21 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		item.Path = "/"
 	}
 	if _, hasAllUsers := rawMap["all_users"]; !hasAllUsers {
-		item.AllUsers = true
+		item.AllUsers = false
 	}
 	item.Enabled = true
+
+	if item.Mode == desktop.ModeShortcut {
+		target := strings.TrimSpace(item.TargetURL)
+		if target != "" && !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			target = "https://" + target
+		}
+		item.TargetURL = target
+		item.Port = 0
+		item.Protocol = ""
+		item.Path = ""
+		item.UIType = "url"
+	}
 
 	// Derive or validate app name
 	if item.AppName == "" {
@@ -568,6 +580,18 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	slog.Info("[API] 更新桌面图标参数解析完成", "id", id, "name", item.Name, "mode", item.Mode, "port", item.Port, "enabled", item.Enabled, "oldAppName", oldAppName, "newAppName", item.AppName)
+
+	if item.Mode == desktop.ModeShortcut {
+		target := strings.TrimSpace(item.TargetURL)
+		if target != "" && !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			target = "https://" + target
+		}
+		item.TargetURL = target
+		item.Port = 0
+		item.Protocol = ""
+		item.Path = ""
+		item.UIType = "url"
+	}
 
 	if item.Mode == desktop.ModeProxy && item.Enabled {
 		_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
