@@ -71,6 +71,11 @@ let state = {
   desktopSearch: '',
   procSearch: '',
   procSort: 'cpu',
+  procSortDir: 'desc',
+  activeIconTab: 'text',
+  currentTextIconDataUrl: null,
+  originalSettings: null,
+  isSettingsDirty: false,
   eventSource: null,
   activeMode: 'local',
   logDate: '',
@@ -123,6 +128,13 @@ function initNavigation() {
 }
 
 function switchTab(tab) {
+  if (state.currentTab === 'settings' && tab !== 'settings' && state.isSettingsDirty) {
+    if (!confirm('设置有未保存的修改，离开将丢失未保存的设置，确定要切换标签页吗？')) {
+      return;
+    }
+    updateSettingsForm();
+  }
+
   state.currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
@@ -268,27 +280,65 @@ async function fetchSettings() {
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const settings = await res.json();
-      const elName = document.getElementById('setting-portal-name');
-      if (elName) elName.value = settings.portal_name || '把 Docker 放到桌面';
-
-      const titleEl = document.getElementById('settings-card-title');
-      if (titleEl && settings.version) {
-        titleEl.textContent = `把 Docker 放到桌面 v${settings.version} - 自身桌面图标设置`;
-      }
-
-      const allUsers = settings.portal_all_users ? 'true' : 'false';
-      const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
-      if (rAll) rAll.checked = true;
-
-      const pwdEl = document.getElementById('setting-portal-password');
-      const pwdConfirmEl = document.getElementById('setting-portal-password-confirm');
-      const tipEl = document.getElementById('password-match-tip');
-      if (pwdEl) pwdEl.value = '';
-      if (pwdConfirmEl) pwdConfirmEl.value = '';
-      if (tipEl) tipEl.textContent = '';
+      state.settings = settings;
+      state.originalSettings = {
+        portal_name: settings.portal_name || '把 Docker 放到桌面',
+        portal_all_users: settings.portal_all_users === true,
+      };
+      state.isSettingsDirty = false;
+      updateSettingsForm();
     }
   } catch (err) {
     console.error('Fetch settings error:', err);
+  }
+}
+
+function updateSettingsForm() {
+  const elName = document.getElementById('setting-portal-name');
+  if (elName) elName.value = state.originalSettings?.portal_name || '把 Docker 放到桌面';
+
+  const titleEl = document.getElementById('settings-card-title');
+  if (titleEl && state.settings && state.settings.version) {
+    titleEl.textContent = `把 Docker 放到桌面 v${state.settings.version} - 自身桌面图标设置`;
+  }
+
+  const allUsers = state.originalSettings?.portal_all_users ? 'true' : 'false';
+  const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
+  if (rAll) rAll.checked = true;
+
+  const pwdEl = document.getElementById('setting-portal-password');
+  const pwdConfirmEl = document.getElementById('setting-portal-password-confirm');
+  if (pwdEl) pwdEl.value = '';
+  if (pwdConfirmEl) pwdConfirmEl.value = '';
+  const tipEl = document.getElementById('password-match-tip');
+  if (tipEl) tipEl.textContent = '';
+  const statusEl = document.getElementById('settings-status');
+  if (statusEl) statusEl.textContent = '';
+  state.isSettingsDirty = false;
+}
+
+function checkSettingsDirty() {
+  if (!state.originalSettings) return;
+  const curName = document.getElementById('setting-portal-name')?.value.trim() || '';
+  const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
+  const curAll = rAll ? rAll.value === 'true' : false;
+  const curPwd = document.getElementById('setting-portal-password')?.value || '';
+  const curPwdConfirm = document.getElementById('setting-portal-password-confirm')?.value || '';
+
+  const nameChanged = curName !== state.originalSettings.portal_name;
+  const allUsersChanged = curAll !== state.originalSettings.portal_all_users;
+  const pwdChanged = curPwd !== '' || curPwdConfirm !== '';
+
+  state.isSettingsDirty = nameChanged || allUsersChanged || pwdChanged;
+
+  const statusEl = document.getElementById('settings-status');
+  if (statusEl) {
+    if (state.isSettingsDirty) {
+      statusEl.textContent = '有未保存的修改';
+      statusEl.style.color = 'var(--text-muted)';
+    } else {
+      statusEl.textContent = '';
+    }
   }
 }
 
@@ -480,7 +530,7 @@ function renderPortsTable() {
       desktopCell = `
         <div class="desktop-btn-group">
           <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
-            <span>已在桌面(${count})</span>
+            <span class="btn-text">已在桌面</span><span class="btn-badge">${count}</span>
           </button>
           <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -730,16 +780,57 @@ function renderProcessesTable() {
     });
   }
 
-  if (state.procSort === 'cpu') {
-    list.sort((a, b) => b.cpu_percent - a.cpu_percent);
-  } else if (state.procSort === 'mem') {
-    list.sort((a, b) => b.mem_rss_bytes - a.mem_rss_bytes);
-  } else if (state.procSort === 'pid') {
-    list.sort((a, b) => a.pid - b.pid);
-  }
+  // Update header indicators
+  document.querySelectorAll('#proc-table thead .sortable-th').forEach(th => {
+    const isCur = th.dataset.sort === state.procSort;
+    th.classList.toggle('sort-active', isCur);
+    const icon = th.querySelector('.sort-icon');
+    if (icon) {
+      icon.textContent = isCur ? (state.procSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    }
+  });
+
+  list.sort((a, b) => {
+    let cmp = 0;
+    switch (state.procSort) {
+      case 'pid':
+        cmp = a.pid - b.pid;
+        break;
+      case 'name':
+        cmp = (a.name || '').localeCompare(b.name || '');
+        break;
+      case 'user':
+        cmp = (a.user || '').localeCompare(b.user || '');
+        break;
+      case 'state':
+        cmp = (a.state || '').localeCompare(b.state || '');
+        break;
+      case 'cpu':
+        cmp = a.cpu_percent - b.cpu_percent;
+        break;
+      case 'mem':
+        cmp = a.mem_rss_bytes - b.mem_rss_bytes;
+        break;
+      case 'io':
+        cmp = (a.io_read_rate + a.io_write_rate) - (b.io_read_rate + b.io_write_rate);
+        break;
+      case 'net':
+        cmp = ((a.net_rx_rate || 0) + (a.net_tx_rate || 0)) - ((b.net_rx_rate || 0) + (b.net_tx_rate || 0));
+        break;
+      case 'docker': {
+        const d1 = (a.docker && a.docker.container_name) || '';
+        const d2 = (b.docker && b.docker.container_name) || '';
+        cmp = d1.localeCompare(d2);
+        break;
+      }
+      default:
+        cmp = a.cpu_percent - b.cpu_percent;
+    }
+    return state.procSortDir === 'desc' ? -cmp : cmp;
+  });
 
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">没有符合条件的进程</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">没有符合条件的进程</td></tr>';
     return;
   }
 
@@ -754,11 +845,30 @@ function renderProcessesTable() {
       <td style="font-variant-numeric: tabular-nums;">${p.cpu_percent.toFixed(1)}%</td>
       <td style="font-variant-numeric: tabular-nums;">${formatBytes(p.mem_rss_bytes)}</td>
       <td style="font-variant-numeric: tabular-nums;">${formatRate(p.io_read_rate + p.io_write_rate)}</td>
+      <td style="font-variant-numeric: tabular-nums; white-space: nowrap;">
+        <span title="下载网速">↓ ${formatRate(p.net_rx_rate || 0)}</span>
+        <span title="上传网速" style="margin-left: 6px;">↑ ${formatRate(p.net_tx_rate || 0)}</span>
+      </td>
       <td>${dockerTag}</td>
       <td class="filler-col"></td>
     </tr>`;
   }
   tbody.innerHTML = html;
+}
+
+function initProcTableSort() {
+  document.querySelectorAll('#proc-table thead .sortable-th').forEach(th => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.sort;
+      if (state.procSort === field) {
+        state.procSortDir = state.procSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.procSort = field;
+        state.procSortDir = (field === 'pid' || field === 'name' || field === 'user' || field === 'state' || field === 'docker') ? 'asc' : 'desc';
+      }
+      renderProcessesTable();
+    });
+  });
 }
 
 // --- Modals & Desktop Item Forms ---
@@ -870,42 +980,35 @@ function initModals() {
     });
   }
 
-  // Icon input URL preview
-  const elIcon = document.getElementById('item-icon');
-  if (elIcon) {
-    elIcon.addEventListener('input', () => {
-      const val = elIcon.value.trim();
-      const imgEl = document.getElementById('icon-preview-img');
-      const nameEl = document.getElementById('icon-preview-name');
-      if (!val) {
-        imgEl.src = apiUrl('/icon.png');
-        nameEl.textContent = '默认容器图标';
-      } else if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
-        imgEl.src = val;
-        nameEl.textContent = '自定义链接图标';
-      } else {
-        imgEl.src = apiUrl(`/icons/${val.replace(/^icons\//, '')}`);
-        nameEl.textContent = val;
-      }
-    });
-  }
-
-  // Settings auto-save listeners
+  // Settings listeners (dirty tracking and manual Save/Cancel)
   const elPortalName = document.getElementById('setting-portal-name');
   if (elPortalName) {
-    elPortalName.addEventListener('input', () => triggerSettingsAutoSave(600));
+    elPortalName.addEventListener('input', checkSettingsDirty);
   }
   document.querySelectorAll('input[name="setting-portal-all-users"]').forEach(r => {
-    r.addEventListener('change', () => triggerSettingsAutoSave(0));
+    r.addEventListener('change', checkSettingsDirty);
   });
   const elPwd = document.getElementById('setting-portal-password');
   const elPwdConfirm = document.getElementById('setting-portal-password-confirm');
   if (elPwd) {
-    elPwd.addEventListener('input', () => triggerSettingsAutoSave(600));
+    elPwd.addEventListener('input', checkSettingsDirty);
   }
   if (elPwdConfirm) {
-    elPwdConfirm.addEventListener('input', () => triggerSettingsAutoSave(600));
+    elPwdConfirm.addEventListener('input', checkSettingsDirty);
   }
+
+  const btnCancelSettings = document.getElementById('btn-cancel-settings');
+  if (btnCancelSettings) {
+    btnCancelSettings.addEventListener('click', handleCancelSettings);
+  }
+
+  const btnSaveSettings = document.getElementById('btn-save-settings');
+  if (btnSaveSettings) {
+    btnSaveSettings.addEventListener('click', handleSaveSettingsManual);
+  }
+
+  // Icon 3-Tab Editor Initialization
+  initIconEditor();
 
   // Auth form
   const formAuth = document.getElementById('form-auth');
@@ -968,6 +1071,258 @@ function setDesktopModalMode(mode) {
   }
 }
 
+// --- Icon 3-Tab Editor ---
+function setIconModalTab(tabName) {
+  state.activeIconTab = tabName;
+  document.querySelectorAll('.icon-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.iconTab === tabName);
+  });
+  document.querySelectorAll('.icon-tab-pane').forEach(p => {
+    p.classList.toggle('active', p.id === `icon-pane-${tabName}`);
+  });
+
+  const previewImg = document.getElementById('icon-preview-img');
+  const previewName = document.getElementById('icon-preview-name');
+
+  if (tabName === 'text') {
+    const text = document.getElementById('icon-text-input')?.value || '';
+    if (text.trim()) {
+      renderTextIconCanvas();
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = '默认图标';
+    }
+  } else if (tabName === 'url') {
+    const url = document.getElementById('icon-url-input')?.value.trim() || '';
+    if (url) {
+      if (previewImg) {
+        previewImg.src = url;
+        previewImg.onerror = () => {
+          previewImg.src = apiUrl('/icon.png');
+          if (previewName) previewName.textContent = '图片载入失败';
+        };
+      }
+      if (previewName) previewName.textContent = '网络图标';
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = '默认图标';
+    }
+  } else if (tabName === 'upload') {
+    const val = document.getElementById('item-icon')?.value.trim() || '';
+    if (val && !val.startsWith('http') && !val.startsWith('data:')) {
+      if (previewImg) previewImg.src = apiUrl(val.startsWith('/') ? val : `/${val}`);
+      if (previewName) previewName.textContent = val.split('/').pop();
+    }
+  }
+}
+
+function renderTextIconCanvas() {
+  const textInput = document.getElementById('icon-text-input');
+  const text = (textInput ? textInput.value : '').trim();
+  const textColor = document.getElementById('icon-text-color')?.value || '#ffffff';
+  const bgColor = document.getElementById('icon-bg-color')?.value || '#2563eb';
+  const previewImg = document.getElementById('icon-preview-img');
+  const previewName = document.getElementById('icon-preview-name');
+
+  if (!text) {
+    if (previewImg) previewImg.src = apiUrl('/icon.png');
+    if (previewName) previewName.textContent = '默认图标';
+    state.currentTextIconDataUrl = null;
+    return;
+  }
+
+  let canvas = document.getElementById('icon-text-canvas');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'icon-text-canvas';
+    canvas.width = 256;
+    canvas.height = 256;
+    canvas.style.display = 'none';
+    document.body.appendChild(canvas);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 256, 256);
+
+  // Background squircle
+  ctx.fillStyle = bgColor;
+  const r = 50;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(0, 0, 256, 256, r);
+  } else {
+    ctx.moveTo(r, 0);
+    ctx.lineTo(256 - r, 0);
+    ctx.quadraticCurveTo(256, 0, 256, r);
+    ctx.lineTo(256, 256 - r);
+    ctx.quadraticCurveTo(256, 256, 256 - r, 256);
+    ctx.lineTo(r, 256);
+    ctx.quadraticCurveTo(0, 256, 0, 256 - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+  }
+  ctx.fill();
+
+  // Multi-line adaptive font sizing
+  const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const lines = rawLines.length > 0 ? rawLines : [text];
+
+  const maxW = 200; // Padded inner width
+  const maxH = 200; // Padded inner height
+
+  let fontSize = 140;
+  const fontFam = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+
+  while (fontSize > 16) {
+    ctx.font = `bold ${fontSize}px ${fontFam}`;
+    const lineHeight = fontSize * 1.16;
+    const totalH = (lines.length - 1) * lineHeight + fontSize;
+    if (totalH <= maxH) {
+      let allFit = true;
+      for (const line of lines) {
+        if (ctx.measureText(line).width > maxW) {
+          allFit = false;
+          break;
+        }
+      }
+      if (allFit) break;
+    }
+    fontSize -= 2;
+  }
+
+  ctx.font = `bold ${fontSize}px ${fontFam}`;
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const lineHeight = fontSize * 1.16;
+  const totalH = (lines.length - 1) * lineHeight;
+  const startY = 128 - totalH / 2;
+
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, 128, startY + idx * lineHeight);
+  });
+
+  const dataUrl = canvas.toDataURL('image/png');
+  state.currentTextIconDataUrl = dataUrl;
+  if (previewImg) previewImg.src = dataUrl;
+  if (previewName) previewName.textContent = `文字: ${lines[0]}`;
+}
+
+async function uploadTextIconBlob() {
+  const canvas = document.getElementById('icon-text-canvas');
+  if (!canvas) return null;
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) return resolve(null);
+      try {
+        const formData = new FormData();
+        formData.append('icon', blob, `text-icon-${Date.now()}.png`);
+        const res = await fetch(apiUrl('/api/icons/upload'), {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (res.ok && data.url) {
+          resolve(data.url);
+        } else {
+          resolve(null);
+        }
+      } catch (err) {
+        console.error('Upload text icon error:', err);
+        resolve(null);
+      }
+    }, 'image/png');
+  });
+}
+
+function initIconEditor() {
+  document.querySelectorAll('.icon-tab').forEach(tab => {
+    tab.addEventListener('click', () => setIconModalTab(tab.dataset.iconTab));
+  });
+
+  const textInput = document.getElementById('icon-text-input');
+  if (textInput) {
+    textInput.addEventListener('input', renderTextIconCanvas);
+  }
+
+  const textColorInput = document.getElementById('icon-text-color');
+  if (textColorInput) {
+    textColorInput.addEventListener('input', () => {
+      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === textColorInput.value.toLowerCase());
+      });
+      renderTextIconCanvas();
+    });
+  }
+
+  const bgColorInput = document.getElementById('icon-bg-color');
+  if (bgColorInput) {
+    bgColorInput.addEventListener('input', () => {
+      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === bgColorInput.value.toLowerCase());
+      });
+      renderTextIconCanvas();
+    });
+  }
+
+  document.querySelectorAll('#text-color-swatches .color-swatch').forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
+      swatch.classList.add('active');
+      if (textColorInput) textColorInput.value = swatch.dataset.color;
+      renderTextIconCanvas();
+    });
+  });
+
+  document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
+      swatch.classList.add('active');
+      if (bgColorInput) bgColorInput.value = swatch.dataset.color;
+      renderTextIconCanvas();
+    });
+  });
+
+  const urlInput = document.getElementById('icon-url-input');
+  if (urlInput) {
+    urlInput.addEventListener('input', () => {
+      const val = urlInput.value.trim();
+      const previewImg = document.getElementById('icon-preview-img');
+      const previewName = document.getElementById('icon-preview-name');
+      if (!val) {
+        if (previewImg) previewImg.src = apiUrl('/icon.png');
+        if (previewName) previewName.textContent = '默认图标';
+      } else {
+        if (previewImg) {
+          previewImg.src = val;
+          previewImg.onerror = () => {
+            previewImg.src = apiUrl('/icon.png');
+            if (previewName) previewName.textContent = '图片载入失败';
+          };
+        }
+        if (previewName) previewName.textContent = '网络图标';
+      }
+    });
+  }
+
+  const btnReset = document.getElementById('btn-reset-icon');
+  if (btnReset) {
+    btnReset.addEventListener('click', () => {
+      document.getElementById('item-icon').value = '';
+      if (textInput) textInput.value = '';
+      if (urlInput) urlInput.value = '';
+      state.currentTextIconDataUrl = null;
+      const previewImg = document.getElementById('icon-preview-img');
+      const previewName = document.getElementById('icon-preview-name');
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = '默认图标';
+      showToast('已恢复为默认图标', 'info');
+    });
+  }
+}
+
 function resetDesktopForm() {
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
@@ -998,6 +1353,16 @@ function resetDesktopForm() {
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
+
+  const textInput = document.getElementById('icon-text-input');
+  if (textInput) textInput.value = '';
+  const urlInput = document.getElementById('icon-url-input');
+  if (urlInput) urlInput.value = '';
+  const uploadStatus = document.getElementById('icon-upload-status');
+  if (uploadStatus) uploadStatus.textContent = '支持 PNG、JPG、SVG、ICO 格式';
+  state.currentTextIconDataUrl = null;
+  setIconModalTab('text');
+
   document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
   document.getElementById('icon-preview-name').textContent = '默认图标';
   document.getElementById('desktop-modal-title').textContent = '添加桌面图标';
@@ -1047,12 +1412,14 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
     const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
     if (cleanName) {
       const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
-      document.getElementById('item-icon').value = cdnUrl;
+      setIconModalTab('url');
+      const urlInput = document.getElementById('icon-url-input');
+      if (urlInput) urlInput.value = cdnUrl;
       const imgEl = document.getElementById('icon-preview-img');
       imgEl.src = cdnUrl;
       imgEl.onerror = () => {
         imgEl.src = apiUrl('/icon.png');
-        document.getElementById('item-icon').value = '';
+        if (urlInput) urlInput.value = '';
         document.getElementById('icon-preview-name').textContent = '默认容器图标';
       };
       document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
@@ -1122,7 +1489,6 @@ function openEditDesktopModal(id) {
       showToast(`正在从桌面移出「${item.name}」...`, 'info');
 
       try {
-        // Attempt POST /delete first for reverse-proxy compatibility, fallback to DELETE
         let res = await fetch(apiUrl(`/api/desktop/items/${id}/delete`), { method: 'POST' });
         if (!res.ok) {
           res = await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
@@ -1173,10 +1539,21 @@ function openEditDesktopModal(id) {
   }
 
   if (item.icon) {
+    if (item.icon.startsWith('http://') || item.icon.startsWith('https://')) {
+      setIconModalTab('url');
+      const urlInput = document.getElementById('icon-url-input');
+      if (urlInput) urlInput.value = item.icon;
+    } else {
+      setIconModalTab('upload');
+      document.getElementById('item-icon').value = item.icon;
+      const uploadStatus = document.getElementById('icon-upload-status');
+      if (uploadStatus) uploadStatus.textContent = `已使用: ${item.icon}`;
+    }
     const src = item.icon.startsWith('http') || item.icon.startsWith('data:') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`);
     document.getElementById('icon-preview-img').src = src;
-    document.getElementById('icon-preview-name').textContent = item.icon.startsWith('data:') ? '已保存图标 (Base64)' : item.icon;
+    document.getElementById('icon-preview-name').textContent = item.icon.startsWith('data:') ? '已保存图标' : item.icon;
   } else {
+    setIconModalTab('text');
     document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
     document.getElementById('icon-preview-name').textContent = '默认图标';
   }
@@ -1207,11 +1584,9 @@ function openPortDesktopListModal(port, procName, items) {
       <td>
         <div class="table-actions">
           <button class="btn btn-sm btn-secondary btn-edit-from-list" data-id="${item.id}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             <span>编辑</span>
           </button>
           <button class="btn btn-sm btn-danger btn-delete-from-list" data-id="${item.id}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
             <span>移出</span>
           </button>
         </div>
@@ -1275,7 +1650,21 @@ async function handleSaveDesktopItem(e) {
     const path = document.getElementById('item-path').value.trim() || '/';
     const uiType = document.getElementById('item-ui-type').value;
     const allUsers = document.getElementById('item-all-users').value === 'true';
-    const icon = document.getElementById('item-icon').value.trim();
+    let icon = '';
+    if (state.activeIconTab === 'text') {
+      const textVal = (document.getElementById('icon-text-input')?.value || '').trim();
+      if (textVal && state.currentTextIconDataUrl) {
+        showToast('正在生成并上传文字图标...', 'info');
+        const uploadedUrl = await uploadTextIconBlob();
+        if (uploadedUrl) {
+          icon = uploadedUrl;
+        }
+      }
+    } else if (state.activeIconTab === 'url') {
+      icon = (document.getElementById('icon-url-input')?.value || '').trim();
+    } else if (state.activeIconTab === 'upload') {
+      icon = (document.getElementById('item-icon')?.value || '').trim();
+    }
     const appNameInput = document.getElementById('item-app-name');
     const appName = appNameInput ? appNameInput.value.trim() : '';
 
@@ -1547,23 +1936,17 @@ async function handleIconUpload(e) {
   }
 }
 
-let settingsAutoSaveTimer = null;
-
-function triggerSettingsAutoSave(debounceMs = 500) {
-  if (settingsAutoSaveTimer) {
-    clearTimeout(settingsAutoSaveTimer);
+function handleCancelSettings() {
+  if (state.isSettingsDirty) {
+    if (!confirm('当前设置有未保存的修改，确定要放弃修改并恢复吗？')) {
+      return;
+    }
   }
-  const statusEl = document.getElementById('settings-save-status');
-  if (statusEl) {
-    statusEl.textContent = '正在保存...';
-    statusEl.style.color = 'var(--text-muted)';
-  }
-  settingsAutoSaveTimer = setTimeout(() => {
-    executeAutoSaveSettings();
-  }, debounceMs);
+  updateSettingsForm();
+  showToast('已恢复设置', 'info');
 }
 
-async function executeAutoSaveSettings() {
+async function handleSaveSettingsManual() {
   const name = document.getElementById('setting-portal-name').value.trim();
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const allUsers = rAll ? rAll.value === 'true' : false;
@@ -1573,7 +1956,7 @@ async function executeAutoSaveSettings() {
   const pwd = document.getElementById('setting-portal-password').value;
   const pwdConfirm = document.getElementById('setting-portal-password-confirm').value;
   const matchTip = document.getElementById('password-match-tip');
-  const statusEl = document.getElementById('settings-save-status');
+  const statusEl = document.getElementById('settings-status');
 
   const payload = {
     portal_name: name || '把 Docker 放到桌面',
@@ -1585,33 +1968,18 @@ async function executeAutoSaveSettings() {
   if (pwd !== '' || pwdConfirm !== '') {
     if (pwd !== pwdConfirm) {
       if (matchTip) {
-        matchTip.textContent = '两次输入的密码不一致，密码未更新';
-        matchTip.style.color = 'var(--color-danger, #ef4444)';
+        matchTip.textContent = '两次输入的密码不一致，无法保存';
+        matchTip.style.color = 'var(--danger, #ef4444)';
       }
-      if (statusEl) {
-        statusEl.textContent = '设置已保存（密码未更新，请确保两次密码一致）';
-        statusEl.style.color = 'var(--color-warning, #f59e0b)';
-      }
-      // Still save other non-password settings
-      try {
-        await fetch(apiUrl('/api/settings'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } catch (e) {}
-      return;
+      return showToast('两次输入的密码不一致，请核对后再保存', 'error');
     } else {
       payload.auth_password = pwd;
-      if (matchTip) {
-        matchTip.textContent = '两次密码一致，已更新密码';
-        matchTip.style.color = 'var(--color-success, #10b981)';
-      }
     }
-  } else {
-    if (matchTip) {
-      matchTip.textContent = '';
-    }
+  }
+
+  if (statusEl) {
+    statusEl.textContent = '正在保存设置...';
+    statusEl.style.color = 'var(--primary)';
   }
 
   try {
@@ -1622,22 +1990,37 @@ async function executeAutoSaveSettings() {
     });
 
     if (res.ok) {
+      state.originalSettings = {
+        portal_name: payload.portal_name,
+        portal_all_users: payload.portal_all_users,
+      };
+      state.isSettingsDirty = false;
+      document.getElementById('setting-portal-password').value = '';
+      document.getElementById('setting-portal-password-confirm').value = '';
+      if (matchTip) matchTip.textContent = '';
       if (statusEl) {
-        statusEl.textContent = '设置已自动保存并即时生效';
-        statusEl.style.color = 'var(--color-success, #10b981)';
+        statusEl.textContent = '设置已保存并即时生效';
+        statusEl.style.color = 'var(--success, #10b981)';
+        setTimeout(() => {
+          if (!state.isSettingsDirty && statusEl) statusEl.textContent = '';
+        }, 3000);
       }
+      showToast('设置已成功保存', 'success');
     } else {
       const data = await res.json().catch(() => ({}));
+      const errMsg = data.error || '保存失败';
       if (statusEl) {
-        statusEl.textContent = data.error || '保存失败';
-        statusEl.style.color = 'var(--color-danger, #ef4444)';
+        statusEl.textContent = errMsg;
+        statusEl.style.color = 'var(--danger, #ef4444)';
       }
+      showToast(errMsg, 'error');
     }
   } catch (err) {
     if (statusEl) {
-      statusEl.textContent = '保存失败: ' + err.message;
-      statusEl.style.color = 'var(--color-danger, #ef4444)';
+      statusEl.textContent = '网络异常: ' + err.message;
+      statusEl.style.color = 'var(--danger, #ef4444)';
     }
+    showToast('保存设置网络异常: ' + err.message, 'error');
   }
 }
 
@@ -1793,14 +2176,50 @@ function initApp() {
     });
   }
 
-  // Sort chips in Process tab
-  document.querySelectorAll('.chip[data-proc-sort]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.chip[data-proc-sort]').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.procSort = chip.dataset.procSort;
-      renderProcessesTable();
+  // Process table sort header initialization
+  initProcTableSort();
+
+  // Toolbar Refresh Buttons
+  const btnRefreshPorts = document.getElementById('btn-refresh-ports');
+  if (btnRefreshPorts) {
+    btnRefreshPorts.addEventListener('click', () => {
+      fetchPorts();
+      showToast('进程列表已刷新', 'info');
     });
+  }
+
+  const btnRefreshDesktop = document.getElementById('btn-refresh-desktop');
+  if (btnRefreshDesktop) {
+    btnRefreshDesktop.addEventListener('click', () => {
+      fetchDesktopItems();
+      showToast('桌面图标列表已刷新', 'info');
+    });
+  }
+
+  const btnRefreshProcs = document.getElementById('btn-refresh-procs');
+  if (btnRefreshProcs) {
+    btnRefreshProcs.addEventListener('click', () => {
+      fetchProcesses();
+      showToast('系统进程列表已刷新', 'info');
+    });
+  }
+
+  const btnRefreshSystem = document.getElementById('btn-refresh-system');
+  if (btnRefreshSystem) {
+    btnRefreshSystem.addEventListener('click', () => {
+      fetchSystem();
+      fetchHost();
+      showToast('系统概览已刷新', 'info');
+    });
+  }
+
+  // Unsaved settings page exit confirmation
+  window.addEventListener('beforeunload', (e) => {
+    if (state.isSettingsDirty) {
+      e.preventDefault();
+      e.returnValue = '设置有未保存的修改，确定要离开吗？';
+      return e.returnValue;
+    }
   });
 
   // Minimal mode toggle in Ports tab (default: enabled)

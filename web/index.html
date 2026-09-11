@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.5">
+  <link rel="stylesheet" href="style.css?v=1.1.6">
 </head>
 <body>
   <!-- Header Bar -->
@@ -63,6 +63,7 @@
           <button class="chip" data-filter="udp">UDP</button>
         </div>
         <div class="toolbar-spacer"></div>
+        <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
         <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
           <input type="checkbox" id="toggle-minimal-mode" checked>
           <span class="toggle-switch-track"><span class="toggle-switch-thumb"></span></span>
@@ -103,8 +104,8 @@
           <input type="text" id="desktop-search" placeholder="搜索已创建的桌面图标...">
         </div>
         <div class="toolbar-spacer"></div>
+        <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
         <button class="btn btn-primary" id="btn-open-create-modal">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           <span>添加桌面图标</span>
         </button>
       </div>
@@ -138,31 +139,28 @@
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" id="proc-search" placeholder="搜索进程名称、PID、用户...">
         </div>
-        <div class="filter-chips">
-          <button class="chip active" data-proc-sort="cpu">按 CPU 排序</button>
-          <button class="chip" data-proc-sort="mem">按 内存 排序</button>
-          <button class="chip" data-proc-sort="pid">按 PID 排序</button>
-        </div>
         <div class="toolbar-spacer"></div>
+        <button class="btn btn-secondary" id="btn-refresh-procs" title="刷新系统进程">刷新</button>
       </div>
 
       <div class="table-container">
         <table class="data-table" id="proc-table">
           <thead>
             <tr>
-              <th style="width: 100px;">PID</th>
-              <th style="width: 220px;">进程名称</th>
-              <th style="width: 120px;">用户</th>
-              <th style="width: 110px;">状态</th>
-              <th style="width: 120px;">CPU</th>
-              <th style="width: 130px;">物理内存 (RSS)</th>
-              <th style="width: 150px;">磁盘 I/O</th>
-              <th style="width: 180px;">所属容器</th>
+              <th class="sortable-th" data-sort="pid" style="width: 90px;">PID <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="name" style="width: 200px;">进程名称 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="user" style="width: 100px;">用户 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="state" style="width: 80px;">状态 <span class="sort-icon"></span></th>
+              <th class="sortable-th sort-active" data-sort="cpu" style="width: 100px;">CPU <span class="sort-icon">▼</span></th>
+              <th class="sortable-th" data-sort="mem" style="width: 120px;">物理内存 (RSS) <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="io" style="width: 120px;">磁盘 I/O <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="net" style="width: 160px;">上下行网速 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="docker" style="width: 160px;">所属容器 <span class="sort-icon"></span></th>
               <th class="filler-col"></th>
             </tr>
           </thead>
           <tbody id="proc-tbody">
-            <tr><td colspan="9" class="empty-state">正在加载进程数据...</td></tr>
+            <tr><td colspan="10" class="empty-state">正在加载进程数据...</td></tr>
           </tbody>
         </table>
       </div>
@@ -170,6 +168,11 @@
 
     <!-- ==================== TAB 4: 系统概览 ==================== -->
     <section class="tab-pane" id="pane-system">
+      <div class="toolbar">
+        <div class="toolbar-spacer"></div>
+        <button class="btn btn-secondary" id="btn-refresh-system" title="刷新系统概览">刷新</button>
+      </div>
+
       <div class="system-grid">
         <div class="metric-card">
           <div class="metric-header">
@@ -276,20 +279,9 @@
 
         <div class="toolbar-spacer"></div>
 
-        <button class="btn btn-secondary" id="btn-refresh-logs" title="立即刷新日志">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-          <span>刷新</span>
-        </button>
-
-        <button class="btn btn-secondary" id="btn-download-logs" title="下载当前日志文件">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          <span>下载日志</span>
-        </button>
-
-        <button class="btn btn-secondary" id="btn-scroll-bottom" title="滚动到底部">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
-          <span>滚到底部</span>
-        </button>
+        <button class="btn btn-secondary" id="btn-refresh-logs" title="立即刷新日志">刷新</button>
+        <button class="btn btn-secondary" id="btn-download-logs" title="下载当前日志文件">下载日志</button>
+        <button class="btn btn-secondary" id="btn-scroll-bottom" title="滚动到底部">滚到底部</button>
       </div>
 
       <!-- Log Info Bar -->
@@ -324,7 +316,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.4 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.6 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -354,6 +346,14 @@
             <label class="form-label">确认新密码</label>
             <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
             <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
+          </div>
+
+          <div class="settings-footer">
+            <span class="settings-status" id="settings-status"></span>
+            <div class="settings-actions">
+              <button type="button" class="btn btn-secondary" id="btn-cancel-settings">取消</button>
+              <button type="button" class="btn btn-primary" id="btn-save-settings">保存</button>
+            </div>
           </div>
         </div>
       </div>
@@ -473,17 +473,76 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">图标文件名或图片URL</label>
-            <div class="input-with-action">
-              <input type="text" id="item-icon" class="form-input" placeholder="留空使用默认图标，或输入图片链接">
-              <label class="btn btn-secondary file-upload-btn">
-                <span>上传本地图标</span>
-                <input type="file" id="icon-file-input" accept=".png,.jpg,.jpeg,.webp,.svg,.ico" style="display: none;">
-              </label>
-            </div>
-            <div class="icon-preview-box" id="icon-preview-box" style="margin-top: 10px;">
-              <img id="icon-preview-img" src="icon.png" alt="图标预览">
-              <span id="icon-preview-name">默认图标</span>
+            <label class="form-label">桌面图标</label>
+            <input type="hidden" id="item-icon">
+            <div class="icon-editor-layout">
+              <div class="icon-editor-main">
+                <div class="icon-tabs">
+                  <button type="button" class="icon-tab active" data-icon-tab="text">文字图标</button>
+                  <button type="button" class="icon-tab" data-icon-tab="url">网络图标</button>
+                  <button type="button" class="icon-tab" data-icon-tab="upload">上传图标</button>
+                </div>
+
+                <!-- Tab Pane 1: 文字图标 -->
+                <div class="icon-tab-pane active" id="icon-pane-text">
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <textarea id="icon-text-input" class="form-input" rows="2" placeholder="输入图标文字，支持换行（如 NAS 或 监控&#10;服务）" style="resize: vertical; min-height: 54px;"></textarea>
+                  </div>
+                  <div class="color-picker-row">
+                    <span class="color-picker-label">文字颜色:</span>
+                    <input type="color" id="icon-text-color" class="color-input" value="#ffffff">
+                    <div class="color-swatches" id="text-color-swatches">
+                      <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="白色"></span>
+                      <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="黑色"></span>
+                      <span class="color-swatch" data-color="#f59e0b" style="background-color: #f59e0b;" title="琥珀黄"></span>
+                      <span class="color-swatch" data-color="#10b981" style="background-color: #10b981;" title="翡翠绿"></span>
+                      <span class="color-swatch" data-color="#3b82f6" style="background-color: #3b82f6;" title="海蓝色"></span>
+                    </div>
+                  </div>
+                  <div class="color-picker-row">
+                    <span class="color-picker-label">背景颜色:</span>
+                    <input type="color" id="icon-bg-color" class="color-input" value="#2563eb">
+                    <div class="color-swatches" id="bg-color-swatches">
+                      <span class="color-swatch active" data-color="#2563eb" style="background-color: #2563eb;" title="深蓝"></span>
+                      <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深墨"></span>
+                      <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="紫色"></span>
+                      <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="墨绿"></span>
+                      <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="艳红"></span>
+                      <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="橙金"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Tab Pane 2: 网络图标 -->
+                <div class="icon-tab-pane" id="icon-pane-url">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <input type="text" id="icon-url-input" class="form-input" placeholder="输入网络图片完整 URL，例如 https://example.com/logo.png">
+                    <div class="form-tip" style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
+                      支持外链或已下载到本地的 /icons/xxx.png 路径
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Tab Pane 3: 上传图标 -->
+                <div class="icon-tab-pane" id="icon-pane-upload">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <label class="btn btn-secondary file-upload-btn" style="cursor: pointer;">
+                      <span>选择本地图片...</span>
+                      <input type="file" id="icon-file-input" accept=".png,.jpg,.jpeg,.webp,.svg,.ico" style="display: none;">
+                    </label>
+                    <span id="icon-upload-status" style="font-size: 12px; color: var(--text-muted);">支持 PNG、JPG、SVG、ICO 格式</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right: Real-time Preview Box -->
+              <div class="icon-editor-preview">
+                <div class="icon-preview-card">
+                  <img id="icon-preview-img" src="icon.png" alt="图标预览">
+                  <span id="icon-preview-name" class="icon-preview-text">默认图标</span>
+                  <button type="button" class="btn btn-sm btn-link" id="btn-reset-icon" style="font-size: 11px; margin-top: 6px; padding: 2px 4px; color: var(--text-muted);">恢复默认</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -526,7 +585,6 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
           <div style="color: var(--text-muted); font-size: 0.88rem;">当前端口已创建的桌面图标，支持添加不同路径或参数的多个图标</div>
           <button class="btn btn-sm btn-primary" id="btn-add-from-list">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             <span>为此端口添加新图标</span>
           </button>
         </div>
@@ -573,6 +631,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.5"></script>
+  <script src="app.js?v=1.1.6"></script>
 </body>
 </html>

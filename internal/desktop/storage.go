@@ -50,7 +50,7 @@ func (s *Storage) loadSettings() {
 			if loaded.PortalPort <= 0 {
 				loaded.PortalPort = 5900
 			}
-			if loaded.PortalName == "" {
+			if loaded.PortalName == "" || loaded.PortalName == "把Docker放到桌面" {
 				loaded.PortalName = "把 Docker 放到桌面"
 			}
 			if loaded.PortalUIType == "" {
@@ -112,7 +112,7 @@ func (s *Storage) UpdateSettings(settings Settings) error {
 	if settings.PortalPort <= 0 {
 		settings.PortalPort = 5900
 	}
-	if settings.PortalName == "" {
+	if settings.PortalName == "" || settings.PortalName == "把Docker放到桌面" {
 		settings.PortalName = "把 Docker 放到桌面"
 	}
 	if settings.PortalUIType == "" {

@@ -25,7 +25,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.5"
+const appVersion = "1.1.6"
 
 func main() {
 	modeFlag := flag.String("mode", "server", "Run mode: server or cgi")
