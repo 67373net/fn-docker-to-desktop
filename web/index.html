@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.6">
+  <link rel="stylesheet" href="style.css?v=1.1.7">
 </head>
 <body>
   <!-- Header Bar -->
@@ -316,7 +316,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.6 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.7 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -491,24 +491,30 @@
                   <div class="color-picker-row">
                     <span class="color-picker-label">文字颜色:</span>
                     <input type="color" id="icon-text-color" class="color-input" value="#ffffff">
+                    <input type="text" id="icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
                     <div class="color-swatches" id="text-color-swatches">
-                      <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="白色"></span>
-                      <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="黑色"></span>
-                      <span class="color-swatch" data-color="#f59e0b" style="background-color: #f59e0b;" title="琥珀黄"></span>
-                      <span class="color-swatch" data-color="#10b981" style="background-color: #10b981;" title="翡翠绿"></span>
-                      <span class="color-swatch" data-color="#3b82f6" style="background-color: #3b82f6;" title="海蓝色"></span>
+                      <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
+                      <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
+                      <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
+                      <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
+                      <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
+                      <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
                     </div>
                   </div>
                   <div class="color-picker-row">
                     <span class="color-picker-label">背景颜色:</span>
-                    <input type="color" id="icon-bg-color" class="color-input" value="#2563eb">
+                    <input type="color" id="icon-bg-color" class="color-input" value="#1e293b">
+                    <input type="text" id="icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
                     <div class="color-swatches" id="bg-color-swatches">
-                      <span class="color-swatch active" data-color="#2563eb" style="background-color: #2563eb;" title="深蓝"></span>
-                      <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深墨"></span>
-                      <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="紫色"></span>
-                      <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="墨绿"></span>
-                      <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="艳红"></span>
-                      <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="橙金"></span>
+                      <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
+                      <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
+                      <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
+                      <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
+                      <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
+                      <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
+                      <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
+                      <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
+                      <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
                     </div>
                   </div>
                 </div>
@@ -585,7 +591,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
           <div style="color: var(--text-muted); font-size: 0.88rem;">当前端口已创建的桌面图标，支持添加不同路径或参数的多个图标</div>
           <button class="btn btn-sm btn-primary" id="btn-add-from-list">
-            <span>为此端口添加新图标</span>
+            <span>添加新桌面图标</span>
           </button>
         </div>
         <div class="table-container">
@@ -631,6 +637,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.6"></script>
+  <script src="app.js?v=1.1.7"></script>
 </body>
 </html>

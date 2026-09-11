@@ -27,6 +27,10 @@ type DesktopItem struct {
 	UIType        string    `json:"ui_type"`                  // "url" (browser new tab) or "iframe" (fnOS window)
 	AllUsers      bool      `json:"all_users"`                // true: all users, false: admin only
 	Icon          string    `json:"icon"`                     // Icon filename or URL
+	IconType      string    `json:"icon_type,omitempty"`      // "text", "url", "upload", or empty
+	IconText      string    `json:"icon_text,omitempty"`      // Text for text-generated icon
+	IconTextColor string    `json:"icon_text_color,omitempty"`// Color for text
+	IconBgColor   string    `json:"icon_bg_color,omitempty"`  // Background color for text icon
 	SkipTLSVerify bool      `json:"skip_tls_verify,omitempty"`// Skip TLS check for self-signed certs
 	Enabled       bool      `json:"enabled"`                  // Is active
 	Installed     bool      `json:"installed"`                // Is installed in fnOS App Center

@@ -1386,6 +1386,23 @@ tr.row-updating {
   cursor: pointer;
   background: none;
 }
+.color-hex-input {
+  width: 82px;
+  height: 32px;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+  font-size: 13px;
+  text-transform: lowercase;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  text-align: center;
+}
+.color-hex-input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
 .color-swatches {
   display: flex;
   gap: 6px;

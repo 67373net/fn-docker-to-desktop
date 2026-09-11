@@ -8,6 +8,31 @@ function apiUrl(path) {
   return BASE_PATH + path;
 }
 
+function getIconUrl(icon) {
+  if (!icon || icon === 'icon.png' || icon === '/icon.png') return apiUrl('/icon.png');
+  if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
+    return icon;
+  }
+  const clean = icon.replace(/^\/?icons\//, '').replace(/^\/+/, '');
+  if (!clean || clean === 'icon.png') return apiUrl('/icon.png');
+  return apiUrl(`/icons/${clean}`);
+}
+
+function normalizeHexColor(val) {
+  if (!val) return null;
+  val = val.trim();
+  if (val.startsWith('#')) {
+    val = val.slice(1);
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(val)) {
+    return '#' + val.toLowerCase();
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(val)) {
+    return '#' + (val[0] + val[0] + val[1] + val[1] + val[2] + val[2]).toLowerCase();
+  }
+  return null;
+}
+
 // Client-side audit & error reporting to backend logs
 function reportClientLog(type, action, message, details, stack) {
   try {
@@ -664,7 +689,7 @@ function renderDesktopTable() {
         </span>
       </div>`;
 
-    const iconSrc = item.icon ? (item.icon.startsWith('http') || item.icon.startsWith('data:') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`)) : apiUrl('/icon.png');
+    const iconSrc = getIconUrl(item.icon);
 
     let statusColHtml = toggleHtml;
     if (item._updating) {
@@ -1109,8 +1134,8 @@ function setIconModalTab(tabName) {
     }
   } else if (tabName === 'upload') {
     const val = document.getElementById('item-icon')?.value.trim() || '';
-    if (val && !val.startsWith('http') && !val.startsWith('data:')) {
-      if (previewImg) previewImg.src = apiUrl(val.startsWith('/') ? val : `/${val}`);
+    if (val) {
+      if (previewImg) previewImg.src = getIconUrl(val);
       if (previewName) previewName.textContent = val.split('/').pop();
     }
   }
@@ -1120,7 +1145,7 @@ function renderTextIconCanvas() {
   const textInput = document.getElementById('icon-text-input');
   const text = (textInput ? textInput.value : '').trim();
   const textColor = document.getElementById('icon-text-color')?.value || '#ffffff';
-  const bgColor = document.getElementById('icon-bg-color')?.value || '#2563eb';
+  const bgColor = document.getElementById('icon-bg-color')?.value || '#1e293b';
   const previewImg = document.getElementById('icon-preview-img');
   const previewName = document.getElementById('icon-preview-name');
 
@@ -1248,22 +1273,68 @@ function initIconEditor() {
   }
 
   const textColorInput = document.getElementById('icon-text-color');
+  const textColorHex = document.getElementById('icon-text-color-hex');
   if (textColorInput) {
     textColorInput.addEventListener('input', () => {
+      const val = textColorInput.value.toLowerCase();
+      if (textColorHex) textColorHex.value = val;
       document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === textColorInput.value.toLowerCase());
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === val);
       });
       renderTextIconCanvas();
     });
   }
+  if (textColorHex) {
+    textColorHex.addEventListener('input', () => {
+      const hex = normalizeHexColor(textColorHex.value);
+      if (hex) {
+        if (textColorInput) textColorInput.value = hex;
+        document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+          s.classList.toggle('active', s.dataset.color.toLowerCase() === hex);
+        });
+        renderTextIconCanvas();
+      }
+    });
+    textColorHex.addEventListener('blur', () => {
+      const hex = normalizeHexColor(textColorHex.value);
+      if (hex) {
+        textColorHex.value = hex;
+      } else {
+        textColorHex.value = textColorInput ? textColorInput.value : '#ffffff';
+      }
+    });
+  }
 
   const bgColorInput = document.getElementById('icon-bg-color');
+  const bgColorHex = document.getElementById('icon-bg-color-hex');
   if (bgColorInput) {
     bgColorInput.addEventListener('input', () => {
+      const val = bgColorInput.value.toLowerCase();
+      if (bgColorHex) bgColorHex.value = val;
       document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === bgColorInput.value.toLowerCase());
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === val);
       });
       renderTextIconCanvas();
+    });
+  }
+  if (bgColorHex) {
+    bgColorHex.addEventListener('input', () => {
+      const hex = normalizeHexColor(bgColorHex.value);
+      if (hex) {
+        if (bgColorInput) bgColorInput.value = hex;
+        document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+          s.classList.toggle('active', s.dataset.color.toLowerCase() === hex);
+        });
+        renderTextIconCanvas();
+      }
+    });
+    bgColorHex.addEventListener('blur', () => {
+      const hex = normalizeHexColor(bgColorHex.value);
+      if (hex) {
+        bgColorHex.value = hex;
+      } else {
+        bgColorHex.value = bgColorInput ? bgColorInput.value : '#1e293b';
+      }
     });
   }
 
@@ -1271,7 +1342,9 @@ function initIconEditor() {
     swatch.addEventListener('click', () => {
       document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
       swatch.classList.add('active');
-      if (textColorInput) textColorInput.value = swatch.dataset.color;
+      const val = swatch.dataset.color.toLowerCase();
+      if (textColorInput) textColorInput.value = val;
+      if (textColorHex) textColorHex.value = val;
       renderTextIconCanvas();
     });
   });
@@ -1280,7 +1353,9 @@ function initIconEditor() {
     swatch.addEventListener('click', () => {
       document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
       swatch.classList.add('active');
-      if (bgColorInput) bgColorInput.value = swatch.dataset.color;
+      const val = swatch.dataset.color.toLowerCase();
+      if (bgColorInput) bgColorInput.value = val;
+      if (bgColorHex) bgColorHex.value = val;
       renderTextIconCanvas();
     });
   });
@@ -1313,6 +1388,16 @@ function initIconEditor() {
       document.getElementById('item-icon').value = '';
       if (textInput) textInput.value = '';
       if (urlInput) urlInput.value = '';
+      if (textColorInput) textColorInput.value = '#ffffff';
+      if (textColorHex) textColorHex.value = '#ffffff';
+      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === '#ffffff');
+      });
+      if (bgColorInput) bgColorInput.value = '#1e293b';
+      if (bgColorHex) bgColorHex.value = '#1e293b';
+      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.color.toLowerCase() === '#1e293b');
+      });
       state.currentTextIconDataUrl = null;
       const previewImg = document.getElementById('icon-preview-img');
       const previewName = document.getElementById('icon-preview-name');
@@ -1356,6 +1441,22 @@ function resetDesktopForm() {
 
   const textInput = document.getElementById('icon-text-input');
   if (textInput) textInput.value = '';
+  const textColorInput = document.getElementById('icon-text-color');
+  const textColorHex = document.getElementById('icon-text-color-hex');
+  if (textColorInput) textColorInput.value = '#ffffff';
+  if (textColorHex) textColorHex.value = '#ffffff';
+  document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === '#ffffff');
+  });
+
+  const bgColorInput = document.getElementById('icon-bg-color');
+  const bgColorHex = document.getElementById('icon-bg-color-hex');
+  if (bgColorInput) bgColorInput.value = '#1e293b';
+  if (bgColorHex) bgColorHex.value = '#1e293b';
+  document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === '#1e293b');
+  });
+
   const urlInput = document.getElementById('icon-url-input');
   if (urlInput) urlInput.value = '';
   const uploadStatus = document.getElementById('icon-upload-status');
@@ -1417,18 +1518,15 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
       if (urlInput) urlInput.value = cdnUrl;
       const imgEl = document.getElementById('icon-preview-img');
       imgEl.src = cdnUrl;
+      const elIcon = document.getElementById('item-icon');
+      if (elIcon) elIcon.value = cdnUrl;
       imgEl.onerror = () => {
         imgEl.src = apiUrl('/icon.png');
         if (urlInput) urlInput.value = '';
+        if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
         document.getElementById('icon-preview-name').textContent = '默认容器图标';
       };
       document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
-      loadAndConvertUrlToDataUrl(cdnUrl).then(dataUrl => {
-        const elIcon = document.getElementById('item-icon');
-        if (dataUrl && dataUrl.startsWith('data:') && elIcon && elIcon.value === cdnUrl) {
-          elIcon.value = dataUrl;
-        }
-      }).catch(() => {});
     }
   }
 
@@ -1538,24 +1636,66 @@ function openEditDesktopModal(id) {
     setDesktopModalMode('shortcut');
   }
 
-  if (item.icon) {
-    if (item.icon.startsWith('http://') || item.icon.startsWith('https://')) {
-      setIconModalTab('url');
-      const urlInput = document.getElementById('icon-url-input');
-      if (urlInput) urlInput.value = item.icon;
-    } else {
-      setIconModalTab('upload');
-      document.getElementById('item-icon').value = item.icon;
-      const uploadStatus = document.getElementById('icon-upload-status');
-      if (uploadStatus) uploadStatus.textContent = `已使用: ${item.icon}`;
-    }
-    const src = item.icon.startsWith('http') || item.icon.startsWith('data:') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`);
-    document.getElementById('icon-preview-img').src = src;
-    document.getElementById('icon-preview-name').textContent = item.icon.startsWith('data:') ? '已保存图标' : item.icon;
-  } else {
+  // Restore icon settings based on stored icon_type and metadata
+  const itemIconType = item.icon_type || (item.icon && (item.icon.includes('text-icon-') ? 'text' : (item.icon.startsWith('http://') || item.icon.startsWith('https://') ? 'url' : 'upload'))) || 'text';
+
+  const textInput = document.getElementById('icon-text-input');
+  const urlInput = document.getElementById('icon-url-input');
+  const textColorInput = document.getElementById('icon-text-color');
+  const textColorHex = document.getElementById('icon-text-color-hex');
+  const bgColorInput = document.getElementById('icon-bg-color');
+  const bgColorHex = document.getElementById('icon-bg-color-hex');
+  const uploadStatus = document.getElementById('icon-upload-status');
+  const previewImg = document.getElementById('icon-preview-img');
+  const previewName = document.getElementById('icon-preview-name');
+
+  if (itemIconType === 'text') {
     setIconModalTab('text');
-    document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
-    document.getElementById('icon-preview-name').textContent = '默认图标';
+    if (textInput) textInput.value = item.icon_text || '';
+    const textColor = item.icon_text_color || '#ffffff';
+    const bgColor = item.icon_bg_color || '#1e293b';
+    if (textColorInput) textColorInput.value = textColor;
+    if (textColorHex) textColorHex.value = textColor;
+    if (bgColorInput) bgColorInput.value = bgColor;
+    if (bgColorHex) bgColorHex.value = bgColor;
+    document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+      s.classList.toggle('active', s.dataset.color.toLowerCase() === textColor.toLowerCase());
+    });
+    document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+      s.classList.toggle('active', s.dataset.color.toLowerCase() === bgColor.toLowerCase());
+    });
+
+    if (item.icon_text) {
+      renderTextIconCanvas();
+    } else if (item.icon) {
+      if (previewImg) previewImg.src = getIconUrl(item.icon);
+      if (previewName) previewName.textContent = item.icon.split('/').pop();
+    } else {
+      renderTextIconCanvas();
+    }
+  } else if (itemIconType === 'url') {
+    setIconModalTab('url');
+    if (urlInput) urlInput.value = item.icon || '';
+    if (previewImg) {
+      previewImg.src = getIconUrl(item.icon);
+      previewImg.onerror = () => {
+        previewImg.src = apiUrl('/icon.png');
+        if (previewName) previewName.textContent = '图片载入失败';
+      };
+    }
+    if (previewName) previewName.textContent = item.icon ? '网络图标' : '默认图标';
+  } else if (itemIconType === 'upload') {
+    setIconModalTab('upload');
+    document.getElementById('item-icon').value = item.icon || '';
+    if (uploadStatus) uploadStatus.textContent = item.icon ? `已使用: ${item.icon}` : '支持 PNG、JPG、SVG、ICO 格式';
+    if (previewImg) {
+      previewImg.src = getIconUrl(item.icon);
+      previewImg.onerror = () => {
+        previewImg.src = apiUrl('/icon.png');
+        if (previewName) previewName.textContent = '图片载入失败';
+      };
+    }
+    if (previewName) previewName.textContent = item.icon ? item.icon.split('/').pop() : '默认图标';
   }
 
   openModal('modal-desktop-item');
@@ -1569,9 +1709,7 @@ function openPortDesktopListModal(port, procName, items) {
 
   let html = '';
   for (const item of items) {
-    const iconSrc = item.icon
-      ? (item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`))
-      : apiUrl('/icon.png');
+    const iconSrc = getIconUrl(item.icon);
     const openModeText = item.ui_type === 'iframe' ? '飞牛内部弹窗' : '浏览器新标签';
     const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
 
@@ -1651,9 +1789,17 @@ async function handleSaveDesktopItem(e) {
     const uiType = document.getElementById('item-ui-type').value;
     const allUsers = document.getElementById('item-all-users').value === 'true';
     let icon = '';
+    let iconType = state.activeIconTab || 'text';
+    let iconText = '';
+    let iconTextColor = '';
+    let iconBgColor = '';
+
     if (state.activeIconTab === 'text') {
-      const textVal = (document.getElementById('icon-text-input')?.value || '').trim();
-      if (textVal && state.currentTextIconDataUrl) {
+      iconType = 'text';
+      iconText = (document.getElementById('icon-text-input')?.value || '').trim();
+      iconTextColor = (document.getElementById('icon-text-color-hex')?.value || document.getElementById('icon-text-color')?.value || '#ffffff').trim();
+      iconBgColor = (document.getElementById('icon-bg-color-hex')?.value || document.getElementById('icon-bg-color')?.value || '#1e293b').trim();
+      if (iconText && state.currentTextIconDataUrl) {
         showToast('正在生成并上传文字图标...', 'info');
         const uploadedUrl = await uploadTextIconBlob();
         if (uploadedUrl) {
@@ -1661,8 +1807,10 @@ async function handleSaveDesktopItem(e) {
         }
       }
     } else if (state.activeIconTab === 'url') {
+      iconType = 'url';
       icon = (document.getElementById('icon-url-input')?.value || '').trim();
     } else if (state.activeIconTab === 'upload') {
+      iconType = 'upload';
       icon = (document.getElementById('item-icon')?.value || '').trim();
     }
     const appNameInput = document.getElementById('item-app-name');
@@ -1747,6 +1895,10 @@ async function handleSaveDesktopItem(e) {
       ui_type: uiType,
       all_users: allUsers,
       icon,
+      icon_type: iconType,
+      icon_text: iconText,
+      icon_text_color: iconTextColor,
+      icon_bg_color: iconBgColor,
       skip_tls_verify: skipTls,
       enabled,
     };
@@ -1765,6 +1917,10 @@ async function handleSaveDesktopItem(e) {
         existing.port = port;
         existing.app_name = appName;
         if (icon) existing.icon = icon;
+        existing.icon_type = iconType;
+        existing.icon_text = iconText;
+        existing.icon_text_color = iconTextColor;
+        existing.icon_bg_color = iconBgColor;
       }
     } else {
       state.desktopItems.unshift({
