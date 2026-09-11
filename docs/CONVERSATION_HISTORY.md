@@ -980,6 +980,148 @@ tcp   LISTEN 0      4096            [::]:5900          [::]:*    users:(("docker
 - **输出 Token (Completion Tokens)**：约 5,500
 - **总消耗 Token (Total Tokens)**：**约 90,500**
 
+---
+
+## 第十一轮对话（2026-09-10 ~ 2026-09-11）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 去掉左上角的 logo 和“把docker放到桌面”，因为飞牛窗口上已经有图标和名字了。
+- 设置中去掉这句话：设置项修改后将自动保存并即时生效。
+- 把 Docker 放到桌面 - 自身桌面图标设置，改为 把 Docker 放到桌面 v1.0.7 - 自身桌面图标设置（版本号按实际的显示）
+- 去掉日志的自动刷新按钮以及功能。
+- 仍然是产品自身有图标，但是我映射了两个图标，还是没有出现。这个问题迭代很多次了都没有解决，请仔细排查。可以对比原版watchcow的代码和飞牛的开发文档。如果有必要的话，记录相关log以便排查
+2026-09-10 21:21:49
+INFO
+[INFO] 收到终止信号，正在关闭服务...
+2026-09-10 21:21:49
+INFO
+[INFO] 服务已安全退出
+2026-09-10 21:22:20
+INFO
+[INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...
+2026-09-10 21:22:20
+INFO
+[INFO] ==============================================================================
+2026-09-10 21:22:20
+INFO
+[INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 服务启动诊断信息
+2026-09-10 21:22:20
+INFO
+[INFO] ------------------------------------------------------------------------------
+2026-09-10 21:22:20
+INFO
+[INFO] 基础环境 系统=linux/amd64 Go版本=go1.22.12 PID=256096 UID/GID=0/0 主机名=wildtu-pve-fn
+2026-09-10 21:22:20
+INFO
+[INFO] 运行路径 工作目录=/ 程序文件=/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop 数据目录=/usr/local/apps/@appdata/fn-docker-to-desktop/data 图标路径=icon.png
+2026-09-10 21:22:20
+INFO
+[INFO] 飞牛系统变量 TRIM_APPDEST=/usr/local/apps/@appcenter/fn-docker-to-desktop TRIM_PKGVAR=/usr/local/apps/@appdata/fn-docker-to-desktop PORT_ENV=
+2026-09-10 21:22:20
+INFO
+[INFO] 网络服务 运行模式=飞牛统一网关模式 (免端口模式) Unix Socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock 说明=零端口占用，免端口配置，告别冲突
+2026-09-10 21:22:20
+INFO
+[INFO] 日志系统 日志存储路径=/usr/local/apps/@appdata/fn-docker-to-desktop/logs 保留天数=8
+2026-09-10 21:22:20
+INFO
+[INFO] ==============================================================================
+2026-09-10 21:22:20
+INFO
+[INFO] 检测到飞牛官方包管理工具 appcenter-cli path=/usr/local/bin/appcenter-cli
+2026-09-10 21:22:20
+INFO
+[INFO] 正在同步自身桌面图标配置... appName=fn-docker-to-desktop uiType=url allUsers=false
+2026-09-10 21:22:20
+INFO
+[INFO] 已直接更新原生飞牛桌面配置文件 path=/usr/local/apps/@appcenter/fn-docker-to-desktop/ui/config
+2026-09-10 21:22:20
+INFO
+[INFO] 已直接更新原生飞牛桌面配置文件 path=/var/apps/fn-docker-to-desktop/target/ui/config
+2026-09-10 21:22:20
+INFO
+[INFO] 产品自身桌面图标配置更新完成 (原生模式)
+2026-09-10 21:22:20
+INFO
+[INFO] 飞牛统一网关 Unix Socket 监听就绪 socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock
+2026-09-10 21:22:20
+INFO
+[INFO] 飞牛统一网关服务就绪 socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. 深度对比 WatchCow 与飞牛应用规范：桌面图标未上线根因彻查
+
+针对用户反馈的“产品自身有桌面图标，但映射的两个图标始终没有出现”，进行了深度跨项目代码级对比（对比 `/home/net67373/watchcow` 全套源码）：
+
+- **根因一：启动未进行桌面应用注册对齐（Startup Auto-Reconciliation 缺失）**：
+  - 用户更新到新版本或重启系统时，飞牛应用中心重新载入。
+  - 原 `cmd/server/main.go` 启动流程中，仅恢复了反向代理（`proxyMgr.StartProxy`），**从未调用 `installer.InstallItem` 去补全注册现有的桌面应用**！
+  - 这导致在重新安装本应用或系统重启后，虽然数据库 `desktop_items.json` 中保存了这两个映射项，但飞牛系统 `appcenter-cli` 中并没有注册，导致桌面上始终没有图标！
+  - **修复**：在 `cmd/server/main.go` 启动序列中增加自动对齐循环：检测所有已启用的映射项，自动调用 `installer.InstallItem(item)` 向系统补全注册并输出诊断日志。
+- **根因二：`isAppInstalled` 误判导致反复卸载**：
+  - 原代码先调用 `appcenter-cli status <appName>`，很多 CLI 工具在应用不存在时也会退出 0 并输出 `stopped`，导致误判为“已安装”，从而在安装前执行 `stop` 和 `uninstall`。
+  - 对标 WatchCow：WatchCow **从不使用 status 判断是否安装**，而是精准解析 `appcenter-cli list` 输出表格中以 `│` 开头的行，提取第一列 appName 精确比对。
+  - **修复**：严格对标 WatchCow 实现，仅通过 `appcenter-cli list` Unicode 表格精准匹配应用名。
+- **根因三：`desktop_uidir=ui` 与路径兼容性双写**：
+  - 飞牛 OS manifest 中定义了 `desktop_uidir=ui`。部分版本飞牛系统寻找 `ui/config` 与 `ui/images`，部分版本寻找 `app/ui/config`。
+  - 本应用自身图标生效的原因是其包内同时存在 `ui/config`（或解压后直接在目标根目录）。
+  - **修复**：在 `BuildPackage` 中建立 `app/ui` 与 `ui` 两个目录层级，将 `config` 配置文件双写到 `app/ui/config` 和 `ui/config`，图标双写到 `app/ui/images` 和 `ui/images`。
+- **根因四：图标命名与配置格式对齐**：
+  - 本应用自身生效的 `config` 为 `"icon": "images/icon-{0}.png"` 与 `"noDisplay": false`。
+  - 快捷应用生成配置补齐 `"noDisplay": false`（防止系统默认隐藏），并在 `ui/images` 与 `app/ui/images` 下同时生成 `icon_{0}.png`、`icon-{0}.png`、`icon_64.png`、`icon_256.png`、`icon-64.png`、`icon-256.png`。
+- **根因五：浏览器与飞牛桌面 iframe 缓存导致前端未更新**：
+  - 飞牛桌面内部使用 iframe 打开应用，容易长久缓存 `app.js` 与 `index.html`。
+  - **修复**：在 `internal/api/handler.go` 中针对 HTML 与 JS 文件追加 `Cache-Control: no-cache, no-store, must-revalidate` 与 `Pragma: no-cache` 头，同时 `index.html` 引入 `app.js?v=1.0.8` 带版本查询参数强制破除缓存。
+
+#### 2. 界面与交互优化
+
+- **去除左上角 Logo 与标题**：移除了 `web/index.html` 中的 `<div class="header-brand">`，由于飞牛原生窗口标题栏已展示图标和应用名，内部顶部保持精简纯粹，为各功能标签留出更大空间。
+- **去除自动保存提示语**：移除了设置页底部的 `<div class="settings-auto-save-bar">` 提示文字。
+- **自身桌面图标设置动态版本标题**：设置卡片标题改为 `把 Docker 放到桌面 v1.0.8 - 自身桌面图标设置`，并在前端通过 `/api/settings` 接口动态绑定服务端实际运行版本。
+- **移除日志自动刷新功能**：移除了日志工具栏上的“自动刷新”复选框以及前端 3 秒后台轮询定时器，保留手动“刷新”按钮。
+
+---
+
+### 实施清单 (Implementation Checklist)
+
+1. **后端桌面图标安装器深度重构 (`internal/desktop/installer.go` & `internal/desktop/icons.go`)**：
+   - 移除不稳定的 `appcenter-cli status`，对标 WatchCow 采用 `appcenter-cli list` 表格精确匹配；
+   - 打包临时目录双写创建 `app/ui/` 与 `ui/` 及其 `images` 目录；
+   - UI 配置文件双写到 `app/ui/config` 与 `ui/config`；
+   - 图标文件全量双写并覆盖多种占位符格式（`icon-{0}.png`, `icon_{0}.png`, `64`, `256`）；
+   - 在 UI 条目中显式增加 `"noDisplay": false`。
+2. **服务启动自动对齐已配置桌面图标 (`cmd/server/main.go`)**：
+   - 在主服务启动恢复代理后，扫描 `storage.GetAllItems()`，若系统未注册则自动重新调用 `installer.InstallItem` 进行对齐补齐；
+   - 增加版本常量 `const appVersion = "1.0.8"` 并注入 API Handler。
+3. **API 与缓存控制优化 (`internal/api/handler.go`)**：
+   - 对 HTML 和 JS 静态资源下发 `no-cache, no-store, must-revalidate` 响应头；
+   - `handleGetSettings` 返回体增加 `version: h.appVersion`。
+4. **前端界面精简与版本适配 (`web/index.html` & `web/app.js`)**：
+   - 移除 Header Brand Logo 与标题；
+   - 移除设置页“修改后将自动保存并即时生效”提示；
+   - 自身桌面图标设置标题支持显示当前实际版本 `v1.0.8`；
+   - 移除日志工具栏的自动刷新控件及后台轮询定时器；
+   - `app.js` 引用增加 `?v=1.0.8` 版本号破除浏览器缓存。
+5. **版本升级与验证**：
+   - `fnos-app/manifest` 升级至 `1.0.8`；
+   - 通过 Docker Go 1.22 交叉编译与 `./scripts/build-fpk.sh x86` 打包测试。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 68,000
+- **思维链 Token (Thinking Tokens)**：约 18,500
+- **输出 Token (Completion Tokens)**：约 5,800
+- **总消耗 Token (Total Tokens)**：**约 92,300**
+
+
 
 
 

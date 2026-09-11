@@ -15,18 +15,6 @@
 <body>
   <!-- Header Bar -->
   <header class="app-header">
-    <div class="header-brand">
-      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-        <line x1="8" y1="21" x2="16" y2="21"></line>
-        <line x1="12" y1="17" x2="12" y2="21"></line>
-        <polyline points="10 9 12 7 14 9"></polyline>
-        <line x1="12" y1="7" x2="12" y2="13"></line>
-      </svg>
-      <div class="brand-text">
-        <h1 class="brand-title">把 Docker 放到桌面</h1>
-      </div>
-    </div>
 
     <!-- Navigation Tabs -->
     <nav class="header-nav">
@@ -305,11 +293,6 @@
 
         <div class="toolbar-spacer"></div>
 
-        <label class="checkbox-label" style="margin-bottom: 0; font-size: 13px;" title="每 3 秒自动轮询最新日志">
-          <input type="checkbox" id="log-auto-refresh" checked>
-          <span>自动刷新</span>
-        </label>
-
         <button class="btn btn-secondary" id="btn-refresh-logs" title="立即刷新日志">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           <span>刷新</span>
@@ -358,7 +341,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title">把 Docker 放到桌面 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.0.8 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -388,11 +371,6 @@
             <label class="form-label">确认新密码</label>
             <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
             <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
-          </div>
-
-          <div class="settings-auto-save-bar" style="margin-top: 20px; display: flex; align-items: center; gap: 8px;">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
-            <span class="save-status" id="settings-save-status" style="font-size: 13px; color: var(--text-muted);">设置项修改后将自动保存并即时生效</span>
           </div>
         </div>
       </div>
@@ -604,6 +582,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1.0.8"></script>
 </body>
 </html>

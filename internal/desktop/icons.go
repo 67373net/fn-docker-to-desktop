@@ -64,13 +64,23 @@ func writeIconBytes(pkgDir, imagesDir string, b64, b256 []byte) error {
 	_ = os.WriteFile(filepath.Join(pkgDir, "ICON.PNG"), b64, 0644)
 	_ = os.WriteFile(filepath.Join(pkgDir, "ICON_256.PNG"), b256, 0644)
 
-	// UI Images for Desktop
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon_64.png"), b64, 0644)
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon_256.png"), b256, 0644)
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon_{0}.png"), b256, 0644)
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon-64.png"), b64, 0644)
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon-256.png"), b256, 0644)
-	_ = os.WriteFile(filepath.Join(imagesDir, "icon.png"), b256, 0644)
+	// Write icons to both app/ui/images and ui/images for compatibility
+	iconDirs := []string{imagesDir}
+	uiImagesDir := filepath.Join(pkgDir, "ui", "images")
+	if uiImagesDir != imagesDir {
+		_ = os.MkdirAll(uiImagesDir, 0755)
+		iconDirs = append(iconDirs, uiImagesDir)
+	}
+
+	for _, dir := range iconDirs {
+		_ = os.WriteFile(filepath.Join(dir, "icon_64.png"), b64, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon_256.png"), b256, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon_{0}.png"), b256, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon-{0}.png"), b256, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon-64.png"), b64, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon-256.png"), b256, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon.png"), b256, 0644)
+	}
 	return nil
 }
 

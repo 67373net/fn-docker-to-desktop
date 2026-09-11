@@ -33,6 +33,7 @@ type Handler struct {
 	webFS          fs.FS
 	procPath       string
 	iconsDir       string
+	appVersion     string
 }
 
 // Config holds configuration to instantiate API Handler.
@@ -47,6 +48,7 @@ type Config struct {
 	WebFS        fs.FS
 	ProcPath     string
 	DataDir      string
+	AppVersion   string
 }
 
 // NewHandler creates a new API Handler.
@@ -65,6 +67,7 @@ func NewHandler(cfg Config) *Handler {
 		webFS:          cfg.WebFS,
 		procPath:       cfg.ProcPath,
 		iconsDir:       iconsDir,
+		appVersion:     cfg.AppVersion,
 	}
 }
 
@@ -124,6 +127,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 				}
 			}
 			f.Close()
+			// Prevent browser/iframe caching for HTML and JS
+			if strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".js") {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				w.Header().Set("Pragma", "no-cache")
+			}
 			h.serveWithGzip(w, r, fileServer)
 		})
 	}
@@ -532,7 +540,16 @@ func (h *Handler) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := h.storage.GetSettings()
 	settings.AuthPassword = ""
-	h.jsonResponse(w, r, settings, http.StatusOK)
+	// Include version in response for frontend display
+	resp := map[string]interface{}{
+		"portal_port":      settings.PortalPort,
+		"portal_name":      settings.PortalName,
+		"portal_ui_type":   settings.PortalUIType,
+		"portal_all_users": settings.PortalAllUsers,
+		"portal_icon":      settings.PortalIcon,
+		"version":          h.appVersion,
+	}
+	h.jsonResponse(w, r, resp, http.StatusOK)
 }
 
 func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {

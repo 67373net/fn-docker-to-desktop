@@ -24,6 +24,8 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
+const appVersion = "1.0.8"
+
 func main() {
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
 	hostFlag := flag.String("host", "", "Server host (default: from env HOST or 0.0.0.0)")
@@ -183,6 +185,20 @@ func main() {
 		}
 	}
 
+	// Startup reconciliation: ensure all enabled desktop items are registered in fnOS
+	if installer.HasCLI() {
+		slog.Info("启动时自动检查并重新注册桌面图标...", "count", len(items))
+		for _, item := range items {
+			if item.Enabled && item.AppName != "" {
+				if err := installer.InstallItem(item); err != nil {
+					slog.Warn("启动时自动重新注册桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
+				} else {
+					slog.Info("启动时自动重新注册桌面应用成功", "appName", item.AppName, "name", item.Name)
+				}
+			}
+		}
+	}
+
 	// Monitor & Watcher
 	systemSampler := monitor.NewSystemSampler(procPath)
 	watcher := monitor.NewWatcher(procPath, 1500*time.Millisecond)
@@ -200,6 +216,7 @@ func main() {
 		WebFS:        web.Assets,
 		ProcPath:     procPath,
 		DataDir:      *dataDirFlag,
+		AppVersion:   appVersion,
 	})
 
 	mux := http.NewServeMux()

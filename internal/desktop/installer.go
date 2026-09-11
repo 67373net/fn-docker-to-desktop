@@ -187,16 +187,7 @@ func (i *Installer) isAppInstalled(appName string) bool {
 		return false
 	}
 
-	// 1. Direct status check
-	statusCmd := exec.Command(i.cliPath, "status", appName)
-	if out, err := statusCmd.CombinedOutput(); err == nil {
-		status := strings.ToLower(strings.TrimSpace(string(out)))
-		if status == "running" || status == "stopped" || status == "starting" {
-			return true
-		}
-	}
-
-	// 2. Table list check
+	// Parse appcenter-cli list table output (strictly aligned with WatchCow approach)
 	cmd := exec.Command(i.cliPath, "list")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -206,11 +197,13 @@ func (i *Installer) isAppInstalled(appName string) bool {
 
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
-		if strings.Contains(line, appName) {
-			cleanLine := strings.ReplaceAll(line, "│", "|")
-			parts := strings.Split(cleanLine, "|")
-			for _, part := range parts {
-				if strings.TrimSpace(part) == appName {
+		// Table rows start with Unicode box character '│'
+		if strings.HasPrefix(line, "│") {
+			parts := strings.Split(line, "│")
+			if len(parts) >= 2 {
+				installedApp := strings.TrimSpace(parts[1])
+				if installedApp == appName {
+					slog.Debug("检测到应用已安装", "appName", appName)
 					return true
 				}
 			}
@@ -246,6 +239,8 @@ func (i *Installer) BuildPackage(cfg AppcenterPackageConfig) (string, error) {
 		filepath.Join(pkgDir, "app"),
 		filepath.Join(pkgDir, "app", "ui"),
 		filepath.Join(pkgDir, "app", "ui", "images"),
+		filepath.Join(pkgDir, "ui"),
+		filepath.Join(pkgDir, "ui", "images"),
 		filepath.Join(pkgDir, "cmd"),
 		filepath.Join(pkgDir, "config"),
 	}
@@ -315,12 +310,13 @@ desktop_applaunchname=%s
 	}
 
 	entryMap := map[string]interface{}{
-		"title":    title,
-		"icon":     "images/icon_{0}.png",
-		"type":     uiType,
-		"protocol": proto,
-		"url":      urlPath,
-		"allUsers": cfg.AllUsers,
+		"title":     title,
+		"icon":      "images/icon-{0}.png",
+		"type":      uiType,
+		"protocol":  proto,
+		"url":       urlPath,
+		"allUsers":  cfg.AllUsers,
+		"noDisplay": false,
 	}
 	if portStr != "" {
 		entryMap["port"] = portStr
@@ -340,6 +336,8 @@ desktop_applaunchname=%s
 		_ = os.RemoveAll(pkgDir)
 		return "", err
 	}
+	// Also write to ui/config for desktop_uidir=ui compatibility
+	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
 	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
 	if err := WritePackageIcons(pkgDir, cfg.IconPath, i.rootIconPath); err != nil {

@@ -25,8 +25,6 @@ let state = {
   logDate: '',
   logLevel: 'ALL',
   logSearch: '',
-  logAutoRefresh: true,
-  logTimer: null,
   logs: [],
 };
 
@@ -91,13 +89,8 @@ function switchTab(tab) {
     fetchHost();
   } else if (tab === 'logs') {
     fetchLogs();
-    startLogTimer();
   } else if (tab === 'settings') {
     fetchSettings();
-  }
-
-  if (tab !== 'logs') {
-    stopLogTimer();
   }
 }
 
@@ -176,6 +169,11 @@ async function fetchSettings() {
       const settings = await res.json();
       const elName = document.getElementById('setting-portal-name');
       if (elName) elName.value = settings.portal_name || '把 Docker 放到桌面';
+
+      const titleEl = document.getElementById('settings-card-title');
+      if (titleEl && settings.version) {
+        titleEl.textContent = `把 Docker 放到桌面 v${settings.version} - 自身桌面图标设置`;
+      }
 
       const allUsers = settings.portal_all_users ? 'true' : 'false';
       const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
@@ -1366,18 +1364,6 @@ function initLogViewer() {
     });
   }
 
-  const autoRefreshCb = document.getElementById('log-auto-refresh');
-  if (autoRefreshCb) {
-    autoRefreshCb.addEventListener('change', (e) => {
-      state.logAutoRefresh = e.target.checked;
-      if (state.logAutoRefresh && state.currentTab === 'logs') {
-        startLogTimer();
-      } else {
-        stopLogTimer();
-      }
-    });
-  }
-
   const btnRefresh = document.getElementById('btn-refresh-logs');
   if (btnRefresh) {
     btnRefresh.addEventListener('click', () => {
@@ -1397,24 +1383,6 @@ function initLogViewer() {
     btnScrollBottom.addEventListener('click', () => {
       scrollLogsToBottom();
     });
-  }
-}
-
-function startLogTimer() {
-  stopLogTimer();
-  if (state.logAutoRefresh) {
-    state.logTimer = setInterval(() => {
-      if (state.currentTab === 'logs') {
-        fetchLogs(true);
-      }
-    }, 3000);
-  }
-}
-
-function stopLogTimer() {
-  if (state.logTimer) {
-    clearInterval(state.logTimer);
-    state.logTimer = null;
   }
 }
 
