@@ -414,8 +414,12 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	appName := i.DeriveAppName(item)
+	appName := item.AppName
+	if appName == "" {
+		appName = i.DeriveAppName(item)
+	}
 	if err := ValidateAppName(appName); err != nil {
+		slog.Error("应用包名标识校验不合法", "appName", appName, "id", item.ID, "error", err)
 		return err
 	}
 

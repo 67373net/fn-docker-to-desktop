@@ -142,13 +142,77 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	}
 }
 
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int64
+}
+
+func (rec *responseRecorder) WriteHeader(code int) {
+	rec.statusCode = code
+	rec.ResponseWriter.WriteHeader(code)
+}
+
+func (rec *responseRecorder) Write(b []byte) (int, error) {
+	if rec.statusCode == 0 {
+		rec.statusCode = http.StatusOK
+	}
+	n, err := rec.ResponseWriter.Write(b)
+	rec.bytesWritten += int64(n)
+	return n, err
+}
+
+func (rec *responseRecorder) Flush() {
+	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// RequestLoggingMiddleware logs all incoming HTTP requests and their completion status.
+func RequestLoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+
+		// Don't spam logs with routine high-frequency SSE or static assets
+		isHighFreq := r.URL.Path == "/api/events" || r.URL.Path == "/api/system"
+		isStatic := strings.HasPrefix(r.URL.Path, "/icons/") ||
+			strings.HasSuffix(r.URL.Path, ".png") ||
+			strings.HasSuffix(r.URL.Path, ".ico") ||
+			strings.HasSuffix(r.URL.Path, ".css") ||
+			strings.HasSuffix(r.URL.Path, ".js")
+
+		next.ServeHTTP(rec, r)
+
+		duration := time.Since(start)
+
+		if isHighFreq || isStatic {
+			if rec.statusCode >= 400 {
+				slog.Warn("[HTTP] 异常响应", "method", r.Method, "path", r.URL.Path, "status", rec.statusCode, "duration", duration, "remote", r.RemoteAddr)
+			}
+			return
+		}
+
+		if rec.statusCode >= 400 {
+			slog.Warn("[HTTP] 请求失败", "method", r.Method, "path", r.URL.Path, "status", rec.statusCode, "duration", duration, "remote", r.RemoteAddr)
+		} else {
+			slog.Info("[HTTP] 请求完成", "method", r.Method, "path", r.URL.Path, "status", rec.statusCode, "duration", duration, "remote", r.RemoteAddr)
+		}
+	})
+}
+
 func (h *Handler) jsonResponse(w http.ResponseWriter, r *http.Request, data interface{}, status int) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	bytes, err := json.Marshal(data)
 	if err != nil {
+		slog.Error("JSON 序列化失败", "path", r.URL.Path, "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"json marshal failed"}`))
 		return
+	}
+
+	if status >= 400 {
+		slog.Warn("[API 错误响应]", "method", r.Method, "path", r.URL.Path, "status", status, "response", string(bytes))
 	}
 
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && len(bytes) > 512 {
@@ -330,14 +394,18 @@ func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request) {
+	slog.Info("===> [API] 收到创建桌面图标请求", "remote", r.RemoteAddr, "contentLength", r.ContentLength)
+
 	if !h.checkAuth(r) {
-		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		slog.Warn("[API] 创建桌面图标鉴权未通过: 请求未认证", "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
 		return
 	}
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败"}, http.StatusBadRequest)
+		slog.Error("[API] 读取创建桌面图标请求体失败", "error", err)
+		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
 
@@ -346,6 +414,7 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 
 	var item desktop.DesktopItem
 	if err := json.Unmarshal(bodyBytes, &item); err != nil {
+		slog.Error("[API] 解析创建桌面图标 JSON 失败", "error", err, "rawPayload", string(bodyBytes))
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
@@ -370,53 +439,82 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 	item.Enabled = true
 
-	slog.Info("收到创建桌面图标请求", "name", item.Name, "mode", item.Mode, "port", item.Port, "container", item.ContainerName, "allUsers", item.AllUsers, "uiType", item.UIType)
+	// Derive or validate app name
+	if item.AppName == "" {
+		item.AppName = h.installer.DeriveAppName(item)
+		slog.Info("[API] 未指定应用包名，系统自动派生生成", "appName", item.AppName, "name", item.Name)
+	} else {
+		if err := desktop.ValidateAppName(item.AppName); err != nil {
+			slog.Warn("[API] 用户指定应用包名格式不符合规范", "appName", item.AppName, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "应用包名格式不符合规范: " + err.Error()}, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Check if package name is already in use by another item
+	for _, exist := range h.storage.GetAllItems() {
+		if exist.ID != item.ID && exist.AppName == item.AppName {
+			slog.Warn("[API] 桌面应用包名标识已存在", "appName", item.AppName, "conflictID", exist.ID, "conflictName", exist.Name)
+			h.jsonResponse(w, r, map[string]string{"error": fmt.Sprintf("应用包名 %q 已被「%s」使用，请指定其他包名或留空由系统生成", item.AppName, exist.Name)}, http.StatusBadRequest)
+			return
+		}
+	}
+
+	slog.Info("[API] 桌面图标参数解析完成，准备安装",
+		"id", item.ID,
+		"name", item.Name,
+		"appName", item.AppName,
+		"mode", item.Mode,
+		"port", item.Port,
+		"targetURL", item.TargetURL,
+		"container", item.ContainerName,
+		"allUsers", item.AllUsers,
+		"uiType", item.UIType,
+		"hasIcon", item.Icon != "",
+	)
 
 	// If mode is proxy, start the reverse proxy
 	if item.Mode == desktop.ModeProxy {
 		if item.Port <= 0 {
 			item.Port = proxy.RecommendAvailablePort(18000, nil)
+			slog.Info("[API] 自动推荐分配反向代理本地端口", "port", item.Port)
 		}
 		if err := h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify); err != nil {
+			slog.Error("[API] 启动反向代理监听失败", "id", item.ID, "port", item.Port, "target", item.TargetURL, "error", err)
 			h.jsonResponse(w, r, map[string]string{"error": "启动反向代理失败: " + err.Error()}, http.StatusBadRequest)
 			return
 		}
 	}
 
-	// Derive or validate app name
-	if item.AppName == "" {
-		item.AppName = h.installer.DeriveAppName(item)
-	} else {
-		if err := desktop.ValidateAppName(item.AppName); err != nil {
-			h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
-			return
-		}
-	}
-
 	// Install to fnOS desktop
+	slog.Info("[API] 正在调用安装器注册到飞牛桌面系统...", "appName", item.AppName, "name", item.Name)
 	if err := h.installer.InstallItem(item); err != nil {
-		slog.Error("安装到飞牛桌面失败", "appName", item.AppName, "error", err)
+		slog.Error("[API] 安装到飞牛桌面失败", "appName", item.AppName, "name", item.Name, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "安装到飞牛桌面失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 	item.Installed = true
 
 	if err := h.storage.SaveItem(item); err != nil {
+		slog.Error("[API] 保存桌面图标配置到存储数据库失败", "appName", item.AppName, "id", item.ID, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "保存失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("桌面图标创建并安装成功", "appName", item.AppName, "id", item.ID)
+	slog.Info("<=== [API] 桌面图标创建并安装成功！", "appName", item.AppName, "id", item.ID, "name", item.Name, "port", item.Port)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 
 func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	slog.Info("===> [API] 收到更新桌面图标请求", "id", id, "remote", r.RemoteAddr)
+
 	if !h.checkAuth(r) {
-		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		slog.Warn("[API] 更新桌面图标鉴权未通过: 请求未认证", "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
 		return
 	}
 
-	id := r.PathValue("id")
 	if id == "" {
 		h.jsonResponse(w, r, map[string]string{"error": "缺少ID"}, http.StatusBadRequest)
 		return
@@ -424,7 +522,8 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败"}, http.StatusBadRequest)
+		slog.Error("[API] 读取更新桌面图标请求数据失败", "id", id, "error", err)
+		h.jsonResponse(w, r, map[string]string{"error": "读取请求失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
 
@@ -433,6 +532,7 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 
 	var item desktop.DesktopItem
 	if err := json.Unmarshal(bodyBytes, &item); err != nil {
+		slog.Error("[API] 解析更新桌面图标 JSON 失败", "id", id, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "参数解析失败: " + err.Error()}, http.StatusBadRequest)
 		return
 	}
@@ -453,7 +553,7 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	slog.Info("收到更新桌面图标请求", "id", id, "name", item.Name, "mode", item.Mode, "port", item.Port, "enabled", item.Enabled)
+	slog.Info("[API] 更新桌面图标参数解析完成", "id", id, "name", item.Name, "mode", item.Mode, "port", item.Port, "enabled", item.Enabled, "oldAppName", oldAppName, "newAppName", item.AppName)
 
 	if item.Mode == desktop.ModeProxy && item.Enabled {
 		_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
@@ -470,68 +570,92 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		if err := desktop.ValidateAppName(item.AppName); err != nil {
-			h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+			slog.Warn("[API] 更新桌面图标包名格式不合法", "appName", item.AppName, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "应用包名格式不符合规范: " + err.Error()}, http.StatusBadRequest)
 			return
 		}
 	}
 
-	// Clean up old app on fnOS before reinstalling/updating
-	if hasExisting && oldAppName != "" {
-		slog.Info("更新桌面图标前，注销卸载旧版本应用以确保注销旧图标...", "oldAppName", oldAppName, "newAppName", item.AppName)
+	// Check if package name is already in use by another item
+	for _, exist := range h.storage.GetAllItems() {
+		if exist.ID != item.ID && exist.AppName == item.AppName {
+			slog.Warn("[API] 更新桌面应用包名已存在冲突", "appName", item.AppName, "conflictID", exist.ID)
+			h.jsonResponse(w, r, map[string]string{"error": fmt.Sprintf("应用包名 %q 已被「%s」使用，请更改包名", item.AppName, exist.Name)}, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Clean up old app on fnOS before reinstalling/updating if appName changed
+	if hasExisting && oldAppName != "" && oldAppName != item.AppName {
+		slog.Info("[API] 检测到应用包名变更，注销旧版本应用以确保注销旧图标...", "oldAppName", oldAppName, "newAppName", item.AppName)
 		_ = h.installer.UninstallSingleApp(oldAppName)
 	}
 
 	if item.Enabled {
+		slog.Info("[API] 正在更新/重新安装飞牛桌面应用...", "appName", item.AppName, "name", item.Name)
 		if err := h.installer.InstallItem(item); err != nil {
-			slog.Error("更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
+			slog.Error("[API] 更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
 			h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
 			return
 		}
 		item.Installed = true
 	} else {
+		slog.Info("[API] 应用已禁用，执行注销卸载...", "appName", item.AppName)
 		_ = h.installer.UninstallItem(item)
 		item.Installed = false
 	}
 
-	_ = h.storage.SaveItem(item)
-	slog.Info("桌面图标更新完成", "appName", item.AppName, "id", id)
+	if err := h.storage.SaveItem(item); err != nil {
+		slog.Error("[API] 保存更新桌面图标数据失败", "appName", item.AppName, "id", id, "error", err)
+		h.jsonResponse(w, r, map[string]string{"error": "保存失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("<=== [API] 桌面图标更新完成！", "appName", item.AppName, "id", id, "name", item.Name)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 
 func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	slog.Info("===> [API] 收到移出桌面图标请求", "id", id, "remote", r.RemoteAddr)
+
 	if !h.checkAuth(r) {
-		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		slog.Warn("[API] 移出桌面图标鉴权未通过", "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
 		return
 	}
 
-	id := r.PathValue("id")
 	if id == "" {
 		h.jsonResponse(w, r, map[string]string{"error": "缺少ID"}, http.StatusBadRequest)
 		return
 	}
 
-	slog.Info("收到移出桌面图标请求", "id", id)
 	h.proxyMgr.StopProxy(id)
 	if existing, ok := h.storage.GetItem(id); ok {
+		slog.Info("[API] 正在卸载注销桌面应用...", "appName", existing.AppName, "id", id)
 		_ = h.installer.UninstallItem(existing)
 	} else {
+		slog.Info("[API] 未在存储中找到图标记录，尝试按 ID 注销...", "id", id)
 		_ = h.installer.UninstallItemByID(id)
 	}
 	_ = h.storage.DeleteItem(id)
 
-	slog.Info("桌面图标移出成功", "id", id)
+	slog.Info("<=== [API] 桌面图标已成功移出桌面并从数据库删除", "id", id)
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
 }
 
 func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	slog.Info("===> [API] 收到切换桌面图标状态请求", "id", id, "remote", r.RemoteAddr)
+
 	if !h.checkAuth(r) {
-		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		slog.Warn("[API] 切换桌面图标状态鉴权未通过", "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
 		return
 	}
 
-	id := r.PathValue("id")
 	if _, loaded := h.inFlightOps.LoadOrStore(id, true); loaded {
-		slog.Warn("桌面图标正在处理中，拒绝重复请求", "id", id)
+		slog.Warn("[API] 桌面图标正在处理中，拒绝重复并发请求", "id", id)
 		h.jsonResponse(w, r, map[string]string{"error": "该桌面图标正在处理中，请勿频繁点击"}, http.StatusConflict)
 		return
 	}
@@ -539,12 +663,13 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 
 	item, ok := h.storage.GetItem(id)
 	if !ok {
+		slog.Warn("[API] 切换状态未找到指定图标", "id", id)
 		h.jsonResponse(w, r, map[string]string{"error": "未找到指定图标"}, http.StatusNotFound)
 		return
 	}
 
 	targetState := !item.Enabled
-	slog.Info("收到切换桌面图标状态请求", "id", id, "name", item.Name, "当前状态", item.Enabled, "目标状态", targetState)
+	slog.Info("[API] 准备切换桌面图标状态", "id", id, "name", item.Name, "当前状态", item.Enabled, "目标状态", targetState)
 
 	item.Enabled = targetState
 	if item.AppName == "" {
@@ -555,8 +680,9 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 		if item.Mode == desktop.ModeProxy {
 			_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
 		}
+		slog.Info("[API] 正在启用并安装桌面应用...", "appName", item.AppName, "name", item.Name)
 		if err := h.installer.InstallItem(item); err != nil {
-			slog.Error("启用飞牛桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
+			slog.Error("[API] 启用飞牛桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
 			h.jsonResponse(w, r, map[string]string{"error": "启用桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
 			return
 		}
@@ -565,12 +691,13 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 		if item.Mode == desktop.ModeProxy {
 			h.proxyMgr.StopProxy(item.ID)
 		}
+		slog.Info("[API] 正在禁用并卸载桌面应用...", "appName", item.AppName, "name", item.Name)
 		_ = h.installer.UninstallItem(item)
 		item.Installed = false
 	}
 
 	_ = h.storage.SaveItem(item)
-	slog.Info("桌面图标状态切换成功", "id", id, "name", item.Name, "enabled", item.Enabled, "appName", item.AppName)
+	slog.Info("<=== [API] 桌面图标状态切换成功！", "id", id, "name", item.Name, "enabled", item.Enabled, "appName", item.AppName)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 

@@ -237,11 +237,7 @@ function updateSystemMetrics(sys) {
   const cpuPct = Math.round(sys.cpu_percent || 0);
   const memPct = Math.round(sys.mem_percent || 0);
 
-  // Header quick stats
-  const topCpu = document.getElementById('top-cpu');
-  const topMem = document.getElementById('top-mem');
-  if (topCpu) topCpu.textContent = `${cpuPct}%`;
-  if (topMem) topMem.textContent = `${memPct}%`;
+
 
   // System pane
   const cardCpu = document.getElementById('card-cpu');
@@ -405,12 +401,12 @@ function renderPortsTable() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         </a>
       </td>
-      <td>
+      <td class="col-hide-minimal">
         <span class="protocol-tag">${escapeHtml(p.protocol)}</span>
       </td>
-      <td><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
+      <td class="col-hide-minimal"><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
       <td>${procTag}</td>
-      <td style="font-variant-numeric: tabular-nums;">${resText}</td>
+      <td class="col-hide-minimal" style="font-variant-numeric: tabular-nums;">${resText}</td>
       <td>${desktopCell}</td>
       <td>
         <div class="table-actions">
@@ -523,6 +519,12 @@ function renderDesktopTable() {
         <div class="status-updating-badge">
           <span class="spinner-small"></span>
           <span>${escapeHtml(item._statusText || '正在更新中...')}</span>
+        </div>`;
+    } else if (item._error) {
+      statusColHtml = `
+        <div class="status-error-badge" style="display: inline-flex; align-items: center; gap: 4px; color: #ef4444; font-size: 0.82rem; font-weight: 500;" title="${escapeHtml(item._statusText || '')}">
+          <span>⚠️</span>
+          <span>${escapeHtml(item._statusText || '操作失败')}</span>
         </div>`;
     }
 
@@ -844,10 +846,10 @@ function setDesktopModalMode(mode) {
 function resetDesktopForm() {
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
+  state.appShortId = Math.floor(100000 + Math.random() * 900000).toString();
   const elAppName = document.getElementById('item-app-name');
-  if (elAppName) elAppName.value = '';
+  if (elAppName) elAppName.value = 'fndocker.app-' + state.appShortId;
   state.appNameDirty = false;
-  state.appShortId = '';
   const formEl = document.getElementById('form-desktop-item');
   if (formEl) delete formEl.dataset.image;
 
@@ -1081,121 +1083,164 @@ function openPortDesktopListModal(port, procName, items) {
 
 async function handleSaveDesktopItem(e) {
   e.preventDefault();
-  const id = document.getElementById('item-id').value.trim();
-  const mode = document.getElementById('item-mode').value;
-  const name = document.getElementById('item-name').value.trim();
-  const protocol = document.getElementById('item-protocol').value;
-  const path = document.getElementById('item-path').value.trim() || '/';
-  const uiType = document.getElementById('item-ui-type').value;
-  const allUsers = document.getElementById('item-all-users').value === 'true';
-  const icon = document.getElementById('item-icon').value.trim();
-  const appNameInput = document.getElementById('item-app-name');
-  const appName = appNameInput ? appNameInput.value.trim() : '';
+  try {
+    const id = document.getElementById('item-id').value.trim();
+    const mode = document.getElementById('item-mode').value;
+    const name = document.getElementById('item-name').value.trim();
+    const protocol = document.getElementById('item-protocol').value;
+    const path = document.getElementById('item-path').value.trim() || '/';
+    const uiType = document.getElementById('item-ui-type').value;
+    const allUsers = document.getElementById('item-all-users').value === 'true';
+    const icon = document.getElementById('item-icon').value.trim();
+    const appNameInput = document.getElementById('item-app-name');
+    const appName = appNameInput ? appNameInput.value.trim() : '';
 
-  if (appName) {
-    const validPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$/;
-    if (!validPattern.test(appName)) {
-      showToast('应用包名标识格式不符合规范：必须字母数字开头，仅含字母数字点号横杠，3-32位', 'error');
-      return;
+    if (!name) {
+      document.getElementById('item-name').focus();
+      return showToast('请输入桌面显示名称', 'error');
     }
-  }
 
-  let port = 0;
-  let targetUrl = '';
-  let skipTls = false;
-
-  if (mode === 'local') {
-    port = parseInt(document.getElementById('item-local-port').value, 10);
-    if (!port || port <= 0) return showToast('请输入有效的本机端口', 'error');
-  } else if (mode === 'proxy') {
-    targetUrl = document.getElementById('item-target-url').value.trim();
-    port = parseInt(document.getElementById('item-proxy-port').value, 10);
-    skipTls = document.getElementById('item-skip-tls').checked;
-    if (!targetUrl) return showToast('请输入目标地址', 'error');
-    if (!port || port <= 0) return showToast('请输入本机代理监听端口', 'error');
-  } else if (mode === 'shortcut') {
-    targetUrl = document.getElementById('item-shortcut-url').value.trim();
-    if (!targetUrl) return showToast('请输入目标网址', 'error');
-  }
-
-  let enabled = true;
-  if (id) {
-    const existing = state.desktopItems.find(i => i.id === id);
-    if (existing && existing.enabled !== undefined) {
-      enabled = existing.enabled;
-    }
-  }
-
-  const containerName = document.getElementById('item-container-name') ? document.getElementById('item-container-name').value.trim() : '';
-  const formEl = document.getElementById('form-desktop-item');
-  const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
-
-  const payload = {
-    id: id || `item-${Date.now() % 1000000}`,
-    name,
-    app_name: appName,
-    container_name: containerName,
-    image,
-    mode,
-    port,
-    target_url: targetUrl,
-    protocol,
-    path,
-    ui_type: uiType,
-    all_users: allUsers,
-    icon,
-    skip_tls_verify: skipTls,
-    enabled,
-  };
-
-  // Requirement: Close modal immediately, show updating indicator in desktop table!
-  closeModal('modal-desktop-item');
-
-  if (id) {
-    const existing = state.desktopItems.find(i => i.id === id);
-    if (existing) {
-      existing._updating = true;
-      existing._statusText = '正在更新中...';
-      existing.name = name;
-      existing.port = port;
-      existing.app_name = appName;
-      if (icon) existing.icon = icon;
-    }
-  } else {
-    state.desktopItems.unshift({
-      ...payload,
-      _updating: true,
-      _statusText: '正在创建中...',
-      created_at: new Date().toISOString(),
-    });
-  }
-  updateDesktopBadge();
-  renderPortsTable();
-  renderDesktopTable();
-
-  const method = id ? 'PUT' : 'POST';
-  const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
-
-  fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-    .then(async res => {
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        showToast(errData.error || `${id ? '更新' : '添加'}桌面图标失败`, 'error');
-      } else {
-        showToast(`桌面图标「${name}」已成功同步至飞牛桌面！`, 'success');
+    if (appName) {
+      const validPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$/;
+      if (!validPattern.test(appName)) {
+        if (appNameInput) appNameInput.focus();
+        showToast('应用包名标识格式不符合规范：必须字母数字开头，仅含字母数字点号横杠，3-32位', 'error');
+        return;
       }
+    }
+
+    let port = 0;
+    let targetUrl = '';
+    let skipTls = false;
+
+    if (mode === 'local') {
+      port = parseInt(document.getElementById('item-local-port').value, 10);
+      if (!port || port <= 0) {
+        document.getElementById('item-local-port').focus();
+        return showToast('请输入有效的本机端口', 'error');
+      }
+    } else if (mode === 'proxy') {
+      targetUrl = document.getElementById('item-target-url').value.trim();
+      port = parseInt(document.getElementById('item-proxy-port').value, 10);
+      skipTls = document.getElementById('item-skip-tls').checked;
+      if (!targetUrl) {
+        document.getElementById('item-target-url').focus();
+        return showToast('请输入目标地址', 'error');
+      }
+      if (!port || port <= 0) {
+        document.getElementById('item-proxy-port').focus();
+        return showToast('请输入本机代理监听端口', 'error');
+      }
+    } else if (mode === 'shortcut') {
+      targetUrl = document.getElementById('item-shortcut-url').value.trim();
+      if (!targetUrl) {
+        document.getElementById('item-shortcut-url').focus();
+        return showToast('请输入目标网址', 'error');
+      }
+    }
+
+    let enabled = true;
+    if (id) {
+      const existing = state.desktopItems.find(i => i.id === id);
+      if (existing && existing.enabled !== undefined) {
+        enabled = existing.enabled;
+      }
+    }
+
+    const containerName = document.getElementById('item-container-name') ? document.getElementById('item-container-name').value.trim() : '';
+    const formEl = document.getElementById('form-desktop-item');
+    const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
+
+    const payload = {
+      id: id || `item-${Date.now() % 1000000}`,
+      name,
+      app_name: appName,
+      container_name: containerName,
+      image,
+      mode,
+      port,
+      target_url: targetUrl,
+      protocol,
+      path,
+      ui_type: uiType,
+      all_users: allUsers,
+      icon,
+      skip_tls_verify: skipTls,
+      enabled,
+    };
+
+    // Close modal immediately
+    closeModal('modal-desktop-item');
+
+    // Automatically switch to Desktop tab so the user sees the new icon and progress immediately!
+    switchTab('desktop');
+
+    if (id) {
+      const existing = state.desktopItems.find(i => i.id === id);
+      if (existing) {
+        existing._updating = true;
+        existing._error = false;
+        existing._statusText = '正在更新中...';
+        existing.name = name;
+        existing.port = port;
+        existing.app_name = appName;
+        if (icon) existing.icon = icon;
+      }
+    } else {
+      state.desktopItems.unshift({
+        ...payload,
+        _updating: true,
+        _error: false,
+        _statusText: '正在创建中...',
+        created_at: new Date().toISOString(),
+      });
+    }
+    updateDesktopBadge();
+    renderPortsTable();
+    renderDesktopTable();
+
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
+
+    fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     })
-    .catch(err => {
-      showToast('请求异常: ' + err.message, 'error');
-    })
-    .finally(async () => {
-      await fetchDesktopItems();
-      await fetchPorts();
-    });
+      .then(async res => {
+        const respData = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const errMsg = respData.error || `${id ? '更新' : '添加'}桌面图标失败 (HTTP ${res.status})`;
+          console.error('[handleSaveDesktopItem] Server rejected:', errMsg, respData);
+          showToast(errMsg, 'error', 6000);
+          const target = state.desktopItems.find(i => i.id === payload.id);
+          if (target) {
+            target._updating = false;
+            target._error = true;
+            target._statusText = '失败: ' + errMsg;
+            renderDesktopTable();
+          }
+        } else {
+          showToast(`桌面图标「${name}」已成功同步至飞牛桌面！`, 'success');
+          await fetchDesktopItems();
+          await fetchPorts();
+        }
+      })
+      .catch(err => {
+        console.error('[handleSaveDesktopItem] Network exception:', err);
+        showToast('请求异常: ' + err.message, 'error', 6000);
+        const target = state.desktopItems.find(i => i.id === payload.id);
+        if (target) {
+          target._updating = false;
+          target._error = true;
+          target._statusText = '请求失败: ' + err.message;
+          renderDesktopTable();
+        }
+      });
+  } catch (err) {
+    console.error('[handleSaveDesktopItem] Unexpected exception:', err);
+    showToast('保存异常: ' + err.message, 'error', 6000);
+  }
 }
 
 async function handleTestTarget() {
@@ -1574,14 +1619,19 @@ function initApp() {
     });
   });
 
-  // Manual refresh button
-  const btnRefresh = document.getElementById('btn-refresh-manual');
-  if (btnRefresh) {
-    btnRefresh.addEventListener('click', () => {
-      fetchPorts();
-      fetchDesktopItems();
-      fetchProcesses();
-      fetchSystem();
+  // Minimal mode toggle in Ports tab (default: enabled)
+  const toggleMinimal = document.getElementById('toggle-minimal-mode');
+  const portsTable = document.getElementById('ports-table');
+  if (toggleMinimal && portsTable) {
+    const saved = localStorage.getItem('fn_ports_minimal_mode');
+    const isMinimal = saved !== null ? saved === 'true' : true;
+    toggleMinimal.checked = isMinimal;
+    portsTable.classList.toggle('minimal-mode', isMinimal);
+
+    toggleMinimal.addEventListener('change', () => {
+      const active = toggleMinimal.checked;
+      portsTable.classList.toggle('minimal-mode', active);
+      localStorage.setItem('fn_ports_minimal_mode', active);
     });
   }
 

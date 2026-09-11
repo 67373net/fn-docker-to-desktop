@@ -24,7 +24,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.0.9"
+const appVersion = "1.1.2"
 
 func main() {
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
@@ -218,7 +218,10 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	// Middleware to support fnOS Unified Gateway prefix
+	// Wrap with HTTP Request Logging Middleware
+	loggingHandler := api.RequestLoggingMiddleware(mux)
+
+	// Middleware to support fnOS Unified Gateway prefix and normalize paths
 	var rootHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const gwPrefix = "/app/fn-docker-to-desktop"
 		if r.URL.Path == gwPrefix {
@@ -231,7 +234,11 @@ func main() {
 				r.URL.Path = "/"
 			}
 		}
-		mux.ServeHTTP(w, r)
+		// Defensive normalization: trim trailing slash for /api routes
+		if strings.HasPrefix(r.URL.Path, "/api/") && len(r.URL.Path) > 5 && strings.HasSuffix(r.URL.Path, "/") {
+			r.URL.Path = strings.TrimSuffix(r.URL.Path, "/")
+		}
+		loggingHandler.ServeHTTP(w, r)
 	})
 
 	srv := &http.Server{

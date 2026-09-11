@@ -19,7 +19,7 @@
     <!-- Navigation Tabs -->
     <nav class="header-nav">
       <button class="nav-tab active" data-tab="ports">
-        <span>本机端口</span>
+        <span>进程列表</span>
         <span class="badge" id="port-count-badge">0</span>
       </button>
       <button class="nav-tab" data-tab="desktop">
@@ -43,26 +43,11 @@
         <span>设置</span>
       </button>
     </nav>
-
-    <!-- Header Stats Quick View -->
-    <div class="header-stats">
-      <div class="stat-pill" title="CPU 使用率">
-        <span class="stat-label">CPU</span>
-        <span class="stat-value" id="top-cpu">0%</span>
-      </div>
-      <div class="stat-pill" title="内存使用率">
-        <span class="stat-label">内存</span>
-        <span class="stat-value" id="top-mem">0%</span>
-      </div>
-      <button class="btn btn-icon btn-secondary" id="btn-refresh-manual" title="刷新数据">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-      </button>
-    </div>
   </header>
 
   <!-- Main Container (100% Width) -->
   <main class="app-main">
-    <!-- ==================== TAB 1: 本机端口 ==================== -->
+    <!-- ==================== TAB 1: 进程列表 ==================== -->
     <section class="tab-pane active" id="pane-ports">
       <!-- Toolbar -->
       <div class="toolbar">
@@ -78,23 +63,27 @@
           <button class="chip" data-filter="udp">UDP</button>
         </div>
         <div class="toolbar-spacer"></div>
+        <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
+          <input type="checkbox" id="toggle-minimal-mode" checked>
+          <span class="toggle-switch-track"><span class="toggle-switch-thumb"></span></span>
+          <span class="toggle-switch-text">极简模式</span>
+        </label>
         <button class="btn btn-primary" id="btn-quick-add-desktop">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           <span>添加桌面图标</span>
         </button>
       </div>
 
       <!-- Table Container -->
       <div class="table-container">
-        <table class="data-table" id="ports-table">
+        <table class="data-table minimal-mode" id="ports-table">
           <thead>
             <tr>
               <th style="width: 140px;">端口</th>
-              <th style="width: 100px;">协议</th>
-              <th style="width: 180px;">监听地址</th>
+              <th class="col-hide-minimal" style="width: 100px;">协议</th>
+              <th class="col-hide-minimal" style="width: 180px;">监听地址</th>
               <th style="width: 240px;">进程 / 容器</th>
-              <th style="width: 140px;">资源消耗</th>
-              <th style="width: 140px;">桌面状态</th>
+              <th class="col-hide-minimal" style="width: 140px;">资源消耗</th>
+              <th style="width: 140px;">桌面图标</th>
               <th style="width: 160px;">操作</th>
               <th class="filler-col"></th>
             </tr>
@@ -335,7 +324,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.1 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.2 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -599,6 +588,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.1"></script>
+  <script src="app.js?v=1.1.2"></script>
 </body>
 </html>

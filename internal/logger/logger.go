@@ -532,10 +532,14 @@ type customSlogHandler struct {
 }
 
 func newCustomSlogHandler(l *Logger) *customSlogHandler {
+	lvl := slog.LevelInfo
+	if envLvl := os.Getenv("LOG_LEVEL"); strings.EqualFold(envLvl, "DEBUG") {
+		lvl = slog.LevelDebug
+	}
 	return &customSlogHandler{
 		logger: l,
 		opts: slog.HandlerOptions{
-			Level: slog.LevelInfo,
+			Level: lvl,
 		},
 	}
 }
