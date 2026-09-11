@@ -24,7 +24,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.0.8"
+const appVersion = "1.0.9"
 
 func main() {
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
@@ -185,11 +185,22 @@ func main() {
 		}
 	}
 
+	// Ensure each item has a valid, unique AppName (resolves any legacy package name collisions)
+	for idx := range items {
+		expected := installer.DeriveAppName(items[idx])
+		if items[idx].AppName != expected {
+			slog.Info("自动修正桌面应用唯一包标识", "id", items[idx].ID, "oldAppName", items[idx].AppName, "newAppName", expected)
+			items[idx].AppName = expected
+			_ = storage.SaveItem(items[idx])
+		}
+	}
+
 	// Startup reconciliation: ensure all enabled desktop items are registered in fnOS
 	if installer.HasCLI() {
 		slog.Info("启动时自动检查并重新注册桌面图标...", "count", len(items))
 		for _, item := range items {
-			if item.Enabled && item.AppName != "" {
+			if item.Enabled {
+				slog.Info("启动时注册桌面应用...", "appName", item.AppName, "name", item.Name)
 				if err := installer.InstallItem(item); err != nil {
 					slog.Warn("启动时自动重新注册桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
 				} else {

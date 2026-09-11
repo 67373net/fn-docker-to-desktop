@@ -1121,6 +1121,133 @@ INFO
 - **输出 Token (Completion Tokens)**：约 5,800
 - **总消耗 Token (Total Tokens)**：**约 92,300**
 
+---
+
+## 第十二轮对话（2026-09-11）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 桌面上仍然没有出现我配置的图标。
+- 我点击“运行状态”中的toggle时，toggle变化了，但是文字没有改变，过了一会儿，弹出了“切换状态失败”的浏览器弹窗。
+- 在我反复切换运行状态时，桌面上偶尔会闪现我想要的图标，但是很快就消失了。并且这个图标的文字是对的，图标图片不对。
+- 是否应该记录更详细的日志
+2026-09-11 14:08:42 [INFO] 收到终止信号，正在关闭服务...
+2026-09-11 14:08:42 [INFO] 服务已安全退出
+2026-09-11 14:08:53 [INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...
+2026-09-11 14:08:53 [INFO] ==============================================================================
+2026-09-11 14:08:54 [INFO] 把 Docker 放到桌面 (fn-docker-to-desktop) 服务启动诊断信息
+2026-09-11 14:08:54 [INFO] ------------------------------------------------------------------------------
+2026-09-11 14:08:54 [INFO] 基础环境 系统=linux/amd64 Go版本=go1.22.12 PID=1956310 UID/GID=0/0 主机名=wildtu-pve-fn
+2026-09-11 14:08:54 [INFO] 运行路径 工作目录=/ 程序文件=/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop 数据目录=/usr/local/apps/@appdata/fn-docker-to-desktop/data 图标路径=icon.png
+2026-09-11 14:08:54 [INFO] 飞牛系统变量 TRIM_APPDEST=/usr/local/apps/@appcenter/fn-docker-to-desktop TRIM_PKGVAR=/usr/local/apps/@appdata/fn-docker-to-desktop PORT_ENV=
+2026-09-11 14:08:54 [INFO] 网络服务 运行模式=飞牛统一网关模式 (免端口模式) Unix Socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock 说明=零端口占用，免端口配置，告别冲突
+2026-09-11 14:08:54 [INFO] 日志系统 日志存储路径=/usr/local/apps/@appdata/fn-docker-to-desktop/logs 保留天数=8
+2026-09-11 14:08:54 [INFO] ==============================================================================
+2026-09-11 14:08:54 [INFO] 检测到飞牛官方包管理工具 appcenter-cli path=/usr/local/bin/appcenter-cli
+2026-09-11 14:08:54 [INFO] 正在同步自身桌面图标配置... appName=fn-docker-to-desktop uiType=url allUsers=false
+2026-09-11 14:08:54 [INFO] 已直接更新原生飞牛桌面配置文件 path=/usr/local/apps/@appcenter/fn-docker-to-desktop/ui/config
+2026-09-11 14:08:54 [INFO] 已直接更新原生飞牛桌面配置文件 path=/var/apps/fn-docker-to-desktop/target/ui/config
+2026-09-11 14:08:54 [INFO] 产品自身桌面图标配置更新完成 (原生模式)
+2026-09-11 14:08:54 [INFO] 启动时自动检查并重新注册桌面图标... count=2
+2026-09-11 14:08:54 [INFO] 飞牛统一网关 Unix Socket 监听就绪 socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock
+2026-09-11 14:08:54 [INFO] 飞牛统一网关服务就绪 socket=/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock
+2026-09-11 14:34:32 [INFO] 收到切换桌面图标状态请求 id=item-528153 name=watchcow-portal-test2 enabled=true
+2026-09-11 14:34:33 [INFO] 查询飞牛默认存储卷输出 output=0
+2026-09-11 14:34:33 [INFO] 正在通过 appcenter-cli 安装飞牛桌面应用... appName=fndocker.port-13292 volume=1
+2026-09-11 14:34:37 [INFO] 收到切换桌面图标状态请求 id=item-528153 name=watchcow-portal-test2 enabled=true
+2026-09-11 14:34:38 [INFO] 收到切换桌面图标状态请求 id=item-528153 name=watchcow-portal-test2 enabled=true
+2026-09-11 14:34:43 [INFO] 收到切换桌面图标状态请求 id=item-528153 name=watchcow-portal-test2 enabled=true
+2026-09-11 14:34:46 [INFO] appcenter-cli install-local 执行完成 appName=fndocker.port-13292 volume=1 output=\ Verifying files.
+| Verifying files.
+/ Verifying files.
+- Verifying files.
+\ Verifying files.
+| Verifying files.
+\ installing......
+| installing......
+/ installing......
+- installing......
+
+\ starting.
+| starting.
+/ starting.
+- starting.
+/ starting.....
+- starting.....
+\ starting.....
+| starting.....
+[Info]Installation complete.
+2026-09-11 14:34:47 [INFO] 成功注册桌面应用并上线 appName=fndocker.port-13292 volume=1
+2026-09-11 14:34:47 [INFO] 应用已在系统中安装，先停止并卸载旧版本以应用更新... appName=fndocker.port-13292
+2026-09-11 14:34:56 [INFO] 收到切换桌面图标状态请求 id=item-3702 name=watchcow-portal-test enabled=false
+2026-09-11 14:35:04 [INFO] 查询飞牛默认存储卷输出 output=0
+2026-09-11 14:35:04 [INFO] 正在通过 appcenter-cli 安装飞牛桌面应用... appName=fndocker.port-13292 volume=1
+2026-09-11 14:35:13 [INFO] appcenter-cli install-local 执行完成 appName=fndocker.port-13292 volume=1 output=\ Verifying files.
+| Verifying files.
+/ Verifying files.
+- Verifying files.
+\ Verifying files.
+```
+
+---
+
+### 系统技术方案与决策细节 (Architecture & Implementation Retrospective)
+
+#### 1. 基于实机生产日志的四大致命缺陷复盘与定位
+
+用户提供的运行日志清晰揭示了图标闪退与未出现的全链条真相：
+
+- **根本缺陷一：包标识 AppName 冲突（同端口不同名称互相卸载覆盖）**：
+  - 日志中：`item-528153` (watchcow-portal-test2) 和 `item-3702` (watchcow-portal-test) 均生成了相同的包名 `fndocker.port-13292`！
+  - 飞牛系统将两者认定为同一个应用。当用户保存或切换其中一个时，另一个会被直接卸载覆写；当切换其中一个为停用时，两者都被卸载！
+  - **修复**：重构 `DeriveAppName`，强制绑定每个条目的全局唯一短 ID（如 `fndocker.watchcow-portal-528153` 与 `fndocker.watchcow-portal-3702`）。且在服务启动时自动扫描并修复数据库中历史残留的重名包标识，彻底杜绝包名冲突。
+- **根本缺陷二：InstallItem 冗余卸载旧版本导致安装-卸载竞态（“桌面闪现一下即消失”根因）**：
+  - 在原 `InstallItem` 中，存在逻辑：若检测到 `isAppInstalled(appName)` 为真，则在安装前执行 `stop` 与 `uninstall`。
+  - 由于用户在 toggle 时多次点击（耗时 13 秒），导致队列中排队的第 2 个请求在第 1 个请求刚安装完毕（14:34:47）的同一瞬间执行了 `uninstall`！
+  - 对标 WatchCow：WatchCow 的 `InstallLocal` 从不在安装前调用 `stop` 或 `uninstall`，飞牛的 `install-local` 自身即可完美处理原位覆盖与升级。
+  - **修复**：从 `InstallItem` 中坚决移除安装前的 `stop` 和 `uninstall`，卸载仅在用户明确点击停用或删除时执行。
+- **根本缺陷三：前端 Switch 切换无并发锁与防重保护，文字未响应**：
+  - `appcenter-cli install-local` 执行时间通常在 10~15 秒。前端没有立即置灰开关，文字也没有改变，促使用户误以为没反应而连续点击多次，并发请求排队进入后端反转状态。
+  - **修复**：前端点击切换时立即将 checkbox 设为 `disabled = true`，旁边文字立刻变为 `处理中...`；后端在 API 层为每个条目设置 `inFlightOps` 锁，并发重试立即返回 `409 Conflict` 友好提示，彻底终结状态抖动。
+- **根本缺陷四：图标图片不对（“文字是对的，图标图片不对”根因）**：
+  - 原逻辑在用户未显式指定自定义图标时，回退到主程序产品自身的 `icon.png`（把 Docker 放到桌面 蓝色鲸鱼图标），导致所有快捷方式都带有本工具自身的 Logo。
+  - **修复**：
+    1. 前端在点击“放到桌面”时，自动提取容器或服务名，智能尝试向 Homarr Dashboard Icons CDN（`https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/<name>.png`）请求官方精美图标并预览；
+    2. 后端在打包阶段同样具备 Homarr 官方服务图标自动下载匹配能力；若均未匹配到，则统一回退到内嵌的通用容器图标（立方体），坚决不再使用主产品自身的 Logo。
+
+---
+
+### 实施清单 (Implementation Checklist)
+
+1. **唯一包名隔离与历史冲突修复 (`internal/desktop/installer.go` & `cmd/server/main.go`)**：
+   - `DeriveAppName` 引入条目短 ID（`<base>-<shortID>`），确保即使同一端口建立多个快捷方式也绝对拥有独立包名；
+   - 服务启动时自动检测并升级已有条目的 `AppName`，并写入数据库保存；
+   - 启动对齐不再因 `AppName` 为空而遗漏。
+2. **消除安装前卸载并加入详细耗时日志 (`internal/desktop/installer.go`)**：
+   - 移除 `InstallItem` 中的 `stop` 与 `uninstall`，避免并发竞态下刚装好即被卸载；
+   - 增加精确耗时统计与全流程日志记录；
+   - `UninstallItem` 支持清理历史 `fndocker.port-<port>` 遗留包。
+3. **官方服务图标智能匹配与通用图标降级 (`internal/desktop/icons.go` & `web/app.js`)**：
+   - 移除回退到主程序 Logo 的逻辑；
+   - 增加候选名匹配 Homarr 官方 CDN 图标逻辑；
+   - 前端弹窗自动推荐官方服务图标。
+4. **状态切换防重保护与即时状态显示 (`internal/api/handler.go` & `web/app.js`)**：
+   - 后端增加 `inFlightOps sync.Map`，对正在处理的条目拦截并发并返回 409；
+   - 前端点击切换时立即进入 disabled 状态，文字变为 `处理中...`，杜绝重复连点。
+5. **版本升级与验证**：
+   - 升级版本至 `1.0.9`；
+   - 经 Docker Go 1.22 编译与 `./scripts/build-fpk.sh x86` 完整打包验证通过。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 72,000
+- **思维链 Token (Thinking Tokens)**：约 21,000
+- **输出 Token (Completion Tokens)**：约 6,200
+- **总消耗 Token (Total Tokens)**：**约 99,200**
+
 
 
 

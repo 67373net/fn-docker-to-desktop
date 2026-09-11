@@ -547,6 +547,19 @@ function renderDesktopTable() {
   tbody.querySelectorAll('.desktop-toggle-checkbox').forEach(chk => {
     chk.addEventListener('change', async () => {
       const id = chk.dataset.id;
+      if (chk.disabled) return;
+
+      const wrapper = chk.closest('.status-toggle-wrapper');
+      const label = wrapper ? wrapper.querySelector('.status-toggle-label') : null;
+      const originalText = label ? label.textContent.trim() : '';
+
+      // Immediately disable checkbox and show loading state
+      chk.disabled = true;
+      if (label) {
+        label.className = 'status-toggle-label pending';
+        label.textContent = '处理中...';
+      }
+
       try {
         const res = await fetch(apiUrl(`/api/desktop/items/${id}/toggle`), { method: 'POST' });
         if (res.ok) {
@@ -556,12 +569,23 @@ function renderDesktopTable() {
           renderDesktopTable();
           fetchPorts();
         } else {
-          alert('切换状态失败');
+          const errData = await res.json().catch(() => ({}));
+          alert('切换状态失败: ' + (errData.error || res.statusText));
           chk.checked = !chk.checked;
+          if (label) {
+            label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
+            label.textContent = originalText;
+          }
+          chk.disabled = false;
         }
       } catch (e) {
         alert('网络请求异常: ' + e.message);
         chk.checked = !chk.checked;
+        if (label) {
+          label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
+          label.textContent = originalText;
+        }
+        chk.disabled = false;
       }
     });
   });
@@ -784,6 +808,25 @@ function openCreateDesktopModalWithPort(port, name, containerName) {
   document.getElementById('item-name').value = name;
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = containerName || '';
+
+  // Auto-resolve or recommend official icon from Homarr CDN for Docker containers or port services
+  const iconCandidate = containerName || name;
+  if (iconCandidate) {
+    const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
+    if (cleanName) {
+      const cdnUrl = `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
+      document.getElementById('item-icon').value = cdnUrl;
+      const imgEl = document.getElementById('icon-preview-img');
+      imgEl.src = cdnUrl;
+      imgEl.onerror = () => {
+        imgEl.src = apiUrl('/icon.png');
+        document.getElementById('item-icon').value = '';
+        document.getElementById('icon-preview-name').textContent = '默认图标';
+      };
+      document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
+    }
+  }
+
   setDesktopModalMode('local');
   openModal('modal-desktop-item');
 }

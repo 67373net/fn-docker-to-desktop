@@ -97,38 +97,48 @@ func findAppcenterCLI() (string, bool) {
 	return "", false
 }
 
-// DeriveAppName generates a valid, unique fnOS package identifier.
+// DeriveAppName generates a valid, guaranteed-unique fnOS package identifier for an item.
 func (i *Installer) DeriveAppName(item DesktopItem) string {
-	if item.AppName != "" && ValidateAppName(item.AppName) == nil {
-		return item.AppName
-	}
-
 	base := ""
 	if item.ContainerName != "" {
-		if item.Port > 0 {
-			base = fmt.Sprintf("%s-%d", item.ContainerName, item.Port)
-		} else {
-			base = item.ContainerName
-		}
-	} else if item.Port > 0 {
-		base = fmt.Sprintf("port-%d", item.Port)
+		base = item.ContainerName
 	} else if item.Name != "" && isASCIIAlphanumeric(item.Name) {
 		base = item.Name
+	} else if item.Port > 0 {
+		base = fmt.Sprintf("port-%d", item.Port)
 	} else {
-		base = item.ID
+		base = "app"
 	}
 
-	sanitized := SanitizeAppNamePart(base)
-	appName := "fndocker." + sanitized
+	sanitizedBase := SanitizeAppNamePart(base)
+
+	// Derive a short unique discriminator from item.ID (e.g. "item-528153" -> "528153")
+	shortID := strings.TrimPrefix(item.ID, "item-")
+	shortID = SanitizeAppNamePart(shortID)
+	if len(shortID) > 6 {
+		shortID = shortID[:6]
+	}
+	if shortID == "" {
+		digest := sha256.Sum256([]byte(item.ID + item.Name + strconv.Itoa(item.Port)))
+		shortID = hex.EncodeToString(digest[:])[:6]
+	}
+
+	// Prefix "fndocker." is 9 chars. Max total is 32 chars.
+	// We reserve len(shortID) + 1 for "-<shortID>".
+	maxBaseLen := MaxAppNameLength - 9 - len(shortID) - 1
+	if maxBaseLen < 3 {
+		maxBaseLen = 3
+	}
+	if len(sanitizedBase) > maxBaseLen {
+		sanitizedBase = strings.TrimRight(sanitizedBase[:maxBaseLen], "-")
+	}
+	if sanitizedBase == "" {
+		sanitizedBase = "app"
+	}
+
+	appName := fmt.Sprintf("fndocker.%s-%s", sanitizedBase, shortID)
 	if len(appName) > MaxAppNameLength {
-		digest := sha256.Sum256([]byte(appName))
-		hash := hex.EncodeToString(digest[:])[:6]
-		prefixLength := MaxAppNameLength - len(hash) - 1
-		appName = appName[:prefixLength] + "-" + hash
-	}
-
-	if len(appName) < MinAppNameLength {
-		appName = "fndocker.app"
+		appName = appName[:MaxAppNameLength]
 	}
 	return appName
 }
@@ -340,7 +350,11 @@ desktop_applaunchname=%s
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
 	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
-	if err := WritePackageIcons(pkgDir, cfg.IconPath, i.rootIconPath); err != nil {
+	iconCandidate := cfg.ContainerName
+	if iconCandidate == "" {
+		iconCandidate = cfg.Title
+	}
+	if err := WritePackageIcons(pkgDir, cfg.IconPath, iconCandidate); err != nil {
 		slog.Warn("写入图标警告", "error", err)
 	}
 
@@ -407,6 +421,8 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		path = item.TargetURL
 	}
 
+	slog.Info("开始构建飞牛应用安装包", "appName", appName, "title", item.Name, "port", port, "id", item.ID)
+
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
 		AppName:       appName,
 		Title:         item.Name,
@@ -429,31 +445,23 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		return nil
 	}
 
-	// If already installed, stop & uninstall first for clean update
-	if i.isAppInstalled(appName) {
-		slog.Info("应用已在系统中安装，先停止并卸载旧版本以应用更新...", "appName", appName)
-		_ = exec.Command(i.cliPath, "stop", appName).Run()
-		out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
-		if err != nil {
-			slog.Warn("卸载旧应用产生输出", "appName", appName, "output", strings.TrimSpace(string(out)))
-		}
-	}
-
 	volume := i.resolveInstallVolume()
-	slog.Info("正在通过 appcenter-cli 安装飞牛桌面应用...", "appName", appName, "volume", volume)
+	slog.Info("正在通过 appcenter-cli 执行 install-local...", "appName", appName, "title", item.Name, "volume", volume)
 
+	startInstall := time.Now()
 	cmd := exec.Command(i.cliPath, "install-local", "--volume", volume)
 	cmd.Dir = pkgDir
 	output, err := cmd.CombinedOutput()
+	duration := time.Since(startInstall)
 	outStr := strings.TrimSpace(string(output))
 	if err != nil {
-		slog.Error("appcenter-cli install-local 失败", "appName", appName, "volume", volume, "error", err, "output", outStr)
+		slog.Error("appcenter-cli install-local 失败", "appName", appName, "volume", volume, "duration", duration, "error", err, "output", outStr)
 		return fmt.Errorf("appcenter-cli install-local 失败: %w (详情: %s)", err, outStr)
 	}
-	slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "output", outStr)
+	slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration, "output", outStr)
 
 	// Wait briefly for fnOS appcenter daemon to register state
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Verify installation
 	if i.isAppInstalled(appName) {
@@ -485,11 +493,18 @@ func (i *Installer) UninstallItem(item DesktopItem) error {
 	if derived != item.AppName {
 		candidates = append(candidates, derived)
 	}
+	if item.Port > 0 {
+		candidates = append(candidates, fmt.Sprintf("fndocker.port-%d", item.Port))
+	}
 	legacy := "put-port." + sanitizeAppName(item.ID)
 	candidates = append(candidates, legacy)
 
+	seen := make(map[string]bool)
 	for _, appName := range candidates {
-		i.uninstallSingleApp(appName)
+		if !seen[appName] {
+			seen[appName] = true
+			i.uninstallSingleApp(appName)
+		}
 	}
 	return nil
 }

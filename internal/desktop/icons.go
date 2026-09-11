@@ -10,6 +10,7 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,7 +25,9 @@ var defaultIcon64Bytes []byte
 var defaultIcon256Bytes []byte
 
 // WritePackageIcons writes all required icons into the fnOS app directory.
-func WritePackageIcons(pkgDir string, customIconPathOrURL string, rootIconPath string) error {
+// customIconPathOrURL: user-provided icon path/URL/dataURI
+// fallbackCandidate: service name, container name, or title used to auto-resolve from homarr-labs CDN
+func WritePackageIcons(pkgDir string, customIconPathOrURL string, fallbackCandidate string) error {
 	imagesDir := filepath.Join(pkgDir, "app", "ui", "images")
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return err
@@ -32,14 +35,26 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, rootIconPath s
 
 	var iconImg image.Image
 
-	// 1. Try loading custom icon
+	// 1. Try loading user-provided custom icon
 	if customIconPathOrURL != "" {
-		iconImg, _ = loadIconImage(customIconPathOrURL)
+		if img, err := loadIconImage(customIconPathOrURL); err == nil && img != nil {
+			iconImg = img
+		} else {
+			slog.Debug("加载自定义图标未成功，尝试备选方案", "source", customIconPathOrURL, "error", err)
+		}
 	}
 
-	// 2. Try loading root product icon if custom icon failed or wasn't provided
-	if iconImg == nil && rootIconPath != "" {
-		iconImg, _ = loadIconImage(rootIconPath)
+	// 2. If no custom icon or failed, try auto-resolving from Homarr CDN if candidate name available
+	if iconImg == nil && fallbackCandidate != "" {
+		candidates := getIconCandidates(fallbackCandidate)
+		for _, name := range candidates {
+			cdnURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", name)
+			if img, err := loadIconImageWithTimeout(cdnURL, 2*time.Second); err == nil && img != nil {
+				iconImg = img
+				slog.Info("自动匹配并下载官方服务图标成功", "name", name, "url", cdnURL)
+				break
+			}
+		}
 	}
 
 	// 3. If loaded an image, scale and save both 64 and 256 versions
@@ -55,8 +70,56 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, rootIconPath s
 		}
 	}
 
-	// 4. Fallback to embedded default icons
+	// 4. Fallback to embedded default icons (generic container cube icon)
 	return writeIconBytes(pkgDir, imagesDir, defaultIcon64Bytes, defaultIcon256Bytes)
+}
+
+func getIconCandidates(raw string) []string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	raw = strings.TrimPrefix(raw, "/")
+
+	var candidates []string
+	clean := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		return -1
+	}, raw)
+	clean = strings.Trim(clean, "-")
+	if clean != "" {
+		candidates = append(candidates, clean)
+	}
+
+	trimmed := strings.TrimRight(clean, "0123456789-")
+	if trimmed != "" && trimmed != clean {
+		candidates = append(candidates, trimmed)
+	}
+
+	if idx := strings.Index(clean, "-"); idx > 0 {
+		candidates = append(candidates, clean[:idx])
+	}
+	return candidates
+}
+
+func loadIconImageWithTimeout(source string, timeout time.Duration) (image.Image, error) {
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Get(source)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		img, _, err := image.Decode(bytes.NewReader(data))
+		return img, err
+	}
+	return loadIconImage(source)
 }
 
 func writeIconBytes(pkgDir, imagesDir string, b64, b256 []byte) error {

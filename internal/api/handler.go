@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fn-docker-to-desktop/internal/auth"
@@ -34,6 +35,7 @@ type Handler struct {
 	procPath       string
 	iconsDir       string
 	appVersion     string
+	inFlightOps    sync.Map
 }
 
 // Config holds configuration to instantiate API Handler.
@@ -498,16 +500,26 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	id := r.PathValue("id")
+	if _, loaded := h.inFlightOps.LoadOrStore(id, true); loaded {
+		slog.Warn("桌面图标正在处理中，拒绝重复请求", "id", id)
+		h.jsonResponse(w, r, map[string]string{"error": "该桌面图标正在处理中，请勿频繁点击"}, http.StatusConflict)
+		return
+	}
+	defer h.inFlightOps.Delete(id)
+
 	item, ok := h.storage.GetItem(id)
 	if !ok {
 		h.jsonResponse(w, r, map[string]string{"error": "未找到指定图标"}, http.StatusNotFound)
 		return
 	}
 
-	item.Enabled = !item.Enabled
-	slog.Info("收到切换桌面图标状态请求", "id", id, "name", item.Name, "enabled", item.Enabled)
-	if item.AppName == "" {
-		item.AppName = h.installer.DeriveAppName(item)
+	targetState := !item.Enabled
+	slog.Info("收到切换桌面图标状态请求", "id", id, "name", item.Name, "当前状态", item.Enabled, "目标状态", targetState)
+
+	item.Enabled = targetState
+	expectedAppName := h.installer.DeriveAppName(item)
+	if item.AppName != expectedAppName {
+		item.AppName = expectedAppName
 	}
 
 	if item.Enabled {
@@ -515,7 +527,7 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 			_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
 		}
 		if err := h.installer.InstallItem(item); err != nil {
-			slog.Error("启用飞牛桌面应用失败", "appName", item.AppName, "error", err)
+			slog.Error("启用飞牛桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
 			h.jsonResponse(w, r, map[string]string{"error": "启用桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
 			return
 		}
@@ -529,6 +541,7 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	_ = h.storage.SaveItem(item)
+	slog.Info("桌面图标状态切换成功", "id", id, "name", item.Name, "enabled", item.Enabled, "appName", item.AppName)
 	h.jsonResponse(w, r, item, http.StatusOK)
 }
 
