@@ -331,14 +331,15 @@ desktop_applaunchname=%s
 		"title":     title,
 		"icon":      "images/icon-{0}.png",
 		"type":      uiType,
-		"url":       urlPath,
 		"allUsers":  cfg.AllUsers,
 		"noDisplay": false,
 	}
 
-	if isExternalURL {
-		// External pure URL shortcut: do NOT include protocol or port in entryMap, ensure type is url
+	if cfg.Port == 0 && isExternalURL {
+		// CGI redirect mode strictly aligned with WatchCow
 		entryMap["type"] = "url"
+		entryMap["protocol"] = "http"
+		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", cfg.AppName, cfg.AppName)
 	} else {
 		if proto == "" {
 			proto = "http"
@@ -347,6 +348,7 @@ desktop_applaunchname=%s
 		if portStr != "" {
 			entryMap["port"] = portStr
 		}
+		entryMap["url"] = urlPath
 	}
 
 	uiConfigMap := map[string]interface{}{
@@ -365,6 +367,64 @@ desktop_applaunchname=%s
 	}
 	// Also write to ui/config for desktop_uidir=ui compatibility
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
+
+	// Write index.cgi for CGI redirect mode
+	if cfg.Port == 0 && isExternalURL {
+		cgiScript := fmt.Sprintf(`#!/bin/bash
+# CGI redirect for fn-docker-to-desktop
+MAIN_BIN=""
+for candidate in \
+    "${TRIM_APPDEST}/../fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/app/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop"; do
+    if [ -x "${candidate}" ]; then
+        MAIN_BIN="${candidate}"
+        break
+    fi
+done
+
+SOCKET=""
+for s in \
+    "${TRIM_PKGVAR}/../fn-docker-to-desktop/app.sock" \
+    "/tmp/fn-docker-to-desktop.sock" \
+    "/var/apps/fn-docker-to-desktop/target/app.sock" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"; do
+    if [ -S "${s}" ]; then
+        SOCKET="${s}"
+        break
+    fi
+done
+
+if [ -n "${MAIN_BIN}" ] && [ -n "${SOCKET}" ]; then
+    exec "${MAIN_BIN}" --mode cgi --socket "${SOCKET}"
+fi
+
+echo "Content-Type: text/html; charset=utf-8"
+echo ""
+cat << 'EOFCGIHTML'
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=%s">
+<title>正在跳转...</title>
+<script>
+window.location.replace("%s");
+</script>
+</head>
+<body>
+<p>正在跳转至 <a href="%s">%s</a>...</p>
+</body>
+</html>
+EOFCGIHTML
+exit 0
+`, urlPath, urlPath, urlPath, urlPath)
+
+		_ = os.WriteFile(filepath.Join(pkgDir, "app", "ui", "index.cgi"), []byte(cgiScript), 0755)
+		_ = os.WriteFile(filepath.Join(pkgDir, "ui", "index.cgi"), []byte(cgiScript), 0755)
+	}
 
 	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
 	if err := WritePackageIcons(pkgDir, cfg.IconPath, i.iconsDir, cfg.Image, cfg.ContainerName, cfg.Title); err != nil {
@@ -399,7 +459,11 @@ esac
 		"config_init", "config_callback",
 	}
 	for _, s := range cmdScripts {
-		if err := os.WriteFile(filepath.Join(pkgDir, "cmd", s), []byte(emptyScript), 0755); err != nil {
+		content := emptyScript
+		if s == "install_callback" && cfg.Port == 0 && isExternalURL {
+			content = "#!/bin/bash\nif [ -f \"${TRIM_APPDEST}/ui/index.cgi\" ]; then\n  chmod +x \"${TRIM_APPDEST}/ui/index.cgi\"\nfi\nexit 0\n"
+		}
+		if err := os.WriteFile(filepath.Join(pkgDir, "cmd", s), []byte(content), 0755); err != nil {
 			_ = os.RemoveAll(pkgDir)
 			return "", err
 		}
@@ -479,16 +543,12 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	cmd.Dir = pkgDir
 	output, err := cmd.CombinedOutput()
 	duration := time.Since(startInstall)
-	outStr := cleanCliOutput(output)
 	if err != nil {
+		outStr := cleanCliOutput(output)
 		slog.Error("appcenter-cli install-local 失败", "appName", appName, "volume", volume, "duration", duration, "error", err, "output", outStr)
 		return fmt.Errorf("appcenter-cli install-local 失败: %w (详情: %s)", err, outStr)
 	}
-	if outStr != "" {
-		slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration, "output", outStr)
-	} else {
-		slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration)
-	}
+	slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration)
 
 	// Wait briefly for fnOS appcenter daemon to register state
 	time.Sleep(500 * time.Millisecond)
@@ -563,6 +623,231 @@ func (i *Installer) PruneOrphanApps(activeApps map[string]bool) error {
 	return nil
 }
 
+// findInstalledAppDir returns the directory where the installed app resides.
+func (i *Installer) findInstalledAppDir(appName string) string {
+	candidates := []string{
+		filepath.Join("/var/apps", appName, "target"),
+		filepath.Join("/var/apps", appName),
+		filepath.Join("/usr/local/apps/@appcenter", appName),
+		filepath.Join("/host/root/var/apps", appName, "target"),
+		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
+// RefreshInstalledApp updates an already installed fnOS shortcut's ui/config, index.cgi, and icon files in place on disk.
+func (i *Installer) RefreshInstalledApp(item DesktopItem) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	appName := item.AppName
+	if appName == "" {
+		appName = i.DeriveAppName(item)
+	}
+
+	appDirs := []string{
+		filepath.Join("/var/apps", appName, "target"),
+		filepath.Join("/var/apps", appName),
+		filepath.Join("/usr/local/apps/@appcenter", appName),
+		filepath.Join("/host/root/var/apps", appName, "target"),
+		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
+	}
+
+	var foundDirs []string
+	for _, d := range appDirs {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			foundDirs = append(foundDirs, d)
+		}
+	}
+
+	if len(foundDirs) == 0 {
+		return fmt.Errorf("未找到应用安装目录: %s", appName)
+	}
+
+	slog.Info("正在原地快速更新桌面应用配置与图标...", "appName", appName, "title", item.Name)
+
+	title := item.Name
+	if title == "" {
+		title = "桌面应用"
+	}
+	uiType := item.UIType
+	if uiType == "" {
+		uiType = "url"
+	}
+
+	isExternal := item.Mode == ModeShortcut || (item.Port == 0 && (strings.HasPrefix(item.TargetURL, "http://") || strings.HasPrefix(item.TargetURL, "https://")))
+	targetURL := strings.TrimSpace(item.TargetURL)
+	if isExternal && !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+
+	entryMap := map[string]interface{}{
+		"title":     title,
+		"icon":      "images/icon-{0}.png",
+		"type":      uiType,
+		"allUsers":  item.AllUsers,
+		"noDisplay": false,
+	}
+
+	if isExternal {
+		entryMap["type"] = "url"
+		entryMap["protocol"] = "http"
+		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", appName, appName)
+	} else {
+		proto := item.Protocol
+		if proto == "" {
+			proto = "http"
+		}
+		entryMap["protocol"] = proto
+		if item.Port > 0 {
+			entryMap["port"] = strconv.Itoa(item.Port)
+		}
+		p := item.Path
+		if p == "" {
+			p = "/"
+		}
+		entryMap["url"] = p
+	}
+
+	uiConfigMap := map[string]interface{}{
+		".url": map[string]interface{}{
+			appName: entryMap,
+		},
+	}
+	uiJson, err := json.MarshalIndent(uiConfigMap, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	for _, dir := range foundDirs {
+		// Update ui/config and app/ui/config
+		_ = os.MkdirAll(filepath.Join(dir, "ui"), 0755)
+		_ = os.WriteFile(filepath.Join(dir, "ui", "config"), uiJson, 0644)
+		if fi, err := os.Stat(filepath.Join(dir, "app", "ui")); err == nil && fi.IsDir() {
+			_ = os.WriteFile(filepath.Join(dir, "app", "ui", "config"), uiJson, 0644)
+		}
+
+		// Update index.cgi if external
+		if isExternal {
+			cgiScript := fmt.Sprintf(`#!/bin/bash
+# CGI redirect for fn-docker-to-desktop
+MAIN_BIN=""
+for candidate in \
+    "${TRIM_APPDEST}/../fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/app/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop"; do
+    if [ -x "${candidate}" ]; then
+        MAIN_BIN="${candidate}"
+        break
+    fi
+done
+
+SOCKET=""
+for s in \
+    "${TRIM_PKGVAR}/../fn-docker-to-desktop/app.sock" \
+    "/tmp/fn-docker-to-desktop.sock" \
+    "/var/apps/fn-docker-to-desktop/target/app.sock" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"; do
+    if [ -S "${s}" ]; then
+        SOCKET="${s}"
+        break
+    fi
+done
+
+if [ -n "${MAIN_BIN}" ] && [ -n "${SOCKET}" ]; then
+    exec "${MAIN_BIN}" --mode cgi --socket "${SOCKET}"
+fi
+
+echo "Content-Type: text/html; charset=utf-8"
+echo ""
+cat << 'EOFCGIHTML'
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=%s">
+<title>正在跳转...</title>
+<script>
+window.location.replace("%s");
+</script>
+</head>
+<body>
+<p>正在跳转至 <a href="%s">%s</a>...</p>
+</body>
+</html>
+EOFCGIHTML
+exit 0
+`, targetURL, targetURL, targetURL, targetURL)
+
+			_ = os.WriteFile(filepath.Join(dir, "ui", "index.cgi"), []byte(cgiScript), 0755)
+			if fi, err := os.Stat(filepath.Join(dir, "app", "ui")); err == nil && fi.IsDir() {
+				_ = os.WriteFile(filepath.Join(dir, "app", "ui", "index.cgi"), []byte(cgiScript), 0755)
+			}
+		}
+
+		// Update icons
+		_ = WritePackageIcons(dir, item.Icon, i.iconsDir, item.Image, item.ContainerName, item.Name)
+	}
+
+	// Trigger quick restart via appcenter-cli to reload ui/config into fnOS desktop cache
+	if i.hasAppcenterCLI {
+		go func(cli, name string) {
+			_ = exec.Command(cli, "restart", name).Run()
+		}(i.cliPath, appName)
+	}
+
+	slog.Info("桌面应用原地更新完成", "appName", appName, "title", item.Name)
+	return nil
+}
+
+// RefreshAllInstalledItems refreshes all items upon startup or overwrite installation.
+func (i *Installer) RefreshAllInstalledItems(items []DesktopItem) {
+	if !i.HasCLI() {
+		return
+	}
+
+	slog.Info("开始自动刷新全量桌面应用配置与图标...", "total", len(items))
+	activeApps := make(map[string]bool)
+
+	for _, item := range items {
+		appName := item.AppName
+		if appName == "" {
+			appName = i.DeriveAppName(item)
+		}
+		if appName != "" {
+			activeApps[appName] = true
+		}
+
+		if !item.Enabled {
+			continue
+		}
+
+		// Try fast in-place refresh if already installed
+		if err := i.RefreshInstalledApp(item); err == nil {
+			slog.Info("已原地快速刷新已安装应用", "appName", appName, "title", item.Name)
+		} else if !i.IsAppInstalled(appName) {
+			// Not installed yet, perform full install
+			slog.Info("检测到未安装应用，正在执行初始安装...", "appName", appName, "title", item.Name)
+			if err := i.InstallItem(item); err != nil {
+				slog.Warn("初始安装应用失败", "appName", appName, "error", err)
+			}
+		}
+	}
+
+	// Prune any leftovers
+	if err := i.PruneOrphanApps(activeApps); err != nil {
+		slog.Debug("清理历史孤立图标完成或无孤立应用", "error", err)
+	}
+	slog.Info("全量桌面应用检查与刷新完毕")
+}
+
 // UninstallItem unregisters a DesktopItem from fnOS.
 func (i *Installer) UninstallItem(item DesktopItem) error {
 	i.mu.Lock()
@@ -610,16 +895,12 @@ func (i *Installer) uninstallSingleApp(appName string) error {
 	slog.Info("正在通过 appcenter-cli 停止并卸载桌面应用...", "appName", appName)
 	_ = exec.Command(i.cliPath, "stop", appName).Run()
 	out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
-	outStr := cleanCliOutput(out)
 	if err != nil {
-		slog.Warn("卸载应用产生输出", "appName", appName, "output", outStr, "error", err)
+		outStr := cleanCliOutput(out)
+		slog.Warn("卸载应用产生异常", "appName", appName, "output", outStr, "error", err)
 		return err
 	}
-	if outStr != "" {
-		slog.Info("成功注销桌面应用", "appName", appName, "output", outStr)
-	} else {
-		slog.Info("成功注销桌面应用", "appName", appName)
-	}
+	slog.Info("成功注销桌面应用", "appName", appName)
 	return nil
 }
 
@@ -640,10 +921,19 @@ func cleanCliOutput(output []byte) string {
 }
 
 func isCliSpinnerLine(s string) bool {
-	if strings.Contains(s, "Verifying files") {
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, "verifying files") ||
+		strings.Contains(lower, "installing") ||
+		strings.Contains(lower, "starting") ||
+		strings.Contains(lower, "stopping") ||
+		strings.Contains(lower, "uninstalling") ||
+		strings.Contains(lower, "installation complete") {
 		return true
 	}
 	if len(s) <= 2 && strings.ContainsAny(s, "|/\\-") {
+		return true
+	}
+	if len(s) >= 2 && (s[0] == '/' || s[0] == '\\' || s[0] == '|' || s[0] == '-') && (s[1] == ' ' || s[1] == '\t') {
 		return true
 	}
 	return false

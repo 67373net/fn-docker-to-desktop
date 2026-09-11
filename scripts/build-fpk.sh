@@ -9,11 +9,20 @@ ARCH="${1:-x86}"
 
 echo "=== 开始构建 飞牛OS (fnOS) .fpk 原生安装包 [${ARCH}] ==="
 
-# 1. 确保目录结构
+# 1. 确保目录结构并同步根目录权威高清产品图标
 mkdir -p "${FNOS_APP_DIR}/app/ui/images"
 mkdir -p "${FNOS_APP_DIR}/cmd"
 mkdir -p "${FNOS_APP_DIR}/config"
 mkdir -p "${FNOS_APP_DIR}/wizard"
+
+if [ -f "${ROOT_DIR}/icon.png" ]; then
+  echo "--> 正在同步根目录权威高清产品图标至 web/ 与 fnos-app/ ..."
+  cp "${ROOT_DIR}/icon.png" "${ROOT_DIR}/web/icon.png"
+  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON.PNG"
+  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON_256.PNG"
+  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-64.png"
+  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-256.png"
+fi
 
 # 2. 编译 Linux 原生二进制
 echo "--> 正在编译应用原生二进制 (${ARCH})..."

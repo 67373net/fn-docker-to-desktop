@@ -151,6 +151,18 @@ func (s *Storage) GetItem(id string) (DesktopItem, bool) {
 	return item, ok
 }
 
+// GetItemByAppName finds a desktop item by its fnOS AppName.
+func (s *Storage) GetItemByAppName(appName string) (DesktopItem, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, it := range s.items {
+		if it.AppName == appName {
+			return it, true
+		}
+	}
+	return DesktopItem{}, false
+}
+
 // SaveItem saves or updates a desktop item.
 func (s *Storage) SaveItem(item DesktopItem) error {
 	s.mu.Lock()

@@ -870,32 +870,6 @@ function initModals() {
     });
   }
 
-  // Icon preset chips click listener
-  document.querySelectorAll('.icon-chip').forEach(chip => {
-    chip.addEventListener('click', async () => {
-      const iconName = chip.dataset.icon;
-      if (!iconName) return;
-      reportClientLog('action', '用户选择预置官方图标', `图标: ${iconName}`, { iconName });
-      const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
-      const elIcon = document.getElementById('item-icon');
-      const imgEl = document.getElementById('icon-preview-img');
-      const nameEl = document.getElementById('icon-preview-name');
-      if (elIcon) elIcon.value = cdnUrl;
-      if (imgEl) imgEl.src = cdnUrl;
-      if (nameEl) nameEl.textContent = `${iconName}.png (官方图标)`;
-
-      // Try converting to Data URL so the payload is 100% offline-ready
-      try {
-        const dataUrl = await loadAndConvertUrlToDataUrl(cdnUrl);
-        if (dataUrl && dataUrl.startsWith('data:') && elIcon && elIcon.value === cdnUrl) {
-          elIcon.value = dataUrl;
-        }
-      } catch (err) {
-        // Keep cdnUrl as fallback
-      }
-    });
-  });
-
   // Icon input URL preview
   const elIcon = document.getElementById('item-icon');
   if (elIcon) {
@@ -1537,82 +1511,40 @@ async function handleRecommendPort() {
   }
 }
 
-function convertFileToPngDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 256;
-          canvas.height = 256;
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, 256, 256);
-          const scale = Math.min(256 / img.width, 256 / img.height);
-          const w = img.width * scale;
-          const h = img.height * scale;
-          const x = (256 - w) / 2;
-          const y = (256 - h) / 2;
-          ctx.drawImage(img, x, y, w, h);
-          resolve(canvas.toDataURL('image/png'));
-        } catch (err) {
-          resolve(e.target.result);
-        }
-      };
-      img.onerror = () => resolve(e.target.result);
-      img.src = e.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function loadAndConvertUrlToDataUrl(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, 256, 256);
-        ctx.drawImage(img, 0, 0, 256, 256);
-        resolve(canvas.toDataURL('image/png'));
-      } catch (e) {
-        resolve(url);
-      }
-    };
-    img.onerror = () => resolve(url);
-    img.src = url;
-  });
-}
-
 async function handleIconUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
   reportClientLog('action', '用户上传本地图标文件', `文件名: ${file.name}, 大小: ${file.size}字节`, { name: file.name, size: file.size, type: file.type });
 
-  try {
-    const pngDataUrl = await convertFileToPngDataUrl(file);
-    document.getElementById('item-icon').value = pngDataUrl;
-    document.getElementById('icon-preview-img').src = pngDataUrl;
-    document.getElementById('icon-preview-name').textContent = file.name;
-    showToast(`本地图标「${file.name}」已加载`, 'success');
-  } catch (err) {
-    console.warn('Canvas conversion failed, fallback to direct upload', err);
-  }
+  const elIcon = document.getElementById('item-icon');
+  const imgEl = document.getElementById('icon-preview-img');
+  const nameEl = document.getElementById('icon-preview-name');
 
-  // Also upload file to server cache in background
+  if (nameEl) nameEl.textContent = '正在上传图标...';
+
   const formData = new FormData();
   formData.append('icon', file);
-  fetch(apiUrl('/api/icons/upload'), {
-    method: 'POST',
-    body: formData,
-  }).catch(() => {});
+
+  try {
+    const res = await fetch(apiUrl('/api/icons/upload'), {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (res.ok && data.url) {
+      if (elIcon) elIcon.value = data.url;
+      if (imgEl) imgEl.src = apiUrl(data.url);
+      if (nameEl) nameEl.textContent = file.name;
+      showToast(`本地图标「${file.name}」已成功保存`, 'success');
+    } else {
+      if (nameEl) nameEl.textContent = '上传失败';
+      showToast(data.error || '上传图标失败', 'error');
+    }
+  } catch (err) {
+    if (nameEl) nameEl.textContent = '网络异常';
+    showToast('上传图标网络异常: ' + err.message, 'error');
+  }
 }
 
 let settingsAutoSaveTimer = null;

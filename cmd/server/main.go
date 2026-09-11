@@ -17,6 +17,7 @@ import (
 
 	"fn-docker-to-desktop/internal/api"
 	"fn-docker-to-desktop/internal/auth"
+	"fn-docker-to-desktop/internal/cgi"
 	"fn-docker-to-desktop/internal/desktop"
 	"fn-docker-to-desktop/internal/logger"
 	"fn-docker-to-desktop/internal/monitor"
@@ -24,15 +25,26 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.4"
+const appVersion = "1.1.5"
 
 func main() {
+	modeFlag := flag.String("mode", "server", "Run mode: server or cgi")
 	portFlag := flag.Int("port", 0, "Server port (default: from settings or env PORT or 5900)")
 	hostFlag := flag.String("host", "", "Server host (default: from env HOST or 0.0.0.0)")
 	dataDirFlag := flag.String("data", "data", "Data directory")
 	iconPathFlag := flag.String("icon", "icon.png", "Product icon path")
 	socketFlag := flag.String("socket", "", "Unix domain socket path for fnOS unified gateway")
 	flag.Parse()
+
+	// If running in CGI mode (e.g. from fnOS desktop shortcut via ui/index.cgi)
+	if *modeFlag == "cgi" || os.Getenv("GATEWAY_INTERFACE") != "" {
+		actualSocket := *socketFlag
+		if actualSocket == "" {
+			actualSocket = "/tmp/fn-docker-to-desktop.sock"
+		}
+		cgi.RunCGI(actualSocket)
+		return
+	}
 
 	// 1. Initialize 8-day rolling logger with auto-pruning
 	logInst, err := logger.Init(*dataDirFlag, 8)
@@ -257,6 +269,10 @@ func main() {
 			_ = os.Chmod(socketPath, 0666)
 			sockLn = sl
 			slog.Info("飞牛统一网关 Unix Socket 监听就绪", "socket", socketPath)
+			if socketPath != "/tmp/fn-docker-to-desktop.sock" {
+				_ = os.Remove("/tmp/fn-docker-to-desktop.sock")
+				_ = os.Symlink(socketPath, "/tmp/fn-docker-to-desktop.sock")
+			}
 		} else {
 			slog.Warn("飞牛统一网关 Unix Socket 创建失败", "socket", socketPath, "error", sockErr)
 		}
@@ -290,35 +306,14 @@ func main() {
 		}()
 	}
 
-	// Background startup reconciliation: ensure all active desktop items are registered,
-	// missing items are reinstalled, and old orphaned items are pruned.
+	// Background startup reconciliation:
+	// Automatically refresh all existing desktop items (covers overwrite installation),
+	// install any missing enabled apps, and prune old orphan shortcuts.
 	if installer.HasCLI() {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
 			items := storage.GetAllItems()
-			slog.Info("后台自动检查桌面图标注册状态...", "count", len(items))
-
-			activeApps := make(map[string]bool)
-			for _, item := range items {
-				if item.AppName != "" {
-					activeApps[item.AppName] = true
-				}
-				if item.Enabled {
-					if !installer.IsAppInstalled(item.AppName) {
-						slog.Info("检测到未安装的已启用桌面图标，正在补齐安装...", "appName", item.AppName, "name", item.Name)
-						if err := installer.InstallItem(item); err != nil {
-							slog.Warn("自动补齐桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
-						} else {
-							slog.Info("自动补齐桌面应用成功", "appName", item.AppName, "name", item.Name)
-						}
-					}
-				}
-			}
-
-			// Automatically prune any leftover orphan shortcuts from previous updates or renames
-			if err := installer.PruneOrphanApps(activeApps); err != nil {
-				slog.Debug("清理历史孤立图标完成或无孤立应用", "error", err)
-			}
+			installer.RefreshAllInstalledItems(items)
 		}()
 	}
 
@@ -337,6 +332,7 @@ func main() {
 		if socketPath != "" {
 			_ = os.Remove(socketPath)
 		}
+		_ = os.Remove("/tmp/fn-docker-to-desktop.sock")
 	}
 
 	slog.Info("服务已安全退出")

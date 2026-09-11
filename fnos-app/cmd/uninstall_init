@@ -33,44 +33,56 @@ fi
 
 log_msg "检测 appcenter-cli 路径: ${CLI:-未找到}"
 
-# 2. 如果存在 appcenter-cli，清理所有由本程序创建的桌面子应用 (fndocker.* 或 put-port.*)
+# 2. 如果存在 appcenter-cli，快速清理所有由本程序创建的桌面子应用 (fndocker.* 或 put-port.*)
 if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
-    # 从数据文件读取已记录的应用包名
     DATA_DIRS=(
         "${TRIM_PKGVAR}/data"
         "/usr/local/apps/@appdata/fn-docker-to-desktop/data"
         "/var/apps/fn-docker-to-desktop/var/data"
         "/var/apps/fn-docker-to-desktop/target/data"
     )
+
+    RAW_APPS=""
     for d in "${DATA_DIRS[@]}"; do
         json_file="${d}/desktop_items.json"
         if [ -f "${json_file}" ]; then
-            log_msg "正在从 ${json_file} 读取已创建应用包名..."
-            app_list=$(grep -oE '"app_name"\s*:\s*"[^"]+"' "${json_file}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
-            for app in ${app_list}; do
-                if [ -n "${app}" ] && [ "${app}" != "null" ]; then
-                    log_msg "正在注销子应用 (from items.json): ${app}"
-                    "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
-                    "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
-                fi
-            done
+            apps=$(grep -oE '"app_name"\s*:\s*"[^"]+"' "${json_file}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+            RAW_APPS="${RAW_APPS} ${apps}"
         fi
     done
 
-    # 进一步从 appcenter-cli list 扫描所有未卸载的 fndocker.* 和 put-port.* 应用
-    log_msg "正在通过 appcenter-cli list 扫描残留桌面子应用..."
-    matched_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
-    for app in ${matched_apps}; do
-        if [ -n "${app}" ]; then
-            log_msg "正在注销残留子应用 (from cli list): ${app}"
-            "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
-            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
-        fi
-    done
+    # 从 cli list 扫描残留应用
+    cli_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' || true)
+    RAW_APPS="${RAW_APPS} ${cli_apps}"
+
+    # 去重
+    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -v '^$' | sort -u || true)
+
+    if [ -n "${UNIQUE_APPS}" ]; then
+        log_msg "发现待清理子应用列表: ${UNIQUE_APPS}"
+
+        # 核心优化 1：并发执行 stop，在 0.5 秒内使桌面所有图标瞬间消失！
+        for app in ${UNIQUE_APPS}; do
+            log_msg "立即并发停止应用: ${app}"
+            "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 &
+        done
+        wait
+        log_msg "所有子应用图标已在桌面瞬间隐藏"
+
+        # 核心优化 2：后台异步并发执行 uninstall，不阻塞应用中心卸载流程
+        (
+            for app in ${UNIQUE_APPS}; do
+                log_msg "后台注销应用: ${app}"
+                "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+            done
+            log_msg "后台子应用注销完成"
+        ) >/dev/null 2>&1 &
+    fi
 fi
 
-# 3. 清理临时打包目录
+# 3. 清理临时打包目录与 socket
 rm -rf /tmp/fndocker_* 2>/dev/null || true
+rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true
 
-log_msg "=== 卸载清理完成 ==="
+log_msg "=== 卸载清理完成 (瞬间隐藏完成) ==="
 exit 0

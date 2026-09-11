@@ -4,9 +4,12 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"html"
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -106,6 +109,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /icons/{filename}", h.handleServeIcon)
 
 	mux.HandleFunc("GET /redirect", h.handleRedirect)
+	mux.HandleFunc("GET /redirect/", h.handleRedirect)
+	mux.HandleFunc("GET /api/redirect", h.handleRedirect)
+	mux.HandleFunc("GET /api/redirect/", h.handleRedirect)
 
 	// Auth routes
 	mux.HandleFunc("GET /api/auth/status", h.handleAuthStatus)
@@ -630,11 +636,20 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	if item.Enabled {
-		slog.Info("[API] 正在更新/重新安装飞牛桌面应用...", "appName", item.AppName, "name", item.Name)
-		if err := h.installer.InstallItem(item); err != nil {
-			slog.Error("[API] 更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
-			h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
-			return
+		slog.Info("[API] 正在更新飞牛桌面应用...", "appName", item.AppName, "name", item.Name)
+		refreshed := false
+		if oldAppName == item.AppName && h.installer.IsAppInstalled(item.AppName) {
+			if err := h.installer.RefreshInstalledApp(item); err == nil {
+				refreshed = true
+				slog.Info("[API] 原地快速更新飞牛桌面应用成功", "appName", item.AppName)
+			}
+		}
+		if !refreshed {
+			if err := h.installer.InstallItem(item); err != nil {
+				slog.Error("[API] 更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
+				h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
+				return
+			}
 		}
 		item.Installed = true
 	} else {
@@ -998,17 +1013,78 @@ func (h *Handler) handleServeIcon(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, iconPath)
 }
 
-// /redirect?target=...
+// /redirect or /api/redirect: supports target query param and WatchCow CGI path: /redirect/<appName>/_
 func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("target")
 	if target == "" {
+		target = r.URL.Query().Get("url")
+	}
+
+	// If no query parameter, parse path: /redirect/<appName>/_ or /redirect/<appName>
+	if target == "" {
+		pathInfo := r.URL.Path
+		if idx := strings.Index(pathInfo, "/redirect/"); idx != -1 {
+			pathInfo = pathInfo[idx+len("/redirect/"):]
+		} else if idx := strings.Index(pathInfo, "/redirect"); idx != -1 {
+			pathInfo = pathInfo[idx+len("/redirect"):]
+		}
+		pathInfo = strings.TrimPrefix(pathInfo, "/")
+		parts := strings.Split(pathInfo, "/")
+		if len(parts) > 0 && parts[0] != "" {
+			appName := parts[0]
+			if item, ok := h.storage.GetItemByAppName(appName); ok {
+				if item.TargetURL != "" {
+					target = item.TargetURL
+				} else if item.Port > 0 {
+					proto := item.Protocol
+					if proto == "" {
+						proto = "http"
+					}
+					p := item.Path
+					if p == "" {
+						p = "/"
+					}
+					host := r.Host
+					if hName, _, err := net.SplitHostPort(host); err == nil {
+						host = hName
+					}
+					target = fmt.Sprintf("%s://%s:%d%s", proto, host, item.Port, p)
+				}
+			}
+		}
+	}
+
+	if target == "" {
+		slog.Warn("[AUDIT] 桌面图标跳转缺少目标地址", "path", r.URL.Path, "query", r.URL.RawQuery, "remote", r.RemoteAddr)
 		http.Error(w, "缺少跳转目标 target", http.StatusBadRequest)
 		return
 	}
+
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		target = "http://" + target
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+
+	slog.Info("[AUDIT] 桌面快捷方式跳转触发", "target", target, "path", r.URL.Path, "remote", r.RemoteAddr)
+
+	w.Header().Set("Location", target)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusFound)
+
+	escapedTarget := html.EscapeString(target)
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="0; url=%s">
+    <title>正在跳转...</title>
+    <script>
+        window.location.replace("%s");
+    </script>
+</head>
+<body>
+    <p>正在跳转至 <a href="%s">%s</a>...</p>
+</body>
+</html>`, escapedTarget, template.JSEscapeString(target), escapedTarget, escapedTarget)
 }
 
 // Auth handlers
