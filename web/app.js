@@ -381,7 +381,6 @@ function renderPortsTable() {
       desktopCell = `
         <div class="desktop-btn-group">
           <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
             <span>已在桌面(${count})</span>
           </button>
           <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
@@ -391,7 +390,6 @@ function renderPortsTable() {
     } else {
       desktopCell = `
         <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
           <span>放到桌面</span>
         </button>`;
     }
@@ -417,7 +415,6 @@ function renderPortsTable() {
       <td>
         <div class="table-actions">
           <button class="btn btn-sm btn-secondary btn-view-port-detail" data-port="${p.local_port}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
             <span>详情</span>
           </button>
         </div>
@@ -518,14 +515,14 @@ function renderDesktopTable() {
         </span>
       </div>`;
 
-    const iconSrc = item.icon ? (item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`)) : apiUrl('/icon.png');
+    const iconSrc = item.icon ? (item.icon.startsWith('http') || item.icon.startsWith('data:') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`)) : apiUrl('/icon.png');
 
     let statusColHtml = toggleHtml;
     if (item._updating) {
       statusColHtml = `
         <div class="status-updating-badge">
           <span class="spinner-small"></span>
-          <span>正在更新中...</span>
+          <span>${escapeHtml(item._statusText || '正在更新中...')}</span>
         </div>`;
     }
 
@@ -544,12 +541,7 @@ function renderDesktopTable() {
       <td>
         <div class="table-actions">
           <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             <span>编辑</span>
-          </button>
-          <button class="btn btn-sm btn-danger btn-delete-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-            <span>移出桌面</span>
           </button>
         </div>
       </td>
@@ -609,17 +601,6 @@ function renderDesktopTable() {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
       openEditDesktopModal(id);
-    });
-  });
-
-  tbody.querySelectorAll('.btn-delete-desktop').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      if (confirm('确定从飞牛桌面移出此图标吗？')) {
-        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
-        await fetchDesktopItems();
-        await fetchPorts();
-      }
     });
   });
 }
@@ -780,16 +761,26 @@ function initModals() {
 
   // Icon preset chips click listener
   document.querySelectorAll('.icon-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
+    chip.addEventListener('click', async () => {
       const iconName = chip.dataset.icon;
       if (!iconName) return;
-      const cdnUrl = `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
+      const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
       const elIcon = document.getElementById('item-icon');
-      if (elIcon) elIcon.value = cdnUrl;
       const imgEl = document.getElementById('icon-preview-img');
-      if (imgEl) imgEl.src = cdnUrl;
       const nameEl = document.getElementById('icon-preview-name');
+      if (elIcon) elIcon.value = cdnUrl;
+      if (imgEl) imgEl.src = cdnUrl;
       if (nameEl) nameEl.textContent = `${iconName}.png (官方图标)`;
+
+      // Try converting to Data URL so the payload is 100% offline-ready
+      try {
+        const dataUrl = await loadAndConvertUrlToDataUrl(cdnUrl);
+        if (dataUrl && dataUrl.startsWith('data:') && elIcon && elIcon.value === cdnUrl) {
+          elIcon.value = dataUrl;
+        }
+      } catch (err) {
+        // Keep cdnUrl as fallback
+      }
     });
   });
 
@@ -880,6 +871,11 @@ function resetDesktopForm() {
   if (btnSaveAsNew) btnSaveAsNew.style.display = 'none';
   const btnSave = document.getElementById('btn-save-desktop-item');
   if (btnSave) btnSave.textContent = '保存并放到桌面';
+  const btnDel = document.getElementById('btn-delete-from-modal');
+  if (btnDel) {
+    btnDel.style.display = 'none';
+    btnDel.onclick = null;
+  }
   setDesktopModalMode('local');
 }
 
@@ -915,7 +911,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   if (iconCandidate) {
     const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
     if (cleanName) {
-      const cdnUrl = `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
+      const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
       document.getElementById('item-icon').value = cdnUrl;
       const imgEl = document.getElementById('icon-preview-img');
       imgEl.src = cdnUrl;
@@ -925,6 +921,12 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
         document.getElementById('icon-preview-name').textContent = '默认容器图标';
       };
       document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
+      loadAndConvertUrlToDataUrl(cdnUrl).then(dataUrl => {
+        const elIcon = document.getElementById('item-icon');
+        if (dataUrl && dataUrl.startsWith('data:') && elIcon && elIcon.value === cdnUrl) {
+          elIcon.value = dataUrl;
+        }
+      }).catch(() => {});
     }
   }
 
@@ -963,6 +965,29 @@ function openEditDesktopModal(id) {
   const btnSave = document.getElementById('btn-save-desktop-item');
   if (btnSave) btnSave.textContent = '保存并更新桌面';
 
+  // Wire up "移出桌面" in the modal footer
+  const btnDel = document.getElementById('btn-delete-from-modal');
+  if (btnDel) {
+    btnDel.style.display = 'inline-flex';
+    btnDel.onclick = async () => {
+      if (!confirm(`确定从飞牛桌面移出图标「${item.name}」吗？`)) return;
+      closeModal('modal-desktop-item');
+      state.desktopItems = state.desktopItems.filter(i => i.id !== id);
+      updateDesktopBadge();
+      renderDesktopTable();
+      renderPortsTable();
+      showToast(`已从桌面移出「${item.name}」`, 'info');
+      try {
+        await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
+      } catch (err) {
+        showToast('移出失败: ' + err.message, 'error');
+      } finally {
+        await fetchDesktopItems();
+        await fetchPorts();
+      }
+    };
+  }
+
   if (item.mode === 'local') {
     document.getElementById('item-local-port').value = item.port || '';
     setDesktopModalMode('local');
@@ -977,9 +1002,9 @@ function openEditDesktopModal(id) {
   }
 
   if (item.icon) {
-    const src = item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`);
+    const src = item.icon.startsWith('http') || item.icon.startsWith('data:') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`);
     document.getElementById('icon-preview-img').src = src;
-    document.getElementById('icon-preview-name').textContent = item.icon;
+    document.getElementById('icon-preview-name').textContent = item.icon.startsWith('data:') ? '已保存图标 (Base64)' : item.icon;
   } else {
     document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
     document.getElementById('icon-preview-name').textContent = '默认图标';
@@ -1130,14 +1155,22 @@ async function handleSaveDesktopItem(e) {
     const existing = state.desktopItems.find(i => i.id === id);
     if (existing) {
       existing._updating = true;
+      existing._statusText = '正在更新中...';
       existing.name = name;
       existing.port = port;
       existing.app_name = appName;
       if (icon) existing.icon = icon;
     }
   } else {
-    state.desktopItems.unshift({ ...payload, _updating: true });
+    state.desktopItems.unshift({
+      ...payload,
+      _updating: true,
+      _statusText: '正在创建中...',
+      created_at: new Date().toISOString(),
+    });
   }
+  updateDesktopBadge();
+  renderPortsTable();
   renderDesktopTable();
 
   const method = id ? 'PUT' : 'POST';
@@ -1211,30 +1244,80 @@ async function handleRecommendPort() {
   }
 }
 
+function convertFileToPngDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 256;
+          canvas.height = 256;
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, 256, 256);
+          const scale = Math.min(256 / img.width, 256 / img.height);
+          const w = img.width * scale;
+          const h = img.height * scale;
+          const x = (256 - w) / 2;
+          const y = (256 - h) / 2;
+          ctx.drawImage(img, x, y, w, h);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (err) {
+          resolve(e.target.result);
+        }
+      };
+      img.onerror = () => resolve(e.target.result);
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadAndConvertUrlToDataUrl(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 256, 256);
+        ctx.drawImage(img, 0, 0, 256, 256);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) {
+        resolve(url);
+      }
+    };
+    img.onerror = () => resolve(url);
+    img.src = url;
+  });
+}
+
 async function handleIconUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
+  try {
+    const pngDataUrl = await convertFileToPngDataUrl(file);
+    document.getElementById('item-icon').value = pngDataUrl;
+    document.getElementById('icon-preview-img').src = pngDataUrl;
+    document.getElementById('icon-preview-name').textContent = file.name;
+    showToast(`本地图标「${file.name}」已加载`, 'success');
+  } catch (err) {
+    console.warn('Canvas conversion failed, fallback to direct upload', err);
+  }
+
+  // Also upload file to server cache in background
   const formData = new FormData();
   formData.append('icon', file);
-
-  try {
-    const res = await fetch(apiUrl('/api/icons/upload'), {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-    if (res.ok && data.filename) {
-      document.getElementById('item-icon').value = data.filename;
-      const previewSrc = data.url.startsWith('http') ? data.url : apiUrl(data.url);
-      document.getElementById('icon-preview-img').src = previewSrc;
-      document.getElementById('icon-preview-name').textContent = data.filename;
-    } else {
-      alert(data.error || '图标上传失败');
-    }
-  } catch (err) {
-    alert('上传异常: ' + err.message);
-  }
+  fetch(apiUrl('/api/icons/upload'), {
+    method: 'POST',
+    body: formData,
+  }).catch(() => {});
 }
 
 let settingsAutoSaveTimer = null;

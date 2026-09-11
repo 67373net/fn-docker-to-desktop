@@ -178,6 +178,12 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 
 	_ = l.rotateFileLocked()
 
+	// Filter out lone spinner progress lines
+	trimmed := strings.TrimSpace(string(p))
+	if strings.Contains(trimmed, "Verifying files") && !strings.Contains(trimmed, "appcenter-cli") {
+		return len(p), nil
+	}
+
 	// Write to stdout
 	if l.outWriter != nil {
 		_, _ = l.outWriter.Write(p)
@@ -359,7 +365,13 @@ func (l *Logger) ReadLogs(dateStr, levelFilter, search string, limit int) (*LogR
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		// Filter out terminal spinner animation lines from CLI tools
+		if strings.Contains(trimmed, "Verifying files") || (len(trimmed) <= 2 && strings.ContainsAny(trimmed, "|/\\-")) {
 			continue
 		}
 

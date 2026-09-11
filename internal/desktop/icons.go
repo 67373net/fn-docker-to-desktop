@@ -24,10 +24,18 @@ var defaultIcon64Bytes []byte
 //go:embed assets/ICON_256.PNG
 var defaultIcon256Bytes []byte
 
+var cdnMirrors = []string{
+	"https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+	"https://gcore.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+	"https://testingcf.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+	"https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+}
+
 // WritePackageIcons writes all required icons into the fnOS app directory.
-// customIconPathOrURL: user-provided icon path/URL/dataURI
-// candidates: list of candidate names (image, container name, service name, title) to auto-resolve from homarr-labs CDN
-func WritePackageIcons(pkgDir string, customIconPathOrURL string, candidates ...string) error {
+// customIconPathOrURL: user-provided icon path/URL/dataURI/base64
+// iconsDir: server icons cache directory
+// candidates: list of candidate names (image, container name, service name, title) to auto-resolve
+func WritePackageIcons(pkgDir string, customIconPathOrURL string, iconsDir string, candidates ...string) error {
 	imagesDir := filepath.Join(pkgDir, "app", "ui", "images")
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return err
@@ -36,15 +44,16 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, candidates ...
 	var iconImg image.Image
 
 	// 1. Try loading user-provided custom icon
-	if customIconPathOrURL != "" {
-		if img, err := loadIconImage(customIconPathOrURL); err == nil && img != nil {
+	if strings.TrimSpace(customIconPathOrURL) != "" {
+		if img, err := loadIconImage(customIconPathOrURL, iconsDir); err == nil && img != nil {
 			iconImg = img
+			slog.Info("成功加载并解析自定义桌面图标", "source", summarizeIconSource(customIconPathOrURL))
 		} else {
-			slog.Debug("加载自定义图标未成功，尝试备选方案", "source", customIconPathOrURL, "error", err)
+			slog.Warn("加载自定义图标失败，将尝试自动匹配官方图标", "source", summarizeIconSource(customIconPathOrURL), "error", err)
 		}
 	}
 
-	// 2. If no custom icon or failed, try auto-resolving from Homarr CDN if candidate names available
+	// 2. If no custom icon or failed, try auto-resolving from CDN mirrors if candidate names available
 	if iconImg == nil && len(candidates) > 0 {
 		var allNames []string
 		for _, raw := range candidates {
@@ -59,10 +68,9 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, candidates ...
 				continue
 			}
 			seen[name] = true
-			cdnURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", name)
-			if img, err := loadIconImageWithTimeout(cdnURL, 2*time.Second); err == nil && img != nil {
+			if img, err := fetchIconFromMirrors(name); err == nil && img != nil {
 				iconImg = img
-				slog.Info("自动匹配并下载官方服务图标成功", "name", name, "url", cdnURL)
+				slog.Info("自动匹配并成功下载官方服务图标", "name", name)
 				break
 			}
 		}
@@ -82,7 +90,23 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, candidates ...
 	}
 
 	// 4. Fallback to embedded default icons (dedicated container shortcut icon)
+	slog.Info("使用系统内置专属容器快捷方式默认图标", "pkgDir", pkgDir)
 	return writeIconBytes(pkgDir, imagesDir, defaultIcon64Bytes, defaultIcon256Bytes)
+}
+
+func summarizeIconSource(source string) string {
+	s := strings.TrimSpace(source)
+	if strings.HasPrefix(s, "data:") {
+		idx := strings.Index(s, ",")
+		if idx != -1 {
+			return fmt.Sprintf("%s (base64 %d bytes)", s[:idx], len(s)-idx)
+		}
+		return "data:image/... (base64)"
+	}
+	if len(s) > 80 {
+		return s[:40] + "..." + s[len(s)-20:]
+	}
+	return s
 }
 
 func getIconCandidates(raw string) []string {
@@ -137,7 +161,6 @@ func getIconCandidates(raw string) []string {
 
 	// 3. Raw cleaned string
 	addCandidate(raw)
-	// Strip trailing numbers/hyphens (e.g. "qbittorrent-1" -> "qbittorrent")
 	rawClean := strings.TrimRight(strings.ToLower(raw), "0123456789-_")
 	if rawClean != "" && rawClean != raw {
 		addCandidate(rawClean)
@@ -146,25 +169,145 @@ func getIconCandidates(raw string) []string {
 	return candidates
 }
 
-func loadIconImageWithTimeout(source string, timeout time.Duration) (image.Image, error) {
+func fetchIconFromMirrors(name string) (image.Image, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	var lastErr error
+	for _, tmpl := range cdnMirrors {
+		url := fmt.Sprintf(tmpl, name)
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			continue
+		}
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		img, err := decodeAnyImage(data)
+		if err == nil && img != nil {
+			return img, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("all mirrors failed: %v", lastErr)
+}
+
+func decodeAnyImage(data []byte) (image.Image, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("空图像数据")
+	}
+
+	// Check for ICO format
+	if len(data) >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0 {
+		if img, err := decodeICO(data); err == nil {
+			return img, nil
+		}
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
+func loadIconImage(source string, iconsDir string) (image.Image, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, fmt.Errorf("empty icon source")
+	}
+
+	// 1. Data URI: data:image/png;base64,...
+	if strings.HasPrefix(source, "data:") {
+		idx := strings.Index(source, ",")
+		if idx == -1 {
+			return nil, fmt.Errorf("invalid data URI")
+		}
+		base64Data := strings.TrimSpace(source[idx+1:])
+		raw, err := base64.StdEncoding.DecodeString(base64Data)
+		if err != nil {
+			// Try URL-safe encoding
+			raw, err = base64.URLEncoding.DecodeString(base64Data)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode failed: %w", err)
+		}
+		return decodeAnyImage(raw)
+	}
+
+	// 2. Raw Base64 string without data: prefix
+	if len(source) > 64 && !strings.Contains(source, " ") && !strings.Contains(source, "/") && !strings.Contains(source, ":") {
+		if raw, err := base64.StdEncoding.DecodeString(source); err == nil {
+			if img, err := decodeAnyImage(raw); err == nil {
+				return img, nil
+			}
+		}
+	}
+
+	// 3. HTTP/HTTPS URL
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		client := &http.Client{Timeout: timeout}
+		// If it's a homarr icon url on jsdelivr, try all mirrors
+		if strings.Contains(source, "homarr-labs/dashboard-icons") {
+			parts := strings.Split(source, "/")
+			iconFilename := parts[len(parts)-1]
+			iconName := strings.TrimSuffix(iconFilename, ".png")
+			if img, err := fetchIconFromMirrors(iconName); err == nil {
+				return img, nil
+			}
+		}
+
+		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Get(source)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("fetch url %q failed: %w", source, err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, source)
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-		img, _, err := image.Decode(bytes.NewReader(data))
-		return img, err
+		return decodeAnyImage(data)
 	}
-	return loadIconImage(source)
+
+	// 4. Local file paths (check multiple possible locations)
+	cleanSource := strings.TrimPrefix(source, "file://")
+	cleanSource = strings.TrimPrefix(cleanSource, "/icons/")
+	cleanSource = strings.TrimPrefix(cleanSource, "icons/")
+
+	var possiblePaths []string
+	if iconsDir != "" {
+		possiblePaths = append(possiblePaths,
+			filepath.Join(iconsDir, filepath.Base(cleanSource)),
+			filepath.Join(iconsDir, cleanSource),
+		)
+	}
+	possiblePaths = append(possiblePaths,
+		cleanSource,
+		strings.TrimPrefix(source, "file://"),
+	)
+	if dataShare := os.Getenv("TRIM_DATA_SHARE_PATHS"); dataShare != "" {
+		possiblePaths = append(possiblePaths, filepath.Join(dataShare, filepath.Base(cleanSource)))
+	}
+
+	for _, p := range possiblePaths {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			fileBytes, err := os.ReadFile(p)
+			if err == nil {
+				if img, err := decodeAnyImage(fileBytes); err == nil {
+					return img, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("未能通过任何已知路径找到或解析图标文件: %s", source)
 }
 
 func writeIconBytes(pkgDir, imagesDir string, b64, b256 []byte) error {
@@ -172,7 +315,7 @@ func writeIconBytes(pkgDir, imagesDir string, b64, b256 []byte) error {
 	_ = os.WriteFile(filepath.Join(pkgDir, "ICON.PNG"), b64, 0644)
 	_ = os.WriteFile(filepath.Join(pkgDir, "ICON_256.PNG"), b256, 0644)
 
-	// Write icons to both app/ui/images and ui/images for compatibility
+	// Write icons to both app/ui/images and ui/images for maximum compatibility
 	iconDirs := []string{imagesDir}
 	uiImagesDir := filepath.Join(pkgDir, "ui", "images")
 	if uiImagesDir != imagesDir {
@@ -181,64 +324,15 @@ func writeIconBytes(pkgDir, imagesDir string, b64, b256 []byte) error {
 	}
 
 	for _, dir := range iconDirs {
+		_ = os.WriteFile(filepath.Join(dir, "icon-64.png"), b64, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon-256.png"), b256, 0644)
+		_ = os.WriteFile(filepath.Join(dir, "icon-{0}.png"), b256, 0644)
 		_ = os.WriteFile(filepath.Join(dir, "icon_64.png"), b64, 0644)
 		_ = os.WriteFile(filepath.Join(dir, "icon_256.png"), b256, 0644)
 		_ = os.WriteFile(filepath.Join(dir, "icon_{0}.png"), b256, 0644)
-		_ = os.WriteFile(filepath.Join(dir, "icon-{0}.png"), b256, 0644)
-		_ = os.WriteFile(filepath.Join(dir, "icon-64.png"), b64, 0644)
-		_ = os.WriteFile(filepath.Join(dir, "icon-256.png"), b256, 0644)
 		_ = os.WriteFile(filepath.Join(dir, "icon.png"), b256, 0644)
 	}
 	return nil
-}
-
-func loadIconImage(source string) (image.Image, error) {
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return nil, fmt.Errorf("empty icon source")
-	}
-
-	// Data URI
-	if strings.HasPrefix(source, "data:") {
-		idx := strings.Index(source, ",")
-		if idx == -1 {
-			return nil, fmt.Errorf("invalid data URI")
-		}
-		raw, err := base64.StdEncoding.DecodeString(source[idx+1:])
-		if err != nil {
-			return nil, err
-		}
-		img, _, err := image.Decode(bytes.NewReader(raw))
-		return img, err
-	}
-
-	// HTTP/HTTPS URL
-	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(source)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
-		}
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		img, _, err := image.Decode(bytes.NewReader(data))
-		return img, err
-	}
-
-	// Local file
-	filePath := strings.TrimPrefix(source, "file://")
-	fileBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	img, _, err := image.Decode(bytes.NewReader(fileBytes))
-	return img, err
 }
 
 func padToSquare(src image.Image) image.Image {

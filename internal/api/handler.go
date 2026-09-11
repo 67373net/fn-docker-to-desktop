@@ -57,6 +57,9 @@ type Config struct {
 func NewHandler(cfg Config) *Handler {
 	iconsDir := filepath.Join(cfg.DataDir, "icons")
 	_ = os.MkdirAll(iconsDir, 0755)
+	if cfg.Installer != nil {
+		cfg.Installer.SetIconsDir(iconsDir)
+	}
 
 	return &Handler{
 		storage:        cfg.Storage,

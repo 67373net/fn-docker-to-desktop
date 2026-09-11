@@ -114,9 +114,10 @@ html, body {
 /* Header Nav */
 .header-nav {
   display: flex;
-  align-items: center;
-  gap: 0.25rem;
+  align-items: flex-end;
+  gap: 0.35rem;
   flex: 1;
+  height: 100%;
 }
 
 .nav-spacer {
@@ -127,9 +128,10 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.85rem;
-  border-radius: 6px;
-  border: none;
+  padding: 0.65rem 1.1rem 0.55rem;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
   background: transparent;
   color: var(--text-muted);
   font-size: 0.92rem;
@@ -137,6 +139,8 @@ html, body {
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
+  position: relative;
+  bottom: -1px;
 }
 
 .nav-tab:hover {
@@ -145,9 +149,12 @@ html, body {
 }
 
 .nav-tab.active {
-  background-color: var(--primary-subtle);
-  color: var(--primary-text);
+  background-color: var(--bg-surface);
+  color: var(--primary);
   font-weight: 600;
+  border-color: var(--border-color);
+  border-bottom: 2px solid var(--primary);
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.03);
 }
 
 .tab-icon {

@@ -44,7 +44,15 @@ type Installer struct {
 	cliPath         string
 	appsDir         string
 	rootIconPath    string
+	iconsDir        string
 	hasAppcenterCLI bool
+}
+
+// SetIconsDir sets the server icon directory for uploaded icons.
+func (i *Installer) SetIconsDir(iconsDir string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.iconsDir = iconsDir
 }
 
 // NewInstaller creates a new fnOS package installer.
@@ -322,7 +330,7 @@ desktop_applaunchname=%s
 
 	entryMap := map[string]interface{}{
 		"title":     title,
-		"icon":      "images/icon_{0}.png",
+		"icon":      "images/icon-{0}.png",
 		"type":      uiType,
 		"protocol":  proto,
 		"url":       urlPath,
@@ -351,7 +359,7 @@ desktop_applaunchname=%s
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
 	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
-	if err := WritePackageIcons(pkgDir, cfg.IconPath, cfg.Image, cfg.ContainerName, cfg.Title); err != nil {
+	if err := WritePackageIcons(pkgDir, cfg.IconPath, i.iconsDir, cfg.Image, cfg.ContainerName, cfg.Title); err != nil {
 		slog.Warn("写入图标警告", "error", err)
 	}
 
@@ -451,12 +459,16 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	cmd.Dir = pkgDir
 	output, err := cmd.CombinedOutput()
 	duration := time.Since(startInstall)
-	outStr := strings.TrimSpace(string(output))
+	outStr := cleanCliOutput(output)
 	if err != nil {
 		slog.Error("appcenter-cli install-local 失败", "appName", appName, "volume", volume, "duration", duration, "error", err, "output", outStr)
 		return fmt.Errorf("appcenter-cli install-local 失败: %w (详情: %s)", err, outStr)
 	}
-	slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration, "output", outStr)
+	if outStr != "" {
+		slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration, "output", outStr)
+	} else {
+		slog.Info("appcenter-cli install-local 执行完成", "appName", appName, "volume", volume, "duration", duration)
+	}
 
 	// Wait briefly for fnOS appcenter daemon to register state
 	time.Sleep(500 * time.Millisecond)
@@ -468,7 +480,7 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		slog.Warn("应用已执行安装，但在 appcenter-cli list 中未立即发现，尝试检查并触发启动...", "appName", appName)
 		startOut, startErr := exec.Command(i.cliPath, "start", appName).CombinedOutput()
 		if startErr != nil {
-			slog.Debug("appcenter-cli start 输出", "appName", appName, "output", strings.TrimSpace(string(startOut)))
+			slog.Debug("appcenter-cli start 输出", "appName", appName, "output", cleanCliOutput(startOut))
 		}
 		if i.isAppInstalled(appName) {
 			slog.Info("桌面应用现已就绪并上线", "appName", appName)
@@ -519,7 +531,7 @@ func (i *Installer) PruneOrphanApps(activeApps map[string]bool) error {
 						_ = exec.Command(i.cliPath, "stop", installedApp).Run()
 						out, uErr := exec.Command(i.cliPath, "uninstall", installedApp).CombinedOutput()
 						if uErr != nil {
-							slog.Warn("清理历史孤立桌面图标提示", "appName", installedApp, "output", strings.TrimSpace(string(out)))
+							slog.Warn("清理历史孤立桌面图标提示", "appName", installedApp, "output", cleanCliOutput(out))
 						} else {
 							slog.Info("成功注销清理历史孤立桌面图标", "appName", installedApp)
 						}
@@ -578,13 +590,43 @@ func (i *Installer) uninstallSingleApp(appName string) error {
 	slog.Info("正在通过 appcenter-cli 停止并卸载桌面应用...", "appName", appName)
 	_ = exec.Command(i.cliPath, "stop", appName).Run()
 	out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
-	outStr := strings.TrimSpace(string(out))
+	outStr := cleanCliOutput(out)
 	if err != nil {
 		slog.Warn("卸载应用产生输出", "appName", appName, "output", outStr, "error", err)
 		return err
 	}
-	slog.Info("成功注销桌面应用", "appName", appName, "output", outStr)
+	if outStr != "" {
+		slog.Info("成功注销桌面应用", "appName", appName, "output", outStr)
+	} else {
+		slog.Info("成功注销桌面应用", "appName", appName)
+	}
 	return nil
+}
+
+func cleanCliOutput(output []byte) string {
+	lines := strings.Split(string(output), "\n")
+	var kept []string
+	for _, line := range lines {
+		sublines := strings.Split(line, "\r")
+		for _, s := range sublines {
+			trimmed := strings.TrimSpace(s)
+			if trimmed == "" || isCliSpinnerLine(trimmed) {
+				continue
+			}
+			kept = append(kept, trimmed)
+		}
+	}
+	return strings.Join(kept, "; ")
+}
+
+func isCliSpinnerLine(s string) bool {
+	if strings.Contains(s, "Verifying files") {
+		return true
+	}
+	if len(s) <= 2 && strings.ContainsAny(s, "|/\\-") {
+		return true
+	}
+	return false
 }
 
 // SyncSelfApp updates fn-docker-to-desktop itself on fnOS desktop with user settings.
