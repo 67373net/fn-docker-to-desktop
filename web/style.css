@@ -1088,3 +1088,115 @@ table.data-table td.filler-col {
   font-style: italic;
   min-height: 200px;
 }
+
+/* ==================== Status Updating Badge & Spinner ==================== */
+.status-updating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  background-color: rgba(59, 130, 246, 0.12);
+  color: var(--primary);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  white-space: nowrap;
+}
+
+.spinner-small {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+tr.row-updating {
+  background-color: rgba(59, 130, 246, 0.05) !important;
+}
+
+/* ==================== Icon Preset Chips ==================== */
+.icon-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 12px;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.3;
+}
+
+.icon-chip:hover {
+  background-color: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+/* ==================== Toast Notifications ==================== */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  max-width: 400px;
+  width: calc(100% - 48px);
+}
+
+.toast {
+  pointer-events: auto;
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #f3f4f6;
+  background-color: #1e293b;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(-12px);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 4px solid var(--primary);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.toast-success {
+  border-left-color: #10b981;
+}
+
+.toast.toast-error {
+  border-left-color: #ef4444;
+}
+
+.toast.toast-info {
+  border-left-color: #3b82f6;
+}
+
+.toast-message {
+  flex: 1;
+  word-break: break-word;
+  line-height: 1.4;
+}

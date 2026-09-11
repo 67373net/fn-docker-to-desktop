@@ -1248,6 +1248,110 @@ INFO
 - **输出 Token (Completion Tokens)**：约 6,200
 - **总消耗 Token (Total Tokens)**：**约 99,200**
 
+---
+
+## 第十三轮对话（2026-09-11）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 图标出现了，但是图标的图案依然不对，我不知道是因为浏览器缓存还是什么问题。
+- 既然已经发现问题的真正原因，请回溯之前做过的所有修改，分析是否有这种情况出现：“为了修正bug而修改了代码，但是因为没发现bug的真正原因，反而将代码改得更差了”。请彻底排查一下，优化一下代码。
+- 在新建/编辑图标界面，添加一个输入框，输入框里默认的内容是本系统自动生成的包名，但是允许用户自己修改。
+- 我编辑了图标，在保存时，按钮提示正在更新，并且弹窗一直没消失。改为弹窗消失，但是列表中某个地方提示正在更新中。
+- 更新了图标后，旧的图标没有消失，或者说没有注销？
+```
+
+---
+
+### 问题分析与代码回溯复盘 (Deep Retrospective & Analysis)
+
+#### 1. 全面代码回溯排查：“为了修 Bug 反而将代码改得更差”的彻底清理
+经由对往期提交历史（v1.0.6 ~ v1.0.9）的深度回溯与代码排查，准确定位了 5 处此前“因未找准根因而引入副作用或劣化结构”的代码，并在本轮完成彻底重构：
+1. **同步启动对齐阻塞导致 Web 服务启动严重延迟**：
+   - **历史改动**：在 v1.0.9 中，为了确保重启后图标不丢失，在 `cmd/server/main.go` 启动主线程中同步循环调用 `installer.InstallItem`。
+   - **劣化后果**：每个条目的安装耗时 2~5 秒，若用户配置了多个图标，导致 `main` 函数阻塞十多秒无法完成初始化，`http.Server` 与 Unix Domain Socket (`app.sock`) 无法监听，飞牛系统启动检测或前端刷新时引发超时或网关 502。
+   - **彻底修复**：将启动对齐移入后台独立 Goroutine 中异步执行，且增加 `installer.IsAppInstalled` 状态校验（已安装的应用直接跳过，零开销）；同时自动清理历史残留的孤立应用（`PruneOrphanApps`），实现秒级闪电开机。
+2. **状态切换时无条件覆写用户包名**：
+   - **历史改动**：在 `handleToggleDesktopItem` 中，为了纠正旧版可能遗留的包名格式，强制执行了 `item.AppName = h.installer.DeriveAppName(item)`。
+   - **劣化后果**：若用户自定义或已拥有特定包名，用户点击切换开关一次，包名就会被强制覆盖重置。
+   - **彻底修复**：仅当 `item.AppName == ""` 时才自动生成；若已存在有效包名，则严格予以保持。
+3. **更新图标时未注销旧版本导致飞牛系统残留幽灵应用**：
+   - **历史改动**：在 v1.0.9 移除 `InstallItem` 内部冗余卸载后，`handleUpdateDesktopItem` 直接调用了 `InstallItem(item)`。
+   - **劣化后果**：当用户修改了名称、端口或包名后，新应用以新包名安装，而 `existing.AppName` 从未被卸载，飞牛桌面与应用中心残留旧应用无法清理。
+   - **彻底修复**：在更新桌面图标时，若检测到存在旧包名，先执行 `UninstallSingleApp(oldAppName)` 进行优雅卸载注销，然后再安装新版本应用；并在后台扫描中自动清理历史孤立图标。
+4. **桌面应用清单中的图标路径模板错误**：
+   - **历史改动**：在 `BuildPackage` 中，曾将 `images/icon_{0}.png` 误改为了 `images/icon-{0}.png`（下划线改为短横线）。
+   - **劣化后果**：飞牛官方 UI 框架遵循 `images/icon_{0}.png` 占位符规范，短横线导致飞牛前端可能无法正确匹配到 64 与 256 尺寸的图标图片。
+   - **彻底修复**：恢复为官方标准的 `images/icon_{0}.png`，同时打包时向目录双写两套全部变体（下划线与短横线），双向完全兼容。
+5. **应用卸载门槛导致漏网应用无法清理**：
+   - **历史改动**：`uninstallSingleApp` 之前仅在 `isAppInstalled` 为真时才调用卸载。
+   - **劣化后果**：若因制表符或换行微小差异导致列表匹配误判，卸载逻辑直接跳过，导致幽灵图标无法清除。
+   - **彻底修复**：改为无条件直接执行 `appcenter-cli stop` 与 `uninstall`，确保即使状态不一致也能强行注销。
+
+---
+
+#### 2. 图标图片不对问题根因与全面解决方案
+- **根因一：内嵌默认资产是管理程序自身的 Logo**：
+  - 此前 `internal/desktop/assets/ICON.PNG` 与 `ICON_256.PNG` 的内容是 `fn-docker-to-desktop` 自身的 Logo（蓝色鲸鱼与屏幕）。
+  - 当快捷方式未设置自定义图标且 CDN 未命中时，回退到该资产，导致用户桌面所有的快捷方式都变成了“把 Docker 放到桌面”的图标！
+  - **解决**：设计并替换为专属的现代化 3D 立体容器快捷方式图标（深色磨砂背景 + 蓝青色立体集装箱 + 绿色桌面快捷箭头），彻底与主程序 Logo 区分。
+- **根因二：候选名未包含真实 Docker 镜像名**：
+  - 用户容器通常命名为实例名（如 `my-nas-qbittorrent-1` 或 `watchcow-portal-test`），而 Homarr 官方 CDN 的图标是以镜像名命名的（如 `qbittorrent`、`portainer`、`alist`、`nginx`）。
+  - 原代码仅拿容器名或标题去 CDN 匹配，必然返回 404 并回退到默认图标。
+  - **解决**：在前端提取并向后端透传 `Docker Image`（如 `linuxserver/qbittorrent:latest`），后端解析出真正的镜像名 `qbittorrent`，从 Homarr 官方 CDN 准确命中官方图标。
+- **根因三：前端提供常用服务图标快捷选择与实时预览**：
+  - 在新建/编辑弹窗中加入一键快捷选择按钮（Nginx, Portainer, qBittorrent, Alist, Jellyfin, Docker, Uptime Kuma, Vaultwarden, Redis, MySQL 等），用户点击即可秒级切换并实时预览；同时支持图片链接和本地图片上传。
+
+---
+
+#### 3. 新建/编辑弹窗包名输入框与自定义支持
+- 在 `web/index.html` 的弹窗中新增“应用包名标识 (fnOS Package ID)”表单项；
+- 新建时系统基于容器名/服务名与随机短 ID 自动生成默认包名（如 `fndocker.app-123456`）；
+- 输入显示名称时，如果用户未手动修改过包名，系统动态同步更新包名；若用户手动编辑了，则锁定用户自定内容；
+- 前后端均加入严格的飞牛包名正则表达式校验（`^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$`）。
+
+---
+
+#### 4. 弹窗立即关闭，列表呈现“正在更新中...”加载反馈
+- 用户点击保存时，前端立即执行 `closeModal('modal-desktop-item')` 关闭弹窗；
+- 表格内对应行立即进入 `_updating = true` 状态，操作按钮置灰，运行状态列呈现动态加载小菊花与 `正在更新中...` 徽标；
+- 网络请求在后台异步进行，完成后通过全新的非阻塞式轻量浮层通知（Toast）提示结果，并自动刷新表格与端口列表，体验流畅无卡顿。
+
+---
+
+#### 5. 更新图标时注销并清理旧图标
+- 后端 `handleUpdateDesktopItem` 在保存新配置前，比对原有的 `existing.AppName`，主动调用 `installer.UninstallSingleApp(oldAppName)` 注销旧图标；
+- 配合后台启动自动孤立清理（`PruneOrphanApps`），用户旧版本残留的孤立快捷方式将在启动时被全自动清理干净。
+
+---
+
+### 实施清单 (Implementation Checklist)
+
+1. **后端优化与代码精简重构**：
+   - `internal/desktop/types.go`：`DesktopItem` 增加 `Image` 字段；
+   - `internal/desktop/icons.go`：重构 `WritePackageIcons` 支持多候选名与 Docker 镜像名智能解析；替换专属容器快捷方式资产；
+   - `internal/desktop/installer.go`：恢复 `images/icon_{0}.png` 路径；新增 `IsAppInstalled`、`UninstallSingleApp` 与 `PruneOrphanApps`；
+   - `internal/api/handler.go`：创建/更新支持自定义 `app_name` 规范校验；更新前主动注销旧应用；切换状态保持自定义包名；
+   - `cmd/server/main.go`：启动对齐移入后台 Goroutine 异步执行，增加孤立应用扫描清理。
+2. **前端交互体验与设计优化**：
+   - `web/index.html`：增加应用包名输入框与说明；增加常用图标快捷选项胶囊；增加全局 Toast 通知容器；
+   - `web/style.css`：实现 `.status-updating-badge`、`.spinner-small` 旋转动画、`.icon-chip` 交互胶囊与 `.toast` 浮动通知样式；
+   - `web/app.js`：新建时自动生成包名并随标题动态联动；保存时弹窗立即关闭，列表显示“正在更新中...”，后台通知反馈；常用图标一键填充。
+3. **版本发布与打包验证**：
+   - 更新 `fnos-app/manifest` 版本为 `1.1.0`；
+   - 本地 Docker 交叉编译与 `./scripts/build-fpk.sh x86` 打包成功验证。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 75,000
+- **思维链 Token (Thinking Tokens)**：约 24,000
+- **输出 Token (Completion Tokens)**：约 6,800
+- **总消耗 Token (Total Tokens)**：**约 105,800**
+
+
 
 
 

@@ -26,8 +26,8 @@ var defaultIcon256Bytes []byte
 
 // WritePackageIcons writes all required icons into the fnOS app directory.
 // customIconPathOrURL: user-provided icon path/URL/dataURI
-// fallbackCandidate: service name, container name, or title used to auto-resolve from homarr-labs CDN
-func WritePackageIcons(pkgDir string, customIconPathOrURL string, fallbackCandidate string) error {
+// candidates: list of candidate names (image, container name, service name, title) to auto-resolve from homarr-labs CDN
+func WritePackageIcons(pkgDir string, customIconPathOrURL string, candidates ...string) error {
 	imagesDir := filepath.Join(pkgDir, "app", "ui", "images")
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return err
@@ -44,10 +44,21 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, fallbackCandid
 		}
 	}
 
-	// 2. If no custom icon or failed, try auto-resolving from Homarr CDN if candidate name available
-	if iconImg == nil && fallbackCandidate != "" {
-		candidates := getIconCandidates(fallbackCandidate)
-		for _, name := range candidates {
+	// 2. If no custom icon or failed, try auto-resolving from Homarr CDN if candidate names available
+	if iconImg == nil && len(candidates) > 0 {
+		var allNames []string
+		for _, raw := range candidates {
+			if raw != "" {
+				allNames = append(allNames, getIconCandidates(raw)...)
+			}
+		}
+
+		seen := make(map[string]bool)
+		for _, name := range allNames {
+			if seen[name] || name == "" {
+				continue
+			}
+			seen[name] = true
 			cdnURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", name)
 			if img, err := loadIconImageWithTimeout(cdnURL, 2*time.Second); err == nil && img != nil {
 				iconImg = img
@@ -70,34 +81,68 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, fallbackCandid
 		}
 	}
 
-	// 4. Fallback to embedded default icons (generic container cube icon)
+	// 4. Fallback to embedded default icons (dedicated container shortcut icon)
 	return writeIconBytes(pkgDir, imagesDir, defaultIcon64Bytes, defaultIcon256Bytes)
 }
 
 func getIconCandidates(raw string) []string {
-	raw = strings.ToLower(strings.TrimSpace(raw))
-	raw = strings.TrimPrefix(raw, "/")
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
 
 	var candidates []string
-	clean := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			return r
+	addCandidate := func(s string) {
+		s = strings.TrimSpace(s)
+		s = strings.ToLower(s)
+		s = strings.TrimPrefix(s, "/")
+		clean := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				return r
+			}
+			return -1
+		}, s)
+		clean = strings.Trim(clean, "-")
+		if clean != "" {
+			for _, c := range candidates {
+				if c == clean {
+					return
+				}
+			}
+			candidates = append(candidates, clean)
 		}
-		return -1
-	}, raw)
-	clean = strings.Trim(clean, "-")
-	if clean != "" {
-		candidates = append(candidates, clean)
 	}
 
-	trimmed := strings.TrimRight(clean, "0123456789-")
-	if trimmed != "" && trimmed != clean {
-		candidates = append(candidates, trimmed)
+	// 1. If it's a docker image (e.g. linuxserver/qbittorrent:latest, alistteam/alist, or portainer/portainer-ce)
+	imagePart := raw
+	if strings.Contains(imagePart, "/") {
+		parts := strings.Split(imagePart, "/")
+		imagePart = parts[len(parts)-1]
+	}
+	if strings.Contains(imagePart, ":") {
+		imagePart = strings.Split(imagePart, ":")[0]
+	}
+	if strings.Contains(imagePart, "@") {
+		imagePart = strings.Split(imagePart, "@")[0]
+	}
+	addCandidate(imagePart)
+
+	// 2. Also try sub-prefix before hyphen or underscore (e.g. "portainer-ce" -> "portainer")
+	if idx := strings.Index(imagePart, "-"); idx > 0 {
+		addCandidate(imagePart[:idx])
+	}
+	if idx := strings.Index(imagePart, "_"); idx > 0 {
+		addCandidate(imagePart[:idx])
 	}
 
-	if idx := strings.Index(clean, "-"); idx > 0 {
-		candidates = append(candidates, clean[:idx])
+	// 3. Raw cleaned string
+	addCandidate(raw)
+	// Strip trailing numbers/hyphens (e.g. "qbittorrent-1" -> "qbittorrent")
+	rawClean := strings.TrimRight(strings.ToLower(raw), "0123456789-_")
+	if rawClean != "" && rawClean != raw {
+		addCandidate(rawClean)
 	}
+
 	return candidates
 }
 

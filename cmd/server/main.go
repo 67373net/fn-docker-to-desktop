@@ -195,21 +195,6 @@ func main() {
 		}
 	}
 
-	// Startup reconciliation: ensure all enabled desktop items are registered in fnOS
-	if installer.HasCLI() {
-		slog.Info("启动时自动检查并重新注册桌面图标...", "count", len(items))
-		for _, item := range items {
-			if item.Enabled {
-				slog.Info("启动时注册桌面应用...", "appName", item.AppName, "name", item.Name)
-				if err := installer.InstallItem(item); err != nil {
-					slog.Warn("启动时自动重新注册桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
-				} else {
-					slog.Info("启动时自动重新注册桌面应用成功", "appName", item.AppName, "name", item.Name)
-				}
-			}
-		}
-	}
-
 	// Monitor & Watcher
 	systemSampler := monitor.NewSystemSampler(procPath)
 	watcher := monitor.NewWatcher(procPath, 1500*time.Millisecond)
@@ -294,6 +279,38 @@ func main() {
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				slog.Error("HTTP 服务异常退出", "error", err)
 				stop()
+			}
+		}()
+	}
+
+	// Background startup reconciliation: ensure all active desktop items are registered,
+	// missing items are reinstalled, and old orphaned items are pruned.
+	if installer.HasCLI() {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			items := storage.GetAllItems()
+			slog.Info("后台自动检查桌面图标注册状态...", "count", len(items))
+
+			activeApps := make(map[string]bool)
+			for _, item := range items {
+				if item.AppName != "" {
+					activeApps[item.AppName] = true
+				}
+				if item.Enabled {
+					if !installer.IsAppInstalled(item.AppName) {
+						slog.Info("检测到未安装的已启用桌面图标，正在补齐安装...", "appName", item.AppName, "name", item.Name)
+						if err := installer.InstallItem(item); err != nil {
+							slog.Warn("自动补齐桌面应用失败", "appName", item.AppName, "name", item.Name, "error", err)
+						} else {
+							slog.Info("自动补齐桌面应用成功", "appName", item.AppName, "name", item.Name)
+						}
+					}
+				}
+			}
+
+			// Automatically prune any leftover orphan shortcuts from previous updates or renames
+			if err := installer.PruneOrphanApps(activeApps); err != nil {
+				slog.Debug("清理历史孤立图标完成或无孤立应用", "error", err)
 			}
 		}()
 	}

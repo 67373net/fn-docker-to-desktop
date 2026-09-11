@@ -26,6 +26,8 @@ let state = {
   logLevel: 'ALL',
   logSearch: '',
   logs: [],
+  appNameDirty: false,
+  appShortId: '',
 };
 
 // --- Utilities ---
@@ -382,13 +384,13 @@ function renderPortsTable() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
             <span>已在桌面(${count})</span>
           </button>
-          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
+          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
         </div>`;
     } else {
       desktopCell = `
-        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}">
+        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
           <span>放到桌面</span>
         </button>`;
@@ -432,7 +434,8 @@ function renderPortsTable() {
       const port = parseInt(btn.dataset.port, 10);
       const name = btn.dataset.name || `端口-${port}`;
       const container = btn.dataset.container || '';
-      openCreateDesktopModalWithPort(port, name, container);
+      const image = btn.dataset.image || '';
+      openCreateDesktopModalWithPort(port, name, container, image);
     });
   });
 
@@ -459,7 +462,8 @@ function renderPortsTable() {
       const port = parseInt(btn.dataset.port, 10);
       const name = btn.dataset.name || `端口-${port}`;
       const container = btn.dataset.container || '';
-      openCreateDesktopModalWithPort(port, name, container);
+      const image = btn.dataset.image || '';
+      openCreateDesktopModalWithPort(port, name, container, image);
     });
   });
 
@@ -516,7 +520,18 @@ function renderDesktopTable() {
 
     const iconSrc = item.icon ? (item.icon.startsWith('http') ? item.icon : apiUrl(`/icons/${item.icon.replace(/^icons\//, '')}`)) : apiUrl('/icon.png');
 
-    html += `<tr>
+    let statusColHtml = toggleHtml;
+    if (item._updating) {
+      statusColHtml = `
+        <div class="status-updating-badge">
+          <span class="spinner-small"></span>
+          <span>正在更新中...</span>
+        </div>`;
+    }
+
+    const isUpdating = !!item._updating;
+
+    html += `<tr class="${isUpdating ? 'row-updating' : ''}">
       <td>
         <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标">
       </td>
@@ -525,14 +540,14 @@ function renderDesktopTable() {
       <td><code>${escapeHtml(targetText)}</code></td>
       <td>${openModeText}</td>
       <td>${permText}</td>
-      <td>${toggleHtml}</td>
+      <td>${statusColHtml}</td>
       <td>
         <div class="table-actions">
-          <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}">
+          <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             <span>编辑</span>
           </button>
-          <button class="btn btn-sm btn-danger btn-delete-desktop" data-id="${item.id}">
+          <button class="btn btn-sm btn-danger btn-delete-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
             <span>移出桌面</span>
           </button>
@@ -739,6 +754,65 @@ function initModals() {
     fileInput.addEventListener('change', handleIconUpload);
   }
 
+  // Dynamic package name synchronization with item name
+  const elItemName = document.getElementById('item-name');
+  if (elItemName) {
+    elItemName.addEventListener('input', () => {
+      if (!state.appNameDirty) {
+        const val = elItemName.value.trim();
+        const baseCandidate = (val || 'app').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 14);
+        const elAppName = document.getElementById('item-app-name');
+        if (elAppName) {
+          const shortId = state.appShortId || Math.floor(100000 + Math.random() * 900000).toString();
+          state.appShortId = shortId;
+          elAppName.value = ('fndocker.' + (baseCandidate || 'app') + '-' + shortId).slice(0, 32);
+        }
+      }
+    });
+  }
+
+  const elAppName = document.getElementById('item-app-name');
+  if (elAppName) {
+    elAppName.addEventListener('input', () => {
+      state.appNameDirty = true;
+    });
+  }
+
+  // Icon preset chips click listener
+  document.querySelectorAll('.icon-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const iconName = chip.dataset.icon;
+      if (!iconName) return;
+      const cdnUrl = `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
+      const elIcon = document.getElementById('item-icon');
+      if (elIcon) elIcon.value = cdnUrl;
+      const imgEl = document.getElementById('icon-preview-img');
+      if (imgEl) imgEl.src = cdnUrl;
+      const nameEl = document.getElementById('icon-preview-name');
+      if (nameEl) nameEl.textContent = `${iconName}.png (官方图标)`;
+    });
+  });
+
+  // Icon input URL preview
+  const elIcon = document.getElementById('item-icon');
+  if (elIcon) {
+    elIcon.addEventListener('input', () => {
+      const val = elIcon.value.trim();
+      const imgEl = document.getElementById('icon-preview-img');
+      const nameEl = document.getElementById('icon-preview-name');
+      if (!val) {
+        imgEl.src = apiUrl('/icon.png');
+        nameEl.textContent = '默认容器图标';
+      } else if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
+        imgEl.src = val;
+        nameEl.textContent = '自定义链接图标';
+      } else {
+        imgEl.src = apiUrl(`/icons/${val.replace(/^icons\//, '')}`);
+        nameEl.textContent = val;
+      }
+    });
+  }
+
   // Settings auto-save listeners
   const elPortalName = document.getElementById('setting-portal-name');
   if (elPortalName) {
@@ -779,6 +853,13 @@ function setDesktopModalMode(mode) {
 function resetDesktopForm() {
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
+  const elAppName = document.getElementById('item-app-name');
+  if (elAppName) elAppName.value = '';
+  state.appNameDirty = false;
+  state.appShortId = '';
+  const formEl = document.getElementById('form-desktop-item');
+  if (formEl) delete formEl.dataset.image;
+
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = '';
   document.getElementById('item-local-port').value = '';
@@ -802,15 +883,35 @@ function resetDesktopForm() {
   setDesktopModalMode('local');
 }
 
-function openCreateDesktopModalWithPort(port, name, containerName) {
+function openCreateDesktopModalWithPort(port, name, containerName, image) {
   resetDesktopForm();
   document.getElementById('item-local-port').value = port;
   document.getElementById('item-name').value = name;
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = containerName || '';
 
+  const formEl = document.getElementById('form-desktop-item');
+  if (formEl && image) {
+    formEl.dataset.image = image;
+  }
+
+  // Pre-generate unique package identifier for fnOS
+  state.appShortId = Math.floor(100000 + Math.random() * 900000).toString();
+  const baseCandidate = (containerName || name || 'app').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 14);
+  const defaultAppName = ('fndocker.' + (baseCandidate || 'app') + '-' + state.appShortId).slice(0, 32);
+  const elAppName = document.getElementById('item-app-name');
+  if (elAppName) elAppName.value = defaultAppName;
+  state.appNameDirty = false;
+
   // Auto-resolve or recommend official icon from Homarr CDN for Docker containers or port services
-  const iconCandidate = containerName || name;
+  let iconCandidate = '';
+  if (image) {
+    let imgPart = image.split('/').pop().split(':')[0].split('@')[0];
+    iconCandidate = imgPart;
+  }
+  if (!iconCandidate) {
+    iconCandidate = containerName || name;
+  }
   if (iconCandidate) {
     const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
     if (cleanName) {
@@ -821,7 +922,7 @@ function openCreateDesktopModalWithPort(port, name, containerName) {
       imgEl.onerror = () => {
         imgEl.src = apiUrl('/icon.png');
         document.getElementById('item-icon').value = '';
-        document.getElementById('icon-preview-name').textContent = '默认图标';
+        document.getElementById('icon-preview-name').textContent = '默认容器图标';
       };
       document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
     }
@@ -839,6 +940,16 @@ function openEditDesktopModal(id) {
   document.getElementById('desktop-modal-title').textContent = '编辑桌面图标';
   document.getElementById('item-id').value = item.id;
   document.getElementById('item-name').value = item.name;
+
+  const elAppName = document.getElementById('item-app-name');
+  if (elAppName) elAppName.value = item.app_name || '';
+  state.appNameDirty = true;
+
+  const formEl = document.getElementById('form-desktop-item');
+  if (formEl && item.image) {
+    formEl.dataset.image = item.image;
+  }
+
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = item.container_name || '';
   document.getElementById('item-protocol').value = item.protocol || 'http';
@@ -953,6 +1064,16 @@ async function handleSaveDesktopItem(e) {
   const uiType = document.getElementById('item-ui-type').value;
   const allUsers = document.getElementById('item-all-users').value === 'true';
   const icon = document.getElementById('item-icon').value.trim();
+  const appNameInput = document.getElementById('item-app-name');
+  const appName = appNameInput ? appNameInput.value.trim() : '';
+
+  if (appName) {
+    const validPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$/;
+    if (!validPattern.test(appName)) {
+      showToast('应用包名标识格式不符合规范：必须字母数字开头，仅含字母数字点号横杠，3-32位', 'error');
+      return;
+    }
+  }
 
   let port = 0;
   let targetUrl = '';
@@ -960,16 +1081,16 @@ async function handleSaveDesktopItem(e) {
 
   if (mode === 'local') {
     port = parseInt(document.getElementById('item-local-port').value, 10);
-    if (!port || port <= 0) return alert('请输入有效的本机端口');
+    if (!port || port <= 0) return showToast('请输入有效的本机端口', 'error');
   } else if (mode === 'proxy') {
     targetUrl = document.getElementById('item-target-url').value.trim();
     port = parseInt(document.getElementById('item-proxy-port').value, 10);
     skipTls = document.getElementById('item-skip-tls').checked;
-    if (!targetUrl) return alert('请输入目标地址');
-    if (!port || port <= 0) return alert('请输入本机代理监听端口');
+    if (!targetUrl) return showToast('请输入目标地址', 'error');
+    if (!port || port <= 0) return showToast('请输入本机代理监听端口', 'error');
   } else if (mode === 'shortcut') {
     targetUrl = document.getElementById('item-shortcut-url').value.trim();
-    if (!targetUrl) return alert('请输入目标网址');
+    if (!targetUrl) return showToast('请输入目标网址', 'error');
   }
 
   let enabled = true;
@@ -981,11 +1102,15 @@ async function handleSaveDesktopItem(e) {
   }
 
   const containerName = document.getElementById('item-container-name') ? document.getElementById('item-container-name').value.trim() : '';
+  const formEl = document.getElementById('form-desktop-item');
+  const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
 
   const payload = {
     id: id || `item-${Date.now() % 1000000}`,
     name,
+    app_name: appName,
     container_name: containerName,
+    image,
     mode,
     port,
     target_url: targetUrl,
@@ -998,39 +1123,46 @@ async function handleSaveDesktopItem(e) {
     enabled,
   };
 
-  const btnSave = document.getElementById('btn-save-desktop-item');
-  const origBtnText = btnSave ? btnSave.textContent : '保存并放到桌面';
-  if (btnSave) {
-    btnSave.disabled = true;
-    btnSave.textContent = '正在安装到飞牛桌面...';
-  }
+  // Requirement: Close modal immediately, show updating indicator in desktop table!
+  closeModal('modal-desktop-item');
 
-  try {
-    const method = id ? 'PUT' : 'POST';
-    const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+  if (id) {
+    const existing = state.desktopItems.find(i => i.id === id);
+    if (existing) {
+      existing._updating = true;
+      existing.name = name;
+      existing.port = port;
+      existing.app_name = appName;
+      if (icon) existing.icon = icon;
+    }
+  } else {
+    state.desktopItems.unshift({ ...payload, _updating: true });
+  }
+  renderDesktopTable();
+
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? apiUrl(`/api/desktop/items/${id}`) : apiUrl('/api/desktop/items');
+
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+    .then(async res => {
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || `${id ? '更新' : '添加'}桌面图标失败`, 'error');
+      } else {
+        showToast(`桌面图标「${name}」已成功同步至飞牛桌面！`, 'success');
+      }
+    })
+    .catch(err => {
+      showToast('请求异常: ' + err.message, 'error');
+    })
+    .finally(async () => {
+      await fetchDesktopItems();
+      await fetchPorts();
     });
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      return alert(errData.error || '保存失败');
-    }
-
-    closeModal('modal-desktop-item');
-    alert(`成功${id ? '更新' : '添加'}桌面图标「${name}」！\n已同步至飞牛桌面与应用中心。`);
-    await fetchDesktopItems();
-    await fetchPorts();
-  } catch (err) {
-    alert('请求失败: ' + err.message);
-  } finally {
-    if (btnSave) {
-      btnSave.disabled = false;
-      btnSave.textContent = origBtnText;
-    }
-  }
 }
 
 async function handleTestTarget() {
@@ -1536,6 +1668,26 @@ function downloadLogFile() {
   const select = document.getElementById('log-date-select');
   const date = select ? select.value : '';
   window.open(apiUrl(`/api/logs/download?date=${encodeURIComponent(date)}`), '_blank');
+}
+
+// --- Toast Notifications System ---
+function showToast(message, type = 'info', duration = 3500) {
+  const container = document.getElementById('toast-container');
+  if (!container) {
+    alert(message);
+    return;
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<span class="toast-message">${escapeHtml(message)}</span>`;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 300);
+  }, duration);
 }
 
 if (document.readyState === 'loading') {

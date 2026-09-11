@@ -341,7 +341,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.0.9 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.0 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -404,6 +404,12 @@
           <div class="form-group">
             <label class="form-label">显示名称</label>
             <input type="text" id="item-name" class="form-input" placeholder="例如：我的服务" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">应用包名标识 (fnOS Package ID)</label>
+            <input type="text" id="item-app-name" class="form-input" placeholder="例如：fndocker.my-app-123456" autocomplete="off" spellcheck="false">
+            <div class="form-tip">飞牛桌面官方唯一应用标识符。系统默认自动生成，亦可自定义（以字母数字开头，仅含字母数字点号短横线，3-32位）</div>
           </div>
 
           <!-- Section for Local Port -->
@@ -492,7 +498,22 @@
                 <input type="file" id="icon-file-input" accept=".png,.jpg,.jpeg,.webp,.svg,.ico" style="display: none;">
               </label>
             </div>
-            <div class="icon-preview-box" id="icon-preview-box">
+            <div class="icon-presets-container" style="margin-top: 8px;">
+              <span class="icon-presets-label" style="font-size: 12px; color: var(--text-muted);">常用图标快捷选择：</span>
+              <div class="icon-preset-chips" id="icon-preset-chips" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+                <button type="button" class="btn btn-xs icon-chip" data-icon="nginx" title="Nginx">Nginx</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="portainer" title="Portainer">Portainer</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="qbittorrent" title="qBittorrent">qBittorrent</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="alist" title="Alist">Alist</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="jellyfin" title="Jellyfin">Jellyfin</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="docker" title="Docker">Docker</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="uptime-kuma" title="Uptime Kuma">Uptime Kuma</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="vaultwarden" title="Vaultwarden">Vaultwarden</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="redis" title="Redis">Redis</button>
+                <button type="button" class="btn btn-xs icon-chip" data-icon="mysql" title="MySQL">MySQL</button>
+              </div>
+            </div>
+            <div class="icon-preview-box" id="icon-preview-box" style="margin-top: 10px;">
               <img id="icon-preview-img" src="icon.png" alt="图标预览">
               <span id="icon-preview-name">默认图标</span>
             </div>
@@ -580,8 +601,9 @@
         </form>
       </div>
     </div>
-  </div>
+  <!-- Toast Notifications Container -->
+  <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.0.9"></script>
+  <script src="app.js?v=1.1.0"></script>
 </body>
 </html>

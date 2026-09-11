@@ -234,6 +234,7 @@ type AppcenterPackageConfig struct {
 	AllUsers      bool
 	IconPath      string
 	ContainerName string
+	Image         string
 }
 
 // BuildPackage creates the fnOS app structure on disk in a temporary directory.
@@ -321,7 +322,7 @@ desktop_applaunchname=%s
 
 	entryMap := map[string]interface{}{
 		"title":     title,
-		"icon":      "images/icon-{0}.png",
+		"icon":      "images/icon_{0}.png",
 		"type":      uiType,
 		"protocol":  proto,
 		"url":       urlPath,
@@ -350,11 +351,7 @@ desktop_applaunchname=%s
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
 	// 3. Icons (write root ICON.PNG, ICON_256.PNG and all app/ui/images variants)
-	iconCandidate := cfg.ContainerName
-	if iconCandidate == "" {
-		iconCandidate = cfg.Title
-	}
-	if err := WritePackageIcons(pkgDir, cfg.IconPath, iconCandidate); err != nil {
+	if err := WritePackageIcons(pkgDir, cfg.IconPath, cfg.Image, cfg.ContainerName, cfg.Title); err != nil {
 		slog.Warn("写入图标警告", "error", err)
 	}
 
@@ -434,6 +431,7 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		AllUsers:      item.AllUsers,
 		IconPath:      item.Icon,
 		ContainerName: item.ContainerName,
+		Image:         item.Image,
 	})
 	if err != nil {
 		return fmt.Errorf("构建应用包失败: %w", err)
@@ -480,6 +478,59 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	return nil
 }
 
+// IsAppInstalled checks whether an application identifier is currently registered in fnOS.
+func (i *Installer) IsAppInstalled(appName string) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.isAppInstalled(appName)
+}
+
+// UninstallSingleApp immediately stops and uninstalls a single fnOS application package.
+func (i *Installer) UninstallSingleApp(appName string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.uninstallSingleApp(appName)
+}
+
+// PruneOrphanApps uninstalls any shortcut applications (prefixed with fndocker. or put-port.)
+// registered in fnOS that do not belong to activeApps.
+func (i *Installer) PruneOrphanApps(activeApps map[string]bool) error {
+	if !i.hasAppcenterCLI {
+		return nil
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	cmd := exec.Command(i.cliPath, "list")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "│") {
+			parts := strings.Split(line, "│")
+			if len(parts) >= 2 {
+				installedApp := strings.TrimSpace(parts[1])
+				if strings.HasPrefix(installedApp, "fndocker.") || strings.HasPrefix(installedApp, "put-port.") {
+					if !activeApps[installedApp] {
+						slog.Info("发现历史孤立桌面图标，正在自动清理注销...", "appName", installedApp)
+						_ = exec.Command(i.cliPath, "stop", installedApp).Run()
+						out, uErr := exec.Command(i.cliPath, "uninstall", installedApp).CombinedOutput()
+						if uErr != nil {
+							slog.Warn("清理历史孤立桌面图标提示", "appName", installedApp, "output", strings.TrimSpace(string(out)))
+						} else {
+							slog.Info("成功注销清理历史孤立桌面图标", "appName", installedApp)
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // UninstallItem unregisters a DesktopItem from fnOS.
 func (i *Installer) UninstallItem(item DesktopItem) error {
 	i.mu.Lock()
@@ -503,7 +554,7 @@ func (i *Installer) UninstallItem(item DesktopItem) error {
 	for _, appName := range candidates {
 		if !seen[appName] {
 			seen[appName] = true
-			i.uninstallSingleApp(appName)
+			_ = i.uninstallSingleApp(appName)
 		}
 	}
 	return nil
@@ -514,27 +565,26 @@ func (i *Installer) UninstallItemByID(itemID string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	i.uninstallSingleApp("fndocker." + SanitizeAppNamePart(itemID))
-	i.uninstallSingleApp("put-port." + sanitizeAppName(itemID))
+	_ = i.uninstallSingleApp("fndocker." + SanitizeAppNamePart(itemID))
+	_ = i.uninstallSingleApp("put-port." + sanitizeAppName(itemID))
 	return nil
 }
 
-func (i *Installer) uninstallSingleApp(appName string) {
-	if !i.hasAppcenterCLI {
-		slog.Info("应用已清理 (模拟模式)", "appName", appName)
-		return
+func (i *Installer) uninstallSingleApp(appName string) error {
+	if !i.hasAppcenterCLI || appName == "" {
+		return nil
 	}
 
-	if i.isAppInstalled(appName) {
-		slog.Info("正在从飞牛系统卸载桌面应用...", "appName", appName)
-		_ = exec.Command(i.cliPath, "stop", appName).Run()
-		out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
-		if err != nil {
-			slog.Warn("卸载应用产生警告", "appName", appName, "output", strings.TrimSpace(string(out)))
-		} else {
-			slog.Info("成功卸载桌面应用", "appName", appName)
-		}
+	slog.Info("正在通过 appcenter-cli 停止并卸载桌面应用...", "appName", appName)
+	_ = exec.Command(i.cliPath, "stop", appName).Run()
+	out, err := exec.Command(i.cliPath, "uninstall", appName).CombinedOutput()
+	outStr := strings.TrimSpace(string(out))
+	if err != nil {
+		slog.Warn("卸载应用产生输出", "appName", appName, "output", outStr, "error", err)
+		return err
 	}
+	slog.Info("成功注销桌面应用", "appName", appName, "output", outStr)
+	return nil
 }
 
 // SyncSelfApp updates fn-docker-to-desktop itself on fnOS desktop with user settings.

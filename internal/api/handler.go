@@ -380,9 +380,14 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Derive app name
+	// Derive or validate app name
 	if item.AppName == "" {
 		item.AppName = h.installer.DeriveAppName(item)
+	} else {
+		if err := desktop.ValidateAppName(item.AppName); err != nil {
+			h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Install to fnOS desktop
@@ -430,9 +435,15 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 	item.ID = id
 
+	existing, hasExisting := h.storage.GetItem(id)
+	oldAppName := ""
+	if hasExisting {
+		oldAppName = existing.AppName
+	}
+
 	// Preserve enabled state if not explicitly specified in payload
 	if _, hasEnabled := rawMap["enabled"]; !hasEnabled {
-		if existing, ok := h.storage.GetItem(id); ok {
+		if hasExisting {
 			item.Enabled = existing.Enabled
 		} else {
 			item.Enabled = true
@@ -447,8 +458,24 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		h.proxyMgr.StopProxy(item.ID)
 	}
 
+	// Derive or validate app name
 	if item.AppName == "" {
-		item.AppName = h.installer.DeriveAppName(item)
+		if oldAppName != "" {
+			item.AppName = oldAppName
+		} else {
+			item.AppName = h.installer.DeriveAppName(item)
+		}
+	} else {
+		if err := desktop.ValidateAppName(item.AppName); err != nil {
+			h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Clean up old app on fnOS before reinstalling/updating
+	if hasExisting && oldAppName != "" {
+		slog.Info("更新桌面图标前，注销卸载旧版本应用以确保注销旧图标...", "oldAppName", oldAppName, "newAppName", item.AppName)
+		_ = h.installer.UninstallSingleApp(oldAppName)
 	}
 
 	if item.Enabled {
@@ -517,9 +544,8 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	slog.Info("收到切换桌面图标状态请求", "id", id, "name", item.Name, "当前状态", item.Enabled, "目标状态", targetState)
 
 	item.Enabled = targetState
-	expectedAppName := h.installer.DeriveAppName(item)
-	if item.AppName != expectedAppName {
-		item.AppName = expectedAppName
+	if item.AppName == "" {
+		item.AppName = h.installer.DeriveAppName(item)
 	}
 
 	if item.Enabled {
