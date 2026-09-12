@@ -953,6 +953,12 @@ table.data-table td.filler-col {
   border-top: 1px solid var(--border-color);
 }
 
+.modal-dialog > .modal-footer {
+  margin-top: 0;
+  padding: 1rem 1.25rem 1.25rem 1.25rem;
+  box-sizing: border-box;
+}
+
 /* Mode Selector in Modal */
 .mode-selector {
   display: flex;
@@ -1049,7 +1055,7 @@ table.data-table td.filler-col {
 .terminal-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   background-color: #16161a;
   padding: 0.5rem 1rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -1810,24 +1816,34 @@ tr.row-updating {
 
 .donate-qr-grid {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   justify-content: center;
+  align-items: flex-start;
   gap: 2.5rem;
   margin-bottom: 2.5rem;
-  flex-wrap: wrap;
+  width: 100%;
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
 }
 
 .donate-qr-item {
+  flex: 1 1 50%;
+  max-width: 50%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1.25rem;
+  box-sizing: border-box;
 }
 
 .donate-qr-frame {
-  width: 510px;
-  height: 510px;
-  max-width: 90vw;
-  max-height: 90vw;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: 440px;
   border-radius: 12px;
   padding: 12px;
   background-color: #ffffff;
@@ -1836,6 +1852,7 @@ tr.row-updating {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
 }
 
 .donate-qr-img {
@@ -1886,54 +1903,46 @@ tr.row-updating {
   font-style: italic;
 }
 
-/* ==================== Table Sink Divider ==================== */
+/* ==================== Table Sink Subheader ==================== */
 .table-sink-divider-row {
-  height: 38px;
-  background-color: var(--bg-surface-subtle) !important;
+  background-color: transparent !important;
+  border: none !important;
 }
 
-.table-sink-divider-row:hover {
-  background-color: var(--bg-surface-subtle) !important;
+.table-sink-divider-row:hover td {
+  background-color: transparent !important;
 }
 
 .table-sink-divider-cell {
-  padding: 6px 16px !important;
-  vertical-align: middle !important;
-  border-top: 1px solid var(--border-color) !important;
-  border-bottom: 1px solid var(--border-color) !important;
+  padding: 1.25rem 1em 0.35rem 1.25rem !important; /* 1.25rem 严格与 th:first-child 对齐 */
+  vertical-align: bottom !important;
+  border: none !important;
+  background-color: transparent !important;
 }
 
-.table-sink-divider-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  width: 100%;
-}
-
-.table-sink-divider-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  background: var(--border-color);
-  z-index: 1;
-}
-
-.table-sink-divider-badge {
-  position: relative;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 14px;
-  font-size: 0.78rem;
+.table-sink-title {
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--text-muted);
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  letter-spacing: 0.1em;
   user-select: none;
+  display: inline-block;
+  letter-spacing: 0.05em;
+}
+
+/* ==================== Process Table Container Column ==================== */
+.proc-container-name {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 400; /* 去掉加粗 */
+  border: none !important; /* 去掉边框 */
+  background-color: var(--primary-subtle);
+  color: var(--primary-text);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 

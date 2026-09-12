@@ -292,7 +292,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.11',
+    version: state.settings?.version || '1.1.12',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -725,11 +725,7 @@ function renderPortsTable() {
       html += `
         <tr class="table-sink-divider-row" aria-hidden="true">
           <td colspan="8" class="table-sink-divider-cell">
-            <div class="table-sink-divider-wrap">
-              <div class="table-sink-divider-line"></div>
-              <span class="table-sink-divider-badge">置底</span>
-              <div class="table-sink-divider-line"></div>
-            </div>
+            <span class="table-sink-title">置底</span>
           </td>
         </tr>`;
     }
@@ -1007,7 +1003,10 @@ function renderProcessesTable() {
 
   let html = '';
   for (const p of list.slice(0, 150)) { // Limit to top 150 for peak DOM performance
-    const dockerTag = (p.docker && p.docker.is_docker) ? `<span class="protocol-tag tag-docker">${escapeHtml(p.docker.container_name)}</span>` : '-';
+    const hasDocker = !!(p.docker && p.docker.is_docker && p.docker.container_name);
+    const dockerTag = hasDocker
+      ? `<span class="proc-container-name" title="Docker 容器: ${escapeHtml(p.docker.image || p.docker.container_name)}">${escapeHtml(p.docker.container_name)}</span>`
+      : '';
     html += `<tr>
       <td><code>${p.pid}</code></td>
       <td><strong>${escapeHtml(p.name)}</strong></td>
@@ -2742,12 +2741,30 @@ function initApp() {
   const btnResetSink = document.getElementById('btn-reset-sink-rules');
   const btnSaveSink = document.getElementById('btn-save-sink-rules');
   const btnCancelSink = document.getElementById('btn-cancel-sink-modal');
+  const btnCloseSink = document.getElementById('btn-close-sink-modal');
+  const modalSink = document.getElementById('modal-sink-settings');
+
+  function isSinkRulesDirty() {
+    if (!sinkInput) return false;
+    return sinkInput.value.trim() !== (state.initialSinkText || '').trim();
+  }
+
+  function tryCloseSinkModal() {
+    if (isSinkRulesDirty()) {
+      if (!confirm('置底规则已修改但尚未保存，确定要放弃修改并关闭吗？')) {
+        return false;
+      }
+    }
+    closeModal('modal-sink-settings');
+    return true;
+  }
 
   if (btnOpenSink) {
     btnOpenSink.addEventListener('click', () => {
       const rules = getSinkRules();
       if (sinkInput) {
         sinkInput.value = rules.join('\n');
+        state.initialSinkText = sinkInput.value;
       }
       openModal('modal-sink-settings');
     });
@@ -2763,7 +2780,21 @@ function initApp() {
 
   if (btnCancelSink) {
     btnCancelSink.addEventListener('click', () => {
-      closeModal('modal-sink-settings');
+      tryCloseSinkModal();
+    });
+  }
+
+  if (btnCloseSink) {
+    btnCloseSink.addEventListener('click', () => {
+      tryCloseSinkModal();
+    });
+  }
+
+  if (modalSink) {
+    modalSink.addEventListener('click', (e) => {
+      if (e.target === modalSink) {
+        tryCloseSinkModal();
+      }
     });
   }
 
@@ -2774,6 +2805,7 @@ function initApp() {
         .map(s => s.trim().toLowerCase())
         .filter(Boolean);
       saveSinkRules(lines);
+      state.initialSinkText = (sinkInput ? sinkInput.value : '');
       closeModal('modal-sink-settings');
       renderPortsTable();
       showToast('置底规则已保存', 'success');

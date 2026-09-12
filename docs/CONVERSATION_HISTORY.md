@@ -2407,6 +2407,56 @@ INFO
 - **输出 Token (Completion Tokens)**：约 7,000
 - **总消耗 Token (Total Tokens)**：**约 189,000**
 
+---
+
+## Turn 26 - 置底行左对齐去边框、置底弹窗边距及未保存二次确认、投喂双图动态并排、所属容器留空与无加粗、日志装饰点移除、统一发布 v1.1.12
+
+### 需求分析与设计实现 (Requirements & Architecture)
+
+1. **进程列表「置底」行纯净左对齐优化**：
+   - 移除置底分段的横穿分割线、药丸状边框及背景色；
+   - 「置底」两个字由居中改为靠左显示，左内边距严格设置为 `1.25rem`，与第一列表头「端口」实现像素级垂直对齐；
+   - 样式更新于 [`web/style.css`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1906-L1930)，DOM 渲染调整于 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js#L725-L732)。
+
+2. **置底设置弹窗边距修复与未保存二次确认**：
+   - 修复 `.modal-dialog > .modal-footer` 样式内边距，统一设置 `padding: 1rem 1.25rem 1.25rem`，彻底解决底部按钮紧贴弹窗边缘问题；
+   - 在 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js#L2740-L2785) 中引入变更检测（`isSinkRulesDirty()`），若用户修改了规则未保存便点击关闭、取消或遮罩层，自动触发二次确认提醒，防止误操作丢失输入。
+
+3. **投喂界面图片动态 50% 宽度并排展示**：
+   - 更新 [`.donate-qr-grid`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1817-L1848) 为不换行弹性布局（`flex-wrap: nowrap`），每张图分配 `50%` 弹性宽度；
+   - 二维码边框容器 [`.donate-qr-frame`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1833) 采用动态 `width: 100%; aspect-ratio: 1 / 1; max-width: 440px;`，保证双码在大屏下清晰并排呈现。
+
+4. **系统进程页面「所属容器」空值留空与样式去框去粗**：
+   - 当所属容器为空时不再显示短横线 `-`，直接留空展示；
+   - 有容器名时应用 [`.proc-container-name`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1932) 样式，去掉外边框并去掉文字加粗（`font-weight: 400; border: none;`），保持现代清爽体验。
+
+5. **日志界面移除无功能装饰圆点**：
+   - 从 [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html#L216-L220) 中彻底移除仿 macOS 终端的三色装饰圆点；
+   - 调整 [`.terminal-header`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1055) 布局为靠左排列，界面更专注日志本身。
+
+6. **版本统一提升至 `1.1.12` 并正式发布**：
+   - 全面更新 `cmd/server/main.go`、`fnos-app/manifest`、`web/index.html`、`web/app.js` 与 `internal/api/handler_test.go` 为 `1.1.12`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试**：
+   - 运行 Docker 单元测试 `docker run --rm -v "$(pwd)":/app -w /app golang:alpine go test -v ./...`，全部场景 100% 通过（PASS）。
+2. **飞牛 OS 原生安装包构建与校验**：
+   - 运行 `./scripts/build-fpk.sh x86` 验证包结构完整与 SHA 校验无误，测试完成后立即清理 `.fpk` 文件。
+3. **版本发布与 Tag 推送**：
+   - 提交代码至 `master` 分支，创建 Git Tag `v1.1.12` 并推送到 GitHub 远程仓库，触发自动化 Release。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 162,000
+- **思维链 Token (Thinking Tokens)**：约 23,000
+- **输出 Token (Completion Tokens)**：约 6,800
+- **总消耗 Token (Total Tokens)**：**约 191,800**
+
 
 
 
