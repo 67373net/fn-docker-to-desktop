@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +20,58 @@ type SecurityManager struct {
 
 var globalSecurityMgr = &SecurityManager{
 	failedLogins: make(map[string][]time.Time),
+}
+
+// AppSessionManager manages ephemeral frontend session tokens for anti-bypass protection.
+type AppSessionManager struct {
+	mu       sync.RWMutex
+	sessions map[string]time.Time
+}
+
+var globalAppSessionMgr = &AppSessionManager{
+	sessions: make(map[string]time.Time),
+}
+
+// CreateSession generates and records a new cryptographically random session token.
+func (sm *AppSessionManager) CreateSession() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+	}
+	token := hex.EncodeToString(b)
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	now := time.Now()
+	// Clean expired sessions
+	for k, exp := range sm.sessions {
+		if now.After(exp) {
+			delete(sm.sessions, k)
+		}
+	}
+	// Active session valid for 24 hours
+	sm.sessions[token] = now.Add(24 * time.Hour)
+	return token
+}
+
+// ValidateSession checks whether the session token is valid and unexpired.
+func (sm *AppSessionManager) ValidateSession(token string) bool {
+	if token == "" {
+		return false
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	exp, exists := sm.sessions[token]
+	if !exists {
+		return false
+	}
+	if time.Now().After(exp) {
+		delete(sm.sessions, token)
+		return false
+	}
+	// Slide expiration window
+	sm.sessions[token] = time.Now().Add(24 * time.Hour)
+	return true
 }
 
 // IsPrivateOrLocalIP determines if an IP address is a private/local network address.

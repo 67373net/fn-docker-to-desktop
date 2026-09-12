@@ -127,3 +127,43 @@ func TestWANSecurityBlocking(t *testing.T) {
 		t.Fatalf("Expected WAN unauthenticated access to be blocked with 401, got %d. Body: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestWANWithValidSessionToken(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-session-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+
+	authMgr := auth.NewManager("")
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    authMgr,
+		DataDir:    tempDir,
+		AppVersion: "1.1.9",
+	})
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Create valid frontend session token
+	token := globalAppSessionMgr.CreateSession()
+
+	// Simulate WAN access (e.g. fnOS Connect) with valid session token in header
+	req := httptest.NewRequest("GET", "/api/desktop/items", nil)
+	req.RemoteAddr = "203.0.113.199:54321"
+	req.Header.Set("X-App-Session", token)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected WAN access with valid session token to succeed with 200, got %d. Body: %s", rec.Code, rec.Body.String())
+	}
+}

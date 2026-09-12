@@ -1,5 +1,32 @@
 // --- 把 Docker 放到桌面 - 前端应用程序 ---
 
+function getAppSessionToken() {
+  return window.__FN_SESSION__ || document.querySelector('meta[name="fn-session-token"]')?.content || '';
+}
+
+// Global fetch interceptor to attach anti-bypass frontend session token
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = function(resource, init = {}) {
+    const token = getAppSessionToken();
+    if (token) {
+      if (!init.headers) {
+        init.headers = {};
+      }
+      if (init.headers instanceof Headers) {
+        if (!init.headers.has('X-App-Session')) {
+          init.headers.set('X-App-Session', token);
+        }
+      } else if (Array.isArray(init.headers)) {
+        init.headers.push(['X-App-Session', token]);
+      } else {
+        init.headers['X-App-Session'] = token;
+      }
+    }
+    return originalFetch.call(this, resource, init);
+  };
+})();
+
 const BASE_PATH = window.location.pathname.startsWith('/app/fn-docker-to-desktop')
   ? '/app/fn-docker-to-desktop'
   : '';
@@ -46,7 +73,9 @@ function reportClientLog(type, action, message, details, stack) {
     });
     if (navigator.sendBeacon) {
       const blob = new Blob([payload], { type: 'application/json' });
-      navigator.sendBeacon(apiUrl('/api/logs/client'), blob);
+      const token = getAppSessionToken();
+      const beaconUrl = token ? apiUrl(`/api/logs/client?session=${encodeURIComponent(token)}`) : apiUrl('/api/logs/client');
+      navigator.sendBeacon(beaconUrl, blob);
     } else {
       fetch(apiUrl('/api/logs/client'), {
         method: 'POST',
@@ -403,7 +432,9 @@ function initEventSource() {
   if (state.eventSource) {
     state.eventSource.close();
   }
-  state.eventSource = new EventSource(apiUrl('/api/events'));
+  const token = getAppSessionToken();
+  const eventUrl = token ? apiUrl(`/api/events?session=${encodeURIComponent(token)}`) : apiUrl('/api/events');
+  state.eventSource = new EventSource(eventUrl);
   state.eventSource.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
@@ -587,14 +618,24 @@ function renderPortsTable() {
     const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
     const resText = (cpuText === '-' && rssText === '-') ? '-' : `${cpuText} / ${rssText}`;
 
-    const protoUpper = (p.protocol || '').toUpperCase();
+    const protoUpper = (p.protocol || 'TCP').toUpperCase();
     const isPureUdp = protoUpper === 'UDP';
     const protoClass = isPureUdp ? 'text-proto-udp' : 'text-proto-tcp';
     const portClass = isPureUdp ? 'port-link-udp' : 'port-link-tcp';
 
+    let protoPrefix = protoUpper;
+    if (protoUpper.includes('TCP') && protoUpper.includes('UDP')) {
+      protoPrefix = 'TCP/UDP';
+    } else if (protoUpper.includes('UDP')) {
+      protoPrefix = 'UDP';
+    } else {
+      protoPrefix = 'TCP';
+    }
+    const portTitle = `（${protoPrefix}）在浏览器新窗口打开 ${portUrl}`;
+
     html += `<tr>
       <td>
-        <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link ${portClass}" title="在浏览器新窗口打开 ${portUrl}">
+        <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link ${portClass}" title="${portTitle}">
           <span>${p.local_port}</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         </a>

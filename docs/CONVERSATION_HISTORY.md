@@ -2253,6 +2253,70 @@ INFO
 - **输出 Token (Completion Tokens)**：约 7,800
 - **总消耗 Token (Total Tokens)**：**约 167,800**
 
+---
+
+## Turn 23 - 飞牛 Connect 远程鉴权优化、端口提示状态完善、设置卡片去线与 UI 风格统一、README 精修与投喂布局升级
+
+### 需求背景与目标 (Requirements & Objectives)
+
+1. **飞牛 Connect 远程访问与防恶意程序绕过**：
+   - 深入分析外地通过飞牛 Connect 远程访问时是否会被公网拦截策略误伤；
+   - 构建免密状态下支持合法前端安全通行、但严防恶意爬虫或绕过 UI 直接发起 API 请求的纵深鉴权方案。
+2. **端口悬停提示与 UDP 浏览器打开提问解答**：
+   - 将鼠标悬停在端口上的提示文案修改为 `（状态）在浏览器新窗口打开xxxxx`，前面加上 TCP、UDP 或 TCP/UDP 状态；
+   - 针对“如果是 UDP 端口，在浏览器中打开是否有意义”进行专业深入的技术解答。
+3. **设置界面去线与 UI 风格统一**：
+   - 去掉上方自身设置卡片中的两条横线（标题下边框与底部操作栏上边框）；
+   - 将上方的自身设置卡片改造为与下方的「宿主机信息」和「网络接口」完全一致的 `.info-section` + `.section-title` 统一排版。
+4. **README 精修**：
+   - 按照指定的精确文案调整 README 灵感来源与三大核心功能。
+5. **投喂 Tab 布局升级**：
+   - 将「🥺投喂」Tab 挪到「桌面图标」Tab 右侧；
+   - 投喂内容宽度调整为与窗口几乎等宽（100% 满宽）；
+   - 收款码大幅放大至 280px，支持大屏快速扫码。
+
+---
+
+### 技术实现细节 (Implementation Details)
+
+1. **前端会话令牌握手与公网防绕过防护 (`internal/api/security.go`, `internal/api/handler.go`, `web/app.js`)**：
+   - **动态 Session 管理**：在 `internal/api/security.go` 中新增 `AppSessionManager`，支持生成 24 字节安全随机 Token 并设置 24 小时滑动过期窗口；
+   - **页面载入即时下发**：在 `internal/api/handler.go` 中，当飞牛客户端/浏览器打开应用首页时，服务器动态注入 `<meta name="fn-session-token">` 与 `window.__FN_SESSION__`，并同步下发 HttpOnly `fn_app_session` Cookie；
+   - **前端请求全局拦截器**：在 `web/app.js` 头部劫持全局 `window.fetch`，在所有异步请求中自动附加 `X-App-Session` 请求头，并在 `sendBeacon` 和 `EventSource` 请求中附加 session 凭据；
+   - **多维度合法性判定**：`checkAuth` 中，如果未配置密码，且请求携带有效的 `AppSessionToken`（由合法打开界面的浏览器发出），无论来自局域网还是飞牛 Connect 公网均正常放行；若来自公网且未携带合法会话 Token（直接通过脚本、爬虫扫描绕过前端），则严格阻断并返回 `401 Unauthorized`。
+2. **端口状态提示 (`web/app.js`)**：
+   - 提取端口协议为 `TCP`、`UDP` 或 `TCP/UDP`，渲染 title 属性为 `（${protoPrefix}）在浏览器新窗口打开 ${portUrl}`。
+3. **设置界面去线与排版统一 (`web/index.html`, `web/style.css`)**：
+   - 将原设置卡片包裹入标准的 `.info-section` 容器中，卡片标题移至外部作为 `<h3 class="section-title" id="settings-card-title">`；
+   - 移除原 `.settings-card-title` 内联边框与 `.settings-footer` 的 `border-top`，去除了两条多余的横线；
+   - 设置卡片视觉风格（背景色、圆角、阴影、间距）与下方的宿主机信息和网络接口表格保持 100% 视觉一致。
+4. **README 文案更新 (`README.md`)**：
+   - 灵感及代码参考修正为项目 watchcow，三大核心功能精确采用用户的定制文案。
+5. **投喂 Tab 位置与大尺寸排版 (`web/index.html`, `web/style.css`)**：
+   - 导航栏中将 `<button data-tab="donate">` 调整至「桌面图标」右侧；
+   - `.donate-container` 与 `.donate-card` 设为 `100% !important; max-width: none !important;` 满屏宽度；
+   - `.donate-qr-frame` 尺寸从 180px 大幅增加至 280px，支持高清晰度快速扫码。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 单元测试与验证**：
+   - `internal/api/handler_test.go` 新增 `TestWANWithValidSessionToken` 单元测试，全面覆盖普通导出、公网未鉴权拦截、公网携带合法前端会话放行等全部场景；
+   - Docker 容器环境运行 `go test -v ./...`，全套测试全部 PASS。
+2. **构建打包校验**：
+   - 运行 `./scripts/build-fpk.sh x86` 验证包构建通过，本地生成的 `.fpk` 已清理干净。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 141,000
+- **思维链 Token (Thinking Tokens)**：约 29,000
+- **输出 Token (Completion Tokens)**：约 8,500
+- **总消耗 Token (Total Tokens)**：**约 178,500**
+
+
 
 
 

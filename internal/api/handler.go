@@ -126,21 +126,55 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Static web assets
 	if h.webFS != nil {
 		fileServer := http.FileServer(http.FS(h.webFS))
+		serveIndexWithSession := func(w http.ResponseWriter, r *http.Request) {
+			data, err := fs.ReadFile(h.webFS, "index.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			sessionToken := globalAppSessionMgr.CreateSession()
+			http.SetCookie(w, &http.Cookie{
+				Name:     "fn_app_session",
+				Value:    sessionToken,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			injectTag := fmt.Sprintf("<meta name=\"fn-session-token\" content=\"%s\">\n  <script>window.__FN_SESSION__=%q;</script>\n</head>", sessionToken, sessionToken)
+			htmlStr := strings.Replace(string(data), "</head>", injectTag, 1)
+
+			h.serveHTMLBytes(w, r, []byte(htmlStr))
+		}
+
+		mux.HandleFunc("GET /api/auth/session", func(w http.ResponseWriter, r *http.Request) {
+			sessionToken := globalAppSessionMgr.CreateSession()
+			http.SetCookie(w, &http.Cookie{
+				Name:     "fn_app_session",
+				Value:    sessionToken,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			clientIP := GetClientIP(r)
+			isWAN := clientIP != nil && !IsPrivateOrLocalIP(clientIP)
+			h.jsonResponse(w, r, map[string]any{
+				"session_token": sessionToken,
+				"wan_detected":  isWAN,
+			}, http.StatusOK)
+		})
+
 		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 			path := strings.TrimPrefix(r.URL.Path, "/")
-			if path == "" {
-				path = "index.html"
+			if path == "" || path == "index.html" {
+				serveIndexWithSession(w, r)
+				return
 			}
 			// Check if file exists in webFS
 			f, err := h.webFS.Open(path)
 			if err != nil {
-				// Fallback to index.html for SPA
-				path = "index.html"
-				f, err = h.webFS.Open(path)
-				if err != nil {
-					http.NotFound(w, r)
-					return
-				}
+				// Fallback to index.html with session token for SPA
+				serveIndexWithSession(w, r)
+				return
 			}
 			f.Close()
 			// Prevent browser/iframe caching for HTML and JS
@@ -249,6 +283,24 @@ func (h *Handler) jsonResponse(w http.ResponseWriter, r *http.Request, data inte
 	_, _ = w.Write(bytes)
 }
 
+func (h *Handler) serveHTMLBytes(w http.ResponseWriter, r *http.Request, content []byte) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && len(content) > 512 {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		_, _ = gz.Write(content)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+}
+
 func (h *Handler) serveWithGzip(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		w.Header().Set("Content-Encoding", "gzip")
@@ -274,18 +326,35 @@ func (h *Handler) checkAuth(r *http.Request) bool {
 	clientIP := GetClientIP(r)
 	isWAN := clientIP != nil && !IsPrivateOrLocalIP(clientIP)
 
-	// If password authentication is enabled, always enforce it
+	// 1. If explicit password authentication is configured, always enforce password login
 	if h.authMgr != nil && h.authMgr.IsAuthRequired() {
 		return h.authMgr.IsRequestAuthenticated(r)
 	}
 
-	// If accessed from WAN (Public IP) and NO password has been set,
-	// block unauthenticated access to prevent data leakage!
+	// 2. Validate legitimate frontend session token (from X-App-Session header, cookie, or query param)
+	sessionToken := r.Header.Get("X-App-Session")
+	if sessionToken == "" {
+		if cookie, err := r.Cookie("fn_app_session"); err == nil {
+			sessionToken = cookie.Value
+		}
+	}
+	if sessionToken == "" {
+		sessionToken = r.URL.Query().Get("session")
+	}
+
+	if sessionToken != "" && globalAppSessionMgr.ValidateSession(sessionToken) {
+		// Legitimate session initiated by the authenticated user in fnOS (works in fnOS Connect WAN or LAN)
+		return true
+	}
+
+	// 3. If accessed from WAN (Public IP) and has NO valid frontend session token:
+	// Strictly block malicious programs, crawlers, and scanners bypassing the UI!
 	if isWAN {
-		slog.Warn("[SECURITY] 拦截公网未鉴权访问敏感 API", "remote", r.RemoteAddr, "clientIP", clientIP.String(), "path", r.URL.Path)
+		slog.Warn("[SECURITY] 拦截公网绕过前端界面的未授权 API 访问", "remote", r.RemoteAddr, "clientIP", clientIP.String(), "path", r.URL.Path)
 		return false
 	}
 
+	// 4. Local network / loopback fallback for direct LAN tools
 	return true
 }
 

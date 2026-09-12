@@ -26,6 +26,9 @@
         <span>桌面图标</span>
         <span class="badge" id="desktop-count-badge">0</span>
       </button>
+      <button class="nav-tab" data-tab="donate">
+        <span>🥺投喂</span>
+      </button>
 
       <!-- Spacer to push subsequent tabs to the right -->
       <div class="nav-spacer"></div>
@@ -38,9 +41,6 @@
       </button>
       <button class="nav-tab" data-tab="settings">
         <span>设置</span>
-      </button>
-      <button class="nav-tab" data-tab="donate">
-        <span>🥺投喂</span>
       </button>
     </nav>
   </header>
@@ -229,44 +229,46 @@
     <!-- ==================== TAB 5: 设置 ==================== -->
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
-        <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.9 - 自身桌面图标设置</h3>
-          
-          <div class="form-group">
-            <label class="form-label">飞牛桌面显示名称</label>
-            <input type="text" id="setting-portal-name" class="form-input" value="把 Docker 放到桌面">
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">飞牛桌面可见权限</label>
-            <div class="radio-group">
-              <label class="radio-label">
-                <input type="radio" name="setting-portal-all-users" value="false">
-                <span>仅管理员可见</span>
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="setting-portal-all-users" value="true">
-                <span>所有用户可见</span>
-              </label>
+        <div class="info-section">
+          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.9 - 自身桌面图标设置</h3>
+          <div class="settings-card">
+            
+            <div class="form-group">
+              <label class="form-label">飞牛桌面显示名称</label>
+              <input type="text" id="setting-portal-name" class="form-input" value="把 Docker 放到桌面">
             </div>
-          </div>
 
-          <div class="form-group">
-            <label class="form-label">访问保护密码 (可选，留空则免密)</label>
-            <input type="password" id="setting-portal-password" class="form-input" placeholder="输入新密码，留空保持当前设置">
-          </div>
+            <div class="form-group">
+              <label class="form-label">飞牛桌面可见权限</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="setting-portal-all-users" value="false">
+                  <span>仅管理员可见</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="setting-portal-all-users" value="true">
+                  <span>所有用户可见</span>
+                </label>
+              </div>
+            </div>
 
-          <div class="form-group" id="group-password-confirm">
-            <label class="form-label">确认新密码</label>
-            <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
-            <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
-          </div>
+            <div class="form-group">
+              <label class="form-label">访问保护密码 (可选，留空则免密)</label>
+              <input type="password" id="setting-portal-password" class="form-input" placeholder="输入新密码，留空保持当前设置">
+            </div>
 
-          <div class="settings-footer">
-            <span class="settings-status" id="settings-status"></span>
-            <div class="settings-actions">
-              <button type="button" class="btn btn-secondary" id="btn-cancel-settings">取消</button>
-              <button type="button" class="btn btn-primary" id="btn-save-settings">保存</button>
+            <div class="form-group" id="group-password-confirm">
+              <label class="form-label">确认新密码</label>
+              <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
+              <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
+            </div>
+
+            <div class="settings-footer">
+              <span class="settings-status" id="settings-status"></span>
+              <div class="settings-actions">
+                <button type="button" class="btn btn-secondary" id="btn-cancel-settings">取消</button>
+                <button type="button" class="btn btn-primary" id="btn-save-settings">保存</button>
+              </div>
             </div>
           </div>
         </div>
