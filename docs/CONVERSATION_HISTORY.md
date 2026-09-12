@@ -2355,6 +2355,58 @@ INFO
 - **输出 Token (Completion Tokens)**：约 6,500
 - **总消耗 Token (Total Tokens)**：**约 181,500**
 
+---
+
+## Turn 25 - 投喂二维码超大尺寸优化、进程列表置底规则与分段共用表头、无边框标签、桌面图标类型文案对齐、统一发布 v1.1.11
+
+### 需求分析与设计实现 (Requirements & Architecture)
+
+1. **投喂 Tab 图片超大尺寸优化**：
+   - 将投喂二维码容器 [`.donate-qr-frame`](file:///home/net67373/fn-docker-to-desktop/web/style.css) 尺寸扩大至原先的 1.8 倍以上（由 280px 扩展至 510px，支持 `max-width: 90vw; max-height: 90vw` 自适应）；
+   - 优化网格留白与间距，提升支付标签字体与阴影质感，确保大屏与移动端扫码均清晰舒适。
+
+2. **进程列表新增「置底」规则与共用表头双段表排布**：
+   - 在进程列表工具栏来源筛选（Docker 容器）与协议筛选（全部/TCP/UDP）右侧增加「置底」按钮；
+   - 点击弹出模态框 [`#modal-sink-settings`](file:///home/net67373/fn-docker-to-desktop/web/index.html)，多行文本框输入关键字，支持不区分大小写模糊匹配，支持恢复默认、取消、保存；
+   - 默认将 `zerotier`、`tailscale`、`cloudflared`、`frpc`、`frps`、`wireguard`、`wg-easy`、`easytier`、`headscale`、`nps`、`npc` 等组网与穿透服务置底；
+   - 列表分段渲染：置底项目与普通项目共用同一个 `table` 和 `thead` 表头（确保所有列宽 100% 绝对对齐），中间通过带微小间距的虚线与居中徽章 [`<tr class="table-sink-divider-row">`](file:///home/net67373/fn-docker-to-desktop/web/style.css) 隔开，清晰展示“置底”标识。
+
+3. **进程 / 容器标签去除边框**：
+   - 调整 [`.proc-tag`](file:///home/net67373/fn-docker-to-desktop/web/style.css) 样式，去掉边框线（`border: none !important;`），仅保留清爽底色与文字，视觉更现代通透。
+
+4. **桌面图标列表「类型」文案统一对齐**：
+   - `shortcut` -> **网页链接**（原“网页快捷”）；
+   - `proxy` -> **端口映射**（原“代理服务”）；
+   - `local` -> **本机端口**；
+   - 同步修改创建与编辑弹窗中模式切换选项。
+
+5. **版本号统一提升至 `1.1.11` 并正式发版**：
+   - 后端服务版本：`cmd/server/main.go` -> `const appVersion = "1.1.11"`；
+   - 飞牛 OS 清单：`fnos-app/manifest` -> `version = 1.1.11`；
+   - 前端脚本与样式：`web/index.html` -> `?v=1.1.11`，设置卡片版本标题 -> `v1.1.11`；
+   - 导出备份兜底版本：`web/app.js` -> `1.1.11`；
+   - 自动化测试用例：`internal/api/handler_test.go` -> 全面更新期望版本为 `1.1.11`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试**：
+   - 运行 Docker 单元测试 `docker run --rm -v "$(pwd)":/app -w /app golang:alpine go test -v ./...`，覆盖全部 API、桌面注册、安全鉴权与配置导出模块，100% 通过（PASS）。
+2. **飞牛 OS 安装包构建验证**：
+   - 执行 `./scripts/build-fpk.sh x86`，安装包、静态资源权威同步与 SHA 校验完整生成，验证后清理本地 `.fpk` 文件。
+3. **版本发布与 Tag 推送**：
+   - 提交全部代码改动至 `master` 分支，创建 Git Tag `v1.1.11` 并推送到 GitHub 远程仓库，触发 GitHub Actions 自动化流水线。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 158,000
+- **思维链 Token (Thinking Tokens)**：约 24,000
+- **输出 Token (Completion Tokens)**：约 7,000
+- **总消耗 Token (Total Tokens)**：**约 189,000**
+
 
 
 

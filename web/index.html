@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.10">
+  <link rel="stylesheet" href="style.css?v=1.1.11">
 </head>
 <body>
   <!-- Header Bar -->
@@ -65,6 +65,9 @@
           <option value="tcp">TCP</option>
           <option value="udp">UDP</option>
         </select>
+        <button class="btn btn-secondary" id="btn-open-sink-modal" title="设置需要置底排布的 Docker 容器或进程名单">
+          <span>置底</span>
+        </button>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
         <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
@@ -230,7 +233,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="info-section">
-          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.10 - 自身桌面图标设置</h3>
+          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.11 - 自身桌面图标设置</h3>
           <div class="settings-card">
             
             <div class="form-group">
@@ -376,9 +379,9 @@
       <div class="modal-body">
         <!-- Mode Tabs -->
         <div class="mode-selector">
-          <button class="mode-tab active" data-mode="local">本机现有端口</button>
-          <button class="mode-tab" data-mode="proxy">代理服务到本机</button>
-          <button class="mode-tab" data-mode="shortcut">网页快捷方式</button>
+          <button class="mode-tab active" data-mode="local">本机端口</button>
+          <button class="mode-tab" data-mode="proxy">端口映射</button>
+          <button class="mode-tab" data-mode="shortcut">网页链接</button>
         </div>
 
         <form id="form-desktop-item">
@@ -698,9 +701,39 @@
         </form>
       </div>
     </div>
+  </div>
+
+  <!-- Modal: 进程/容器置底设置 -->
+  <div class="modal-overlay" id="modal-sink-settings">
+    <div class="modal-dialog modal-dialog-sm" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 class="modal-title">置底规则设置</h3>
+        <button class="btn btn-icon btn-secondary modal-close" data-close="modal-sink-settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 0.85rem; line-height: 1.6; color: var(--text-muted); font-size: 0.88rem;">
+          请输入需要置底排布的 Docker 容器名或系统进程名，<strong>每行一个</strong>。<br>
+          规则<strong>不区分大小写</strong>，支持包含/模糊匹配。匹配的项目将在进程列表中移至底部区域。
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+          <textarea id="sink-rules-input" class="form-input" rows="7" placeholder="zerotier&#10;tailscale&#10;cloudflared&#10;frpc&#10;wireguard" style="font-family: monospace; font-size: 0.88rem; line-height: 1.5; resize: vertical; width: 100%; box-sizing: border-box;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <button class="btn btn-secondary" id="btn-reset-sink-rules" type="button">恢复默认</button>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn btn-secondary" id="btn-cancel-sink-modal" type="button">取消</button>
+          <button class="btn btn-primary" id="btn-save-sink-rules" type="button">保存设置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.10"></script>
+  <script src="app.js?v=1.1.11"></script>
 </body>
 </html>

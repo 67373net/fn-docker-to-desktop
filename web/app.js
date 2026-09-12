@@ -292,7 +292,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.10',
+    version: state.settings?.version || '1.1.11',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -547,6 +547,111 @@ function renderHostInfo(host) {
   ifaceTbody.innerHTML = html;
 }
 
+// --- Sink Rules Management ---
+const DEFAULT_SINK_RULES = [
+  'zerotier',
+  'tailscale',
+  'cloudflared',
+  'frpc',
+  'frps',
+  'wireguard',
+  'wg-easy',
+  'easytier',
+  'headscale',
+  'nps',
+  'npc'
+];
+
+function getSinkRules() {
+  const stored = localStorage.getItem('fn_docker_sink_rules');
+  if (stored !== null) {
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed.map(s => String(s).trim().toLowerCase()).filter(Boolean);
+      }
+    } catch (_) {}
+  }
+  return [...DEFAULT_SINK_RULES];
+}
+
+function saveSinkRules(rules) {
+  localStorage.setItem('fn_docker_sink_rules', JSON.stringify(rules));
+}
+
+function renderPortRowHtml(p) {
+  const portUrl = getHostTargetUrl(p.local_port, 'http', '/');
+  const isDocker = p.docker && p.docker.is_docker;
+  const procDisplayName = isDocker ? p.docker.container_name : (p.process_name || '系统服务');
+  const procTag = isDocker
+    ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
+    : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`;
+
+  const matchingItems = (state.desktopItems || []).filter(item => item.port === p.local_port);
+  const count = matchingItems.length || p.desktop_count || (p.has_desktop ? 1 : 0);
+
+  let desktopCell = '';
+  if (count > 0) {
+    desktopCell = `
+      <div class="desktop-btn-group">
+        <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
+          <span class="btn-text">已在桌面</span><span class="btn-badge">${count}</span>
+        </button>
+        <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+      </div>`;
+  } else {
+    desktopCell = `
+      <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}">
+        <span>放到桌面</span>
+      </button>`;
+  }
+
+  const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '-';
+  const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
+  const resText = (cpuText === '-' && rssText === '-') ? '-' : `${cpuText} / ${rssText}`;
+
+  const protoUpper = (p.protocol || 'TCP').toUpperCase();
+  const isPureUdp = protoUpper === 'UDP';
+  const protoClass = isPureUdp ? 'text-proto-udp' : 'text-proto-tcp';
+  const portClass = isPureUdp ? 'port-link-udp' : 'port-link-tcp';
+
+  let protoPrefix = protoUpper;
+  if (protoUpper.includes('TCP') && protoUpper.includes('UDP')) {
+    protoPrefix = 'TCP/UDP';
+  } else if (protoUpper.includes('UDP')) {
+    protoPrefix = 'UDP';
+  } else {
+    protoPrefix = 'TCP';
+  }
+  const portTitle = `（${protoPrefix}）在浏览器新窗口打开 ${portUrl}`;
+
+  return `<tr>
+    <td>
+      <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link ${portClass}" title="${portTitle}">
+        <span>${p.local_port}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+      </a>
+    </td>
+    <td class="col-hide-minimal">
+      <span class="${protoClass}">${escapeHtml(p.protocol)}</span>
+    </td>
+    <td class="col-hide-minimal"><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
+    <td>${procTag}</td>
+    <td class="col-hide-minimal" style="font-variant-numeric: tabular-nums;">${resText}</td>
+    <td>${desktopCell}</td>
+    <td>
+      <div class="table-actions">
+        <button class="btn btn-sm btn-secondary btn-view-port-detail" data-port="${p.local_port}">
+          <span>详情</span>
+        </button>
+      </div>
+    </td>
+    <td class="filler-col"></td>
+  </tr>`;
+}
+
 // --- Render Ports Table ---
 function renderPortsTable() {
   const tbody = document.getElementById('ports-tbody');
@@ -584,78 +689,53 @@ function renderPortsTable() {
     return;
   }
 
-  let html = '';
+  // Split into normal items and sink items
+  const sinkRules = getSinkRules();
+  const isSinkItem = (p) => {
+    if (!sinkRules || !sinkRules.length) return false;
+    const containerName = (p.docker && p.docker.container_name ? p.docker.container_name : '').toLowerCase();
+    const imageName = (p.docker && p.docker.image ? p.docker.image : '').toLowerCase();
+    const procName = (p.process_name || '').toLowerCase();
+    const exeName = (p.exe || '').toLowerCase();
+    return sinkRules.some(r =>
+      (containerName && containerName.includes(r)) ||
+      (imageName && imageName.includes(r)) ||
+      (procName && procName.includes(r)) ||
+      (exeName && exeName.includes(r))
+    );
+  };
+
+  const normalItems = [];
+  const sinkItems = [];
   for (const p of filtered) {
-    const portUrl = getHostTargetUrl(p.local_port, 'http', '/');
-    const isDocker = p.docker && p.docker.is_docker;
-    const procDisplayName = isDocker ? p.docker.container_name : (p.process_name || '系统服务');
-    const procTag = isDocker
-      ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
-      : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`;
-
-    const matchingItems = (state.desktopItems || []).filter(item => item.port === p.local_port);
-    const count = matchingItems.length || p.desktop_count || (p.has_desktop ? 1 : 0);
-
-    let desktopCell = '';
-    if (count > 0) {
-      desktopCell = `
-        <div class="desktop-btn-group">
-          <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
-            <span class="btn-text">已在桌面</span><span class="btn-badge">${count}</span>
-          </button>
-          <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          </button>
-        </div>`;
+    if (isSinkItem(p)) {
+      sinkItems.push(p);
     } else {
-      desktopCell = `
-        <button class="btn btn-sm btn-primary btn-add-port-to-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}">
-          <span>放到桌面</span>
-        </button>`;
+      normalItems.push(p);
     }
+  }
 
-    const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '-';
-    const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
-    const resText = (cpuText === '-' && rssText === '-') ? '-' : `${cpuText} / ${rssText}`;
+  let html = '';
+  for (const p of normalItems) {
+    html += renderPortRowHtml(p);
+  }
 
-    const protoUpper = (p.protocol || 'TCP').toUpperCase();
-    const isPureUdp = protoUpper === 'UDP';
-    const protoClass = isPureUdp ? 'text-proto-udp' : 'text-proto-tcp';
-    const portClass = isPureUdp ? 'port-link-udp' : 'port-link-tcp';
-
-    let protoPrefix = protoUpper;
-    if (protoUpper.includes('TCP') && protoUpper.includes('UDP')) {
-      protoPrefix = 'TCP/UDP';
-    } else if (protoUpper.includes('UDP')) {
-      protoPrefix = 'UDP';
-    } else {
-      protoPrefix = 'TCP';
+  if (sinkItems.length > 0) {
+    if (normalItems.length > 0) {
+      html += `
+        <tr class="table-sink-divider-row" aria-hidden="true">
+          <td colspan="8" class="table-sink-divider-cell">
+            <div class="table-sink-divider-wrap">
+              <div class="table-sink-divider-line"></div>
+              <span class="table-sink-divider-badge">置底</span>
+              <div class="table-sink-divider-line"></div>
+            </div>
+          </td>
+        </tr>`;
     }
-    const portTitle = `（${protoPrefix}）在浏览器新窗口打开 ${portUrl}`;
-
-    html += `<tr>
-      <td>
-        <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link ${portClass}" title="${portTitle}">
-          <span>${p.local_port}</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-        </a>
-      </td>
-      <td class="col-hide-minimal">
-        <span class="${protoClass}">${escapeHtml(p.protocol)}</span>
-      </td>
-      <td class="col-hide-minimal"><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
-      <td>${procTag}</td>
-      <td class="col-hide-minimal" style="font-variant-numeric: tabular-nums;">${resText}</td>
-      <td>${desktopCell}</td>
-      <td>
-        <div class="table-actions">
-          <button class="btn btn-sm btn-secondary btn-view-port-detail" data-port="${p.local_port}">
-            <span>详情</span>
-          </button>
-        </div>
-      </td>
-      <td class="filler-col"></td>
-    </tr>`;
+    for (const p of sinkItems) {
+      html += renderPortRowHtml(p);
+    }
   }
 
   tbody.innerHTML = html;
@@ -731,11 +811,11 @@ function renderDesktopTable() {
     let modeClass = 'text-type-local';
     let targetText = `:${item.port}`;
     if (item.mode === 'proxy') {
-      modeText = '代理服务';
+      modeText = '端口映射';
       modeClass = 'text-type-proxy';
       targetText = `${item.target_url} ➔ :${item.port}`;
     } else if (item.mode === 'shortcut') {
-      modeText = '网页快捷';
+      modeText = '网页链接';
       modeClass = 'text-type-shortcut';
       targetText = item.target_url;
     }
@@ -2653,6 +2733,50 @@ function initApp() {
     btnRefreshProcs.addEventListener('click', () => {
       fetchProcesses();
       showToast('系统进程列表已刷新', 'info');
+    });
+  }
+
+  // Sink settings modal listeners
+  const btnOpenSink = document.getElementById('btn-open-sink-modal');
+  const sinkInput = document.getElementById('sink-rules-input');
+  const btnResetSink = document.getElementById('btn-reset-sink-rules');
+  const btnSaveSink = document.getElementById('btn-save-sink-rules');
+  const btnCancelSink = document.getElementById('btn-cancel-sink-modal');
+
+  if (btnOpenSink) {
+    btnOpenSink.addEventListener('click', () => {
+      const rules = getSinkRules();
+      if (sinkInput) {
+        sinkInput.value = rules.join('\n');
+      }
+      openModal('modal-sink-settings');
+    });
+  }
+
+  if (btnResetSink) {
+    btnResetSink.addEventListener('click', () => {
+      if (sinkInput) {
+        sinkInput.value = DEFAULT_SINK_RULES.join('\n');
+      }
+    });
+  }
+
+  if (btnCancelSink) {
+    btnCancelSink.addEventListener('click', () => {
+      closeModal('modal-sink-settings');
+    });
+  }
+
+  if (btnSaveSink) {
+    btnSaveSink.addEventListener('click', () => {
+      const lines = (sinkInput ? sinkInput.value : '')
+        .split('\n')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
+      saveSinkRules(lines);
+      closeModal('modal-sink-settings');
+      renderPortsTable();
+      showToast('置底规则已保存', 'success');
     });
   }
 
