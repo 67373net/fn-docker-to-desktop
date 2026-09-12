@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -261,6 +262,8 @@ type AppcenterPackageConfig struct {
 	IconPath      string
 	ContainerName string
 	Image         string
+	NoticeEnabled bool
+	NoticeContent string
 }
 
 // BuildPackage creates the fnOS app structure on disk in a temporary directory.
@@ -353,9 +356,11 @@ desktop_applaunchname=%s
 		"noDisplay": false,
 	}
 
-	if cfg.Port == 0 && isExternalURL {
-		// CGI redirect mode strictly aligned with WatchCow
-		entryMap["type"] = "url"
+	isNotice := cfg.NoticeEnabled && strings.TrimSpace(cfg.NoticeContent) != ""
+
+	if (cfg.Port == 0 && isExternalURL) || isNotice {
+		// CGI redirect mode strictly aligned with WatchCow and for Notice mode
+		entryMap["type"] = uiType
 		entryMap["protocol"] = "http"
 		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", cfg.AppName, cfg.AppName)
 	} else {
@@ -386,9 +391,117 @@ desktop_applaunchname=%s
 	// Also write to ui/config for desktop_uidir=ui compatibility
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
-	// Write index.cgi for CGI redirect mode
-	if cfg.Port == 0 && isExternalURL {
-		cgiScript := fmt.Sprintf(`#!/bin/bash
+	// Write index.cgi for CGI redirect mode or notice mode
+	if (cfg.Port == 0 && isExternalURL) || isNotice {
+		var cgiScript string
+		if isNotice {
+			targetJsExpr := ""
+			if cfg.Port > 0 {
+				protoVal := proto
+				if protoVal == "" {
+					protoVal = "http"
+				}
+				targetJsExpr = fmt.Sprintf(`"%s://" + window.location.hostname + ":%d%s"`, protoVal, cfg.Port, urlPath)
+			} else {
+				targetJsExpr = fmt.Sprintf(`"%s"`, urlPath)
+			}
+
+			escapedNotice := html.EscapeString(cfg.NoticeContent)
+			escapedTitle := html.EscapeString(title)
+
+			cgiScript = fmt.Sprintf(`#!/bin/bash
+# CGI redirect with Notice for fn-docker-to-desktop
+MAIN_BIN=""
+for candidate in \
+    "${TRIM_APPDEST}/../fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/app/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app/fn-docker-to-desktop" \
+    "/var/apps/fn-docker-to-desktop/target/fn-docker-to-desktop" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop"; do
+    if [ -x "${candidate}" ]; then
+        MAIN_BIN="${candidate}"
+        break
+    fi
+done
+
+SOCKET=""
+for s in \
+    "${TRIM_PKGVAR}/../fn-docker-to-desktop/app.sock" \
+    "/tmp/fn-docker-to-desktop.sock" \
+    "/var/apps/fn-docker-to-desktop/target/app.sock" \
+    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"; do
+    if [ -S "${s}" ]; then
+        SOCKET="${s}"
+        break
+    fi
+done
+
+if [ -n "${MAIN_BIN}" ] && [ -n "${SOCKET}" ]; then
+    exec "${MAIN_BIN}" --mode cgi --socket "${SOCKET}"
+fi
+
+echo "Content-Type: text/html; charset=utf-8"
+echo ""
+cat << 'EOFCGIHTML'
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>%s - 启动提示</title>
+<style>
+  :root { --bg-page: #f1f5f9; --bg-card: #ffffff; --text-main: #0f172a; --text-muted: #64748b; --border: #e2e8f0; --primary: #2563eb; --primary-hover: #1d4ed8; --notice-bg: #eff6ff; --notice-border: #bfdbfe; --notice-text: #1e3a8a; }
+  @media (prefers-color-scheme: dark) { :root { --bg-page: #0b0f17; --bg-card: #151b28; --text-main: #f8fafc; --text-muted: #94a3b8; --border: #242f42; --primary: #3b82f6; --primary-hover: #2563eb; --notice-bg: #172554; --notice-border: #1e40af; --notice-text: #dbeafe; } }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background-color: var(--bg-page); color: var(--text-main); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1.5rem; }
+  .notice-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; max-width: 460px; width: 100%%; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+  .notice-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .notice-app-name { font-size: 17px; font-weight: 700; color: var(--text-main); }
+  .notice-badge { font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 2px; }
+  .notice-body { background: var(--notice-bg); border: 1px solid var(--notice-border); color: var(--notice-text); border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; margin-bottom: 20px; }
+  .notice-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .skip-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
+  .btn-proceed { background-color: var(--primary); color: #fff; border: none; padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn-proceed:hover { background-color: var(--primary-hover); }
+</style>
+</head>
+<body>
+<div class="notice-card">
+  <div class="notice-header">
+    <div>
+      <div class="notice-app-name">%s</div>
+      <div class="notice-badge">📢 应用启动提示</div>
+    </div>
+  </div>
+  <div class="notice-body">%s</div>
+  <div class="notice-footer">
+    <label class="skip-label"><input type="checkbox" id="skip-today"> <span>今日不再提示</span></label>
+    <button type="button" class="btn-proceed" id="btn-proceed">进入应用</button>
+  </div>
+</div>
+<script>
+(function() {
+  const TARGET_URL = %s;
+  const skipKey = 'fn_notice_skip_%s';
+  const today = new Date().toISOString().slice(0, 10);
+  try { if (localStorage.getItem(skipKey) === today) { window.location.replace(TARGET_URL); return; } } catch(e){}
+  const btn = document.getElementById('btn-proceed');
+  const chk = document.getElementById('skip-today');
+  function proceed() {
+    if (chk && chk.checked) { try { localStorage.setItem(skipKey, today); } catch(e){} }
+    window.location.replace(TARGET_URL);
+  }
+  if (btn) { btn.addEventListener('click', proceed); btn.focus(); }
+  window.addEventListener('keydown', function(e) { if (e.key === 'Enter') proceed(); });
+})();
+</script>
+</body>
+</html>
+EOFCGIHTML
+exit 0
+`, escapedTitle, escapedTitle, escapedNotice, targetJsExpr, cfg.AppName)
+		} else {
+			cgiScript = fmt.Sprintf(`#!/bin/bash
 # CGI redirect for fn-docker-to-desktop
 MAIN_BIN=""
 for candidate in \
@@ -439,6 +552,7 @@ window.location.replace("%s");
 EOFCGIHTML
 exit 0
 `, urlPath, urlPath, urlPath, urlPath)
+		}
 
 		_ = os.WriteFile(filepath.Join(pkgDir, "app", "ui", "index.cgi"), []byte(cgiScript), 0755)
 		_ = os.WriteFile(filepath.Join(pkgDir, "ui", "index.cgi"), []byte(cgiScript), 0755)
@@ -542,6 +656,8 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		IconPath:      item.Icon,
 		ContainerName: item.ContainerName,
 		Image:         item.Image,
+		NoticeEnabled: item.NoticeEnabled,
+		NoticeContent: item.NoticeContent,
 	})
 	if err != nil {
 		return fmt.Errorf("构建应用包失败: %w", err)

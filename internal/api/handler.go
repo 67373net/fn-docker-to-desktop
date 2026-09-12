@@ -1167,6 +1167,8 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		target = r.URL.Query().Get("url")
 	}
 
+	var foundItem *desktop.DesktopItem
+
 	// If no query parameter, parse path: /redirect/<appName>/_ or /redirect/<appName>
 	if target == "" {
 		pathInfo := r.URL.Path
@@ -1180,6 +1182,7 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		if len(parts) > 0 && parts[0] != "" {
 			appName := parts[0]
 			if item, ok := h.storage.GetItemByAppName(appName); ok {
+				foundItem = &item
 				if item.TargetURL != "" {
 					target = item.TargetURL
 				} else if item.Port > 0 {
@@ -1201,6 +1204,33 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if foundItem == nil {
+		if id := r.URL.Query().Get("id"); id != "" {
+			if item, ok := h.storage.GetItem(id); ok {
+				foundItem = &item
+				if target == "" {
+					if item.TargetURL != "" {
+						target = item.TargetURL
+					} else if item.Port > 0 {
+						proto := item.Protocol
+						if proto == "" {
+							proto = "http"
+						}
+						p := item.Path
+						if p == "" {
+							p = "/"
+						}
+						host := r.Host
+						if hName, _, err := net.SplitHostPort(host); err == nil {
+							host = hName
+						}
+						target = fmt.Sprintf("%s://%s:%d%s", proto, host, item.Port, p)
+					}
+				}
+			}
+		}
+	}
+
 	if target == "" {
 		slog.Warn("[AUDIT] 桌面图标跳转缺少目标地址", "path", r.URL.Path, "query", r.URL.RawQuery, "remote", r.RemoteAddr)
 		http.Error(w, "缺少跳转目标 target", http.StatusBadRequest)
@@ -1212,6 +1242,12 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("[AUDIT] 桌面快捷方式跳转触发", "target", target, "path", r.URL.Path, "remote", r.RemoteAddr)
+
+	// If item has notice enabled, render interstitial notice page before proceeding
+	if foundItem != nil && foundItem.NoticeEnabled && strings.TrimSpace(foundItem.NoticeContent) != "" {
+		h.renderNoticePage(w, *foundItem, target)
+		return
+	}
 
 	w.Header().Set("Location", target)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1232,6 +1268,224 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
     <p>正在跳转至 <a href="%s">%s</a>...</p>
 </body>
 </html>`, escapedTarget, template.JSEscapeString(target), escapedTarget, escapedTarget)
+}
+
+func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopItem, target string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	escapedTitle := html.EscapeString(item.Name)
+	escapedNotice := html.EscapeString(item.NoticeContent)
+	iconUrl := "/icon.png"
+	if item.ID != "" {
+		iconUrl = fmt.Sprintf("/api/desktop/items/%s/icon", item.ID)
+	}
+
+	targetJson, _ := json.Marshal(target)
+	idJson, _ := json.Marshal(item.ID)
+
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>%s - 启动提示</title>
+  <style>
+    :root {
+      --bg-page: #f1f5f9;
+      --bg-card: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --notice-bg: #eff6ff;
+      --notice-border: #bfdbfe;
+      --notice-text: #1e3a8a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-page: #0b0f17;
+        --bg-card: #151b28;
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --border: #242f42;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --notice-bg: #172554;
+        --notice-border: #1e40af;
+        --notice-text: #dbeafe;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    .notice-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 460px;
+      width: 100%%;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .notice-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .notice-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      object-fit: cover;
+      background: var(--bg-page);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .notice-title-group {
+      flex: 1;
+      overflow: hidden;
+    }
+    .notice-app-name {
+      font-size: 17px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text-main);
+    }
+    .notice-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--primary);
+      margin-top: 2px;
+      font-weight: 600;
+    }
+    .notice-body {
+      background: var(--notice-bg);
+      border: 1px solid var(--notice-border);
+      color: var(--notice-text);
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 260px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+    }
+    .notice-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .skip-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn-proceed {
+      background-color: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.1s;
+      outline: none;
+    }
+    .btn-proceed:hover {
+      background-color: var(--primary-hover);
+    }
+    .btn-proceed:active {
+      transform: scale(0.98);
+    }
+  </style>
+</head>
+<body>
+  <div class="notice-card">
+    <div class="notice-header">
+      <img src="%s" alt="icon" class="notice-icon" onerror="this.src='/icon.png'">
+      <div class="notice-title-group">
+        <div class="notice-app-name">%s</div>
+        <div class="notice-badge">📢 应用启动提示</div>
+      </div>
+    </div>
+    <div class="notice-body">%s</div>
+    <div class="notice-footer">
+      <label class="skip-label">
+        <input type="checkbox" id="skip-today">
+        <span>今日不再提示</span>
+      </label>
+      <button type="button" class="btn-proceed" id="btn-proceed">进入应用</button>
+    </div>
+  </div>
+  <script>
+    (function() {
+      const TARGET_URL = %s;
+      const ITEM_ID = %s;
+      const skipKey = 'fn_notice_skip_' + ITEM_ID;
+      const today = new Date().toISOString().slice(0, 10);
+
+      try {
+        if (localStorage.getItem(skipKey) === today) {
+          window.location.replace(TARGET_URL);
+          return;
+        }
+      } catch (e) {}
+
+      const btn = document.getElementById('btn-proceed');
+      const chk = document.getElementById('skip-today');
+
+      function proceed() {
+        if (chk && chk.checked) {
+          try {
+            localStorage.setItem(skipKey, today);
+          } catch (e) {}
+        }
+        window.location.replace(TARGET_URL);
+      }
+
+      if (btn) {
+        btn.addEventListener('click', proceed);
+        btn.focus();
+      }
+
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          proceed();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>`, escapedTitle, iconUrl, escapedTitle, escapedNotice, string(targetJson), string(idJson))
 }
 
 // Auth handlers

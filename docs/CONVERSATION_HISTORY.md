@@ -2693,6 +2693,46 @@ INFO
 3. **Git 提交与发布**：
    - 打上 Git Tag `v1.1.16` 并推送至 GitHub 远程仓库。
 
+---
+
+## Turn 31 - 弹窗未保存关闭二次提醒、GitHub 开源地址置顶与桌面图标启动前公告功能 (v1.1.17)
+
+### 用户需求 (User Requirements)
+1. **未保存二次提醒**：修改了文字图标（文本、文字颜色、背景颜色）或编辑其他内容（名称、端口、URL、权限、公告等）没有保存，关闭窗口（点击 X、取消、点击遮罩或按下 Esc）时必须进行二次提醒确认，避免误关丢失输入。
+2. **GitHub 地址位置调整**：将 GitHub 开源地址卡片放在设置界面的最上方。
+3. **桌面图标编辑添加公告**：在桌面图标编辑弹窗中增加“应用启动公告 / 提示（可选）”功能，支持开启开关与多行文本输入；开启后从飞牛桌面点击图标打开应用时，先展示公告提醒并由用户点击“进入应用”，并支持“今日不再提示”。
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **桌面图标弹窗未保存二次确认机制 (`web/app.js`)**：
+   - 设计并实现 `getDesktopItemFormSnapshot()`：对桌面图标模态窗的所有输入状态进行序列化快照（包含模式、显示名称、包名、容器名、本机端口、目标地址、代理端口、忽略证书开关、网页链接、协议、访问路径、打开方式、可见权限、图标分类 Tab、文字图标内容、文字颜色、背景颜色、网络图标地址、已上传图标以及公告开关和内容共 21 个字段）；
+   - 在打开创建弹窗、从端口快速添加、编辑桌面图标时通过 `saveDesktopItemFormSnapshot()` 捕获初始表单快照；
+   - 实现 `isDesktopItemFormDirty()` 与 `tryCloseDesktopItemModal()`：在用户触发弹窗关闭操作（点击右上角 X、点击取消、点击模态框外部遮罩或按下键盘 `Escape` 键）时，深度比对快照。若有变动弹出确认提示框（`当前内容已修改但尚未保存，确定要放弃修改并关闭窗口吗？`）；若无修改则直接关闭；
+   - 表单提交成功保存或删除确认后，自动清空快照状态，顺畅关闭窗口。
+2. **GitHub 开源仓库卡片置顶 (`web/index.html`)**：
+   - 将原设置页底部的 GitHub 仓库卡片整体提升至 `#pane-settings` 容器最顶部（位于「系统设置」主卡片之上），用户进入设置一目了然。
+3. **桌面图标启动前公告/提示功能全链路架构 (`internal/desktop/types.go`, `internal/desktop/installer.go`, `internal/api/handler.go`, `web/index.html`, `web/app.js`)**：
+   - **数据结构与持久化**：在 `DesktopItem` 结构体中扩展 `NoticeEnabled bool json:"notice_enabled,omitempty"` 与 `NoticeContent string json:"notice_content,omitempty"` 字段；
+   - **安装器集成 (`installer.go`)**：在 `AppcenterPackageConfig` 中引入公告支持。若开启公告，桌面图标将通过内置应用网关中转路径引导，并在桌面包内生成支持离线优雅回退的 Notice 页面与 index.cgi；
+   - **优雅交互与中间页 (`handler.go`)**：在反向代理中转路由 `handleRedirect` 中识别到开启了公告的图标，调用 `renderNoticePage` 渲染自适应浅色/深色主题的现代卡片页面（展示应用图标、应用名称、公告正文、「今日不再提示」勾选与「进入应用」按钮），支持按回车键直达与基于 `localStorage` 的当天免提示跳过；
+   - **前端交互与状态回显 (`web/index.html`, `web/app.js`)**：在添加/编辑图标弹窗中增加优雅的折叠式公告文本域及开关联动；桌面图标列表根据状态显示 `📢 公告` 徽章标识。
+4. **版本升级至 `v1.1.17`**：
+   - 同步更新 `cmd/server/main.go`, `fnos-app/manifest`, `internal/api/handler_test.go`, `web/index.html`, `web/app.js` 至 `1.1.17`，并在 `handler_test.go` 中新增 `TestNoticePageRedirect` 单元测试。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker `golang:1.22-alpine` 容器内运行 `go test -v ./...` 全部 PASS（包含新增的公告提示及直接重定向测试）。
+2. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.17` 并推送至 GitHub 远程仓库。
+
+
 
 
 

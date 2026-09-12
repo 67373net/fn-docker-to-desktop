@@ -133,6 +133,7 @@ let state = {
   procSortDir: 'desc',
   activeIconTab: 'text',
   currentTextIconDataUrl: null,
+  desktopItemFormSnapshot: null,
   originalSettings: null,
   isSettingsDirty: false,
   eventSource: null,
@@ -306,7 +307,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.16',
+    version: state.settings?.version || '1.1.17',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -404,7 +405,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.16';
+    const ver = state.settings?.version || '1.1.17';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -944,12 +945,15 @@ function renderDesktopTable() {
     }
 
     const isUpdating = !!item._updating || isReconciling;
+    const noticeBadge = (item.notice_enabled && (item.notice_content || '').trim())
+      ? '<span class="badge badge-info" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); padding: 1px 6px; border-radius: 4px;" title="已开启启动前提醒公告">📢 公告</span>'
+      : '';
 
     html += `<tr class="${isUpdating ? 'row-updating' : ''}">
       <td>
         <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
       </td>
-      <td><strong>${escapeHtml(item.name)}</strong></td>
+      <td><strong>${escapeHtml(item.name)}</strong>${noticeBadge}</td>
       <td><span class="${modeClass}">${modeText}</span></td>
       <td><code>${escapeHtml(targetText)}</code></td>
       <td><span class="${openModeClass}">${openModeText}</span></td>
@@ -1147,13 +1151,110 @@ function closeModal(id) {
   if (el) el.classList.remove('active');
 }
 
+function getDesktopItemFormSnapshot() {
+  return JSON.stringify({
+    mode: document.getElementById('item-mode')?.value || '',
+    name: document.getElementById('item-name')?.value || '',
+    appName: document.getElementById('item-app-name')?.value || '',
+    containerName: document.getElementById('item-container-name')?.value || '',
+    localPort: document.getElementById('item-local-port')?.value || '',
+    targetUrl: document.getElementById('item-target-url')?.value || '',
+    proxyPort: document.getElementById('item-proxy-port')?.value || '',
+    skipTls: !!document.getElementById('item-skip-tls')?.checked,
+    shortcutUrl: document.getElementById('item-shortcut-url')?.value || '',
+    protocol: document.getElementById('item-protocol')?.value || 'http',
+    path: document.getElementById('item-path')?.value || '/',
+    uiType: document.getElementById('item-ui-type')?.value || 'url',
+    allUsers: document.getElementById('item-all-users')?.value || 'false',
+    iconTab: state.activeIconTab || 'text',
+    iconText: document.getElementById('icon-text-input')?.value || '',
+    iconTextColor: (document.getElementById('icon-text-color')?.value || '#ffffff').toLowerCase(),
+    iconBgColor: (document.getElementById('icon-bg-color')?.value || '#1e293b').toLowerCase(),
+    iconUrl: document.getElementById('icon-url-input')?.value || '',
+    iconHidden: document.getElementById('item-icon')?.value || '',
+    noticeEnabled: !!document.getElementById('item-notice-enabled')?.checked,
+    noticeContent: document.getElementById('item-notice-content')?.value || ''
+  });
+}
+
+function saveDesktopItemFormSnapshot() {
+  state.desktopItemFormSnapshot = getDesktopItemFormSnapshot();
+}
+
+function isDesktopItemFormDirty() {
+  const modal = document.getElementById('modal-desktop-item');
+  if (!modal || !modal.classList.contains('active')) return false;
+  if (!state.desktopItemFormSnapshot) return false;
+  return getDesktopItemFormSnapshot() !== state.desktopItemFormSnapshot;
+}
+
+function tryCloseDesktopItemModal() {
+  if (isDesktopItemFormDirty()) {
+    if (!confirm('当前内容已修改但尚未保存，确定要放弃修改并关闭窗口吗？')) {
+      return false;
+    }
+  }
+  state.desktopItemFormSnapshot = null;
+  closeModal('modal-desktop-item');
+  return true;
+}
+
 function initModals() {
   document.querySelectorAll('.modal-close').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       const target = btn.dataset.close;
-      if (target) closeModal(target);
+      if (target === 'modal-desktop-item') {
+        e.preventDefault();
+        tryCloseDesktopItemModal();
+      } else if (target) {
+        closeModal(target);
+      }
     });
   });
+
+  // Modal backdrop click outside dialog
+  const modalDesktop = document.getElementById('modal-desktop-item');
+  if (modalDesktop) {
+    modalDesktop.addEventListener('click', (e) => {
+      if (e.target === modalDesktop) {
+        tryCloseDesktopItemModal();
+      }
+    });
+  }
+
+  // Global ESC key listener to safely prompt before closing active modals
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const elDesktop = document.getElementById('modal-desktop-item');
+      if (elDesktop && elDesktop.classList.contains('active')) {
+        tryCloseDesktopItemModal();
+        return;
+      }
+      const elSink = document.getElementById('modal-sink-settings');
+      if (elSink && elSink.classList.contains('active')) {
+        const btnCancelSink = document.getElementById('btn-cancel-sink-modal');
+        if (btnCancelSink) {
+          btnCancelSink.click();
+        } else {
+          closeModal('modal-sink-settings');
+        }
+        return;
+      }
+    }
+  });
+
+  // Announcement / Notice toggle in desktop item modal
+  const chkNotice = document.getElementById('item-notice-enabled');
+  const wrapNotice = document.getElementById('item-notice-wrap');
+  if (chkNotice && wrapNotice) {
+    chkNotice.addEventListener('change', () => {
+      wrapNotice.style.display = chkNotice.checked ? 'block' : 'none';
+      if (chkNotice.checked) {
+        const txtNotice = document.getElementById('item-notice-content');
+        if (txtNotice) txtNotice.focus();
+      }
+    });
+  }
 
   // Mode tabs in Desktop Item Modal
   document.querySelectorAll('.mode-tab').forEach(btn => {
@@ -1168,6 +1269,7 @@ function initModals() {
     btnAdd.addEventListener('click', () => {
       resetDesktopForm();
       openModal('modal-desktop-item');
+      saveDesktopItemFormSnapshot();
     });
   }
 
@@ -1176,6 +1278,7 @@ function initModals() {
     btnQuickAdd.addEventListener('click', () => {
       resetDesktopForm();
       openModal('modal-desktop-item');
+      saveDesktopItemFormSnapshot();
     });
   }
 
@@ -2420,6 +2523,13 @@ function resetDesktopForm() {
     btnDel.style.display = 'none';
     btnDel.onclick = null;
   }
+  const chkNotice = document.getElementById('item-notice-enabled');
+  if (chkNotice) chkNotice.checked = false;
+  const wrapNotice = document.getElementById('item-notice-wrap');
+  if (wrapNotice) wrapNotice.style.display = 'none';
+  const txtNotice = document.getElementById('item-notice-content');
+  if (txtNotice) txtNotice.value = '';
+
   setDesktopModalMode('local');
 }
 
@@ -2476,6 +2586,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
 
   setDesktopModalMode('local');
   openModal('modal-desktop-item');
+  saveDesktopItemFormSnapshot();
 }
 
 function openEditDesktopModal(id) {
@@ -2505,6 +2616,13 @@ function openEditDesktopModal(id) {
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
   document.getElementById('item-icon').value = item.icon || '';
 
+  const chkNotice = document.getElementById('item-notice-enabled');
+  const wrapNotice = document.getElementById('item-notice-wrap');
+  const txtNotice = document.getElementById('item-notice-content');
+  if (chkNotice) chkNotice.checked = !!item.notice_enabled;
+  if (wrapNotice) wrapNotice.style.display = item.notice_enabled ? 'block' : 'none';
+  if (txtNotice) txtNotice.value = item.notice_content || '';
+
   const btnSaveAsNew = document.getElementById('btn-save-as-new');
   if (btnSaveAsNew) btnSaveAsNew.style.display = 'inline-flex';
   const btnSave = document.getElementById('btn-save-desktop-item');
@@ -2516,6 +2634,7 @@ function openEditDesktopModal(id) {
     btnDel.style.display = 'inline-flex';
     btnDel.onclick = async () => {
       if (!confirm(`确定从飞牛桌面移出图标「${item.name}」吗？`)) return;
+      state.desktopItemFormSnapshot = null;
       closeModal('modal-desktop-item');
 
       reportClientLog('action', '用户确认移出桌面图标', `移出图标: ${item.name} (ID: ${id}, 包名: ${item.app_name})`, { id, name: item.name, app_name: item.app_name });
@@ -2635,6 +2754,7 @@ function openEditDesktopModal(id) {
   }
 
   openModal('modal-desktop-item');
+  saveDesktopItemFormSnapshot();
 }
 
 // 端口多桌面图标列表管理弹窗
@@ -2652,7 +2772,7 @@ function openPortDesktopListModal(port, procName, items) {
 
     html += `<tr>
       <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标"></td>
-      <td><strong>${escapeHtml(item.name)}</strong></td>
+      <td><strong>${escapeHtml(item.name)}</strong>${item.notice_enabled && (item.notice_content || '').trim() ? ' <span style="font-size: 11px; color: #3b82f6;" title="已开启启动前提醒公告">📢</span>' : ''}</td>
       <td><code>${escapeHtml(item.path || '/')}</code></td>
       <td><span class="${openModeClass}">${openModeText}</span></td>
       <td>${statusText}</td>
@@ -2817,6 +2937,9 @@ async function handleSaveDesktopItem(e) {
     const formEl = document.getElementById('form-desktop-item');
     const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
 
+    const noticeEnabled = document.getElementById('item-notice-enabled') ? document.getElementById('item-notice-enabled').checked : false;
+    const noticeContent = document.getElementById('item-notice-content') ? document.getElementById('item-notice-content').value.trim() : '';
+
     const payload = {
       id: id || `item-${Date.now() % 1000000}`,
       name,
@@ -2836,10 +2959,13 @@ async function handleSaveDesktopItem(e) {
       icon_text_color: iconTextColor,
       icon_bg_color: iconBgColor,
       skip_tls_verify: skipTls,
+      notice_enabled: noticeEnabled,
+      notice_content: noticeContent,
       enabled,
     };
 
-    // Close modal immediately
+    // Close modal immediately and clear snapshot so closing won't prompt
+    state.desktopItemFormSnapshot = null;
     closeModal('modal-desktop-item');
 
     // Update in-memory state FIRST so table and badges have it before any tab switch or fetch
@@ -2857,6 +2983,8 @@ async function handleSaveDesktopItem(e) {
         existing.icon_text = iconText;
         existing.icon_text_color = iconTextColor;
         existing.icon_bg_color = iconBgColor;
+        existing.notice_enabled = noticeEnabled;
+        existing.notice_content = noticeContent;
       }
     } else {
       state.desktopItems.unshift({
@@ -3126,7 +3254,7 @@ async function handleSaveSettingsManual() {
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.16';
+        const ver = state.settings?.version || '1.1.17';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

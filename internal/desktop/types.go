@@ -32,6 +32,8 @@ type DesktopItem struct {
 	IconTextColor string    `json:"icon_text_color,omitempty"`// Color for text
 	IconBgColor   string    `json:"icon_bg_color,omitempty"`  // Background color for text icon
 	SkipTLSVerify bool      `json:"skip_tls_verify,omitempty"`// Skip TLS check for self-signed certs
+	NoticeEnabled bool      `json:"notice_enabled,omitempty"` // Whether to show interstitial notice before opening
+	NoticeContent string    `json:"notice_content,omitempty"` // Announcement / notice content before opening
 	Enabled       bool      `json:"enabled"`                  // Is active
 	Installed     bool      `json:"installed"`                // Is installed in fnOS App Center
 	Reconciling   bool      `json:"reconciling,omitempty"`   // Is recovering / installing in background
