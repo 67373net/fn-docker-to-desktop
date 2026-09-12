@@ -1229,29 +1229,32 @@ tr.row-updating {
 /* ==================== Toast Notifications ==================== */
 .toast-container {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 99999;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 10px;
   pointer-events: none;
-  max-width: 400px;
-  width: calc(100% - 48px);
+  max-width: 480px;
+  width: max-content;
 }
 
 .toast {
   pointer-events: auto;
-  padding: 12px 18px;
+  padding: 10px 20px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
   color: #f3f4f6;
-  background-color: #1e293b;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  background-color: rgba(30, 41, 59, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.35), 0 6px 12px -4px rgba(0, 0, 0, 0.2);
   opacity: 0;
-  transform: translateY(-12px);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(-20px);
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1853,6 +1856,16 @@ tr.row-updating {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.28s ease;
+  cursor: zoom-in;
+  position: relative;
+  z-index: 1;
+}
+
+.donate-qr-frame:hover {
+  transform: scale(1.22);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+  z-index: 20;
 }
 
 .donate-qr-img {
@@ -1905,19 +1918,19 @@ tr.row-updating {
 
 /* ==================== Table Sink Subheader ==================== */
 .table-sink-divider-row {
-  background-color: transparent !important;
-  border: none !important;
+  background-color: var(--bg-surface-subtle) !important;
 }
 
 .table-sink-divider-row:hover td {
-  background-color: transparent !important;
+  background-color: var(--bg-surface-subtle) !important;
 }
 
 .table-sink-divider-cell {
-  padding: 1.25rem 1em 0.35rem 1.25rem !important; /* 1.25rem 严格与 th:first-child 对齐 */
-  vertical-align: bottom !important;
-  border: none !important;
-  background-color: transparent !important;
+  padding: 0.65rem 1em 0.65rem 1.25rem !important; /* 1.25rem 严格与 th:first-child 对齐 */
+  vertical-align: middle !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  border-top: none !important;
+  background-color: var(--bg-surface-subtle) !important;
 }
 
 .table-sink-title {

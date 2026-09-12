@@ -2457,6 +2457,64 @@ INFO
 - **输出 Token (Completion Tokens)**：约 6,800
 - **总消耗 Token (Total Tokens)**：**约 191,800**
 
+---
+
+## Turn 27 - 原版 WatchCow 图标失效根因修复与彻底解耦、置底行灰色表头底色与分割线恢复、投喂扫码 Hover 浮动放大、刷新 Toast 精简与顶部居中下滑、设置界面显示名称与自身图标设置重构、统一发布 v1.1.13
+
+### 需求分析与设计实现 (Requirements & Architecture)
+
+1. **[CRITICAL BUG] 原版 WatchCow 图标变飞牛默认图标排查与彻底解耦**：
+   - **根因锁定**：此前在 [`fnos-app/config/resource`](file:///home/net67373/fn-docker-to-desktop/fnos-app/config/resource) 中残留声明了系统全局 `icons` 共享目录的读写权限（`"data-share": {"shares": [{"name": "icons", "permission": {"rw": ["fn-docker-to-desktop"]}}]}`）。飞牛 AppCenter 安装本应用时，将全局 `/vol1/icons` 共享目录属主强制转交给了 `fn-docker-to-desktop`，直接剥夺了原版 WatchCow 对其图标目录的读取权限，导致 WatchCow 生成的图标全部失效回退到默认图标！
+   - **彻底解耦**：将 [`fnos-app/config/resource`](file:///home/net67373/fn-docker-to-desktop/fnos-app/config/resource) 清空为 `{}`，本应用自身图标完全存放在专用私有数据目录中，绝不强占或干扰系统级共享目录。
+   - **安全范围限制**：在 [`fnos-app/cmd/uninstall_init`](file:///home/net67373/fn-docker-to-desktop/fnos-app/cmd/uninstall_init) 中增加严格正则过滤 `(fndocker|put-port)\.[a-zA-Z0-9._-]+`，并在 [`internal/desktop/installer.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer.go) 的 `uninstallSingleApp`、`findInstalledAppDir` 与 `RefreshInstalledApp` 中强制加入 `isManagedApp` 过滤，严禁触碰任何非本程序管理的外部第三方应用。
+
+2. **置底行恢复与表头一致的灰色底色与表格分割线**：
+   - 恢复置底行灰色背景底色（`var(--bg-surface-subtle)`），并恢复置底行与下方第一行数据之间的表格横线（`border-bottom: 1px solid var(--border-color)`）；
+   - 保留靠左对齐与 `1.25rem` 左内边距，与表头第一列「端口」严格垂直对齐；
+   - 样式更新于 [`web/style.css`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1918-L1934)。
+
+3. **投喂界面图片 Hover 浮动放大方便扫码**：
+   - 在 [`.donate-qr-frame`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1856-L1868) 上增加流畅缓动过渡效果（`transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.28s ease`）；
+   - 悬停时通过 `transform: scale(1.22)` 浮动放大，并投射深层阴影（`box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24); z-index: 20`），显著提升扫码成功率，同时保留卡片间距作为鼠标安全移出还原区域。
+
+4. **Toast 提示精简与居中靠上滑出**：
+   - 移除进程列表、桌面图标列表、系统进程列表 3 处刷新按钮的 Toast 弹窗（“xxxx 列表已刷新”），避免遮挡界面；
+   - 移除“正在从桌面移出...”、“正在生成并上传文字图标...”等无意义中间过渡提示；
+   - 将 [`.toast-container`](file:///home/net67373/fn-docker-to-desktop/web/style.css#L1230-L1242) 改为屏幕顶部水平居中（`top: 20px; left: 50%; transform: translateX(-50%)`），入场动效设为自上向下平滑滑出（`translateY(-20px)` 到 `translateY(0)`）。
+
+5. **设置界面「显示名称」修改失效 Bug 修复**：
+   - 根因分析：此前仅更新了 `ui/config`，飞牛系统桌面应用名称主要由 `manifest` 的 `display_name` 控制，且更新后未调用 `appcenter-cli restart` 重载桌面缓存；
+   - 修复：在 [`internal/desktop/installer.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer.go) 中新增 `updateManifestDisplayName`，同步将新名称写入 `manifest` 与 `ui/config`，并通过异步 `appcenter-cli restart fn-docker-to-desktop` 触发飞牛桌面即时重载。
+
+6. **设置界面新增自身桌面图标设置模块**：
+   - 在 [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html#L252-L395) 设置卡片中引入与桌面图标编辑完全一致的图标设置组件（文字图标、网络图标、上传图标 3 标签及右侧实时预览卡片）；
+   - 文字图标支持多行排版、2D 色谱取色器、预设色块、文字颜色与背景颜色实时渲染及 Canvas 导出；
+   - 后端 [`internal/desktop/types.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/types.go)、[`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go) 以及 [`internal/desktop/installer.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer.go) 全面接入 `PortalIcon`、`PortalIconType`、`PortalIconText` 等字段，保存时原地更新产品自身安装目录下的 `ICON.PNG`、`ICON_256.PNG` 以及 `ui/images/*`。
+
+7. **统一版本号升级为 `v1.1.13`**：
+   - 全局同步版本号至 `1.1.13`（`cmd/server/main.go`, `fnos-app/manifest`, `web/index.html`, `web/app.js`, `internal/api/handler_test.go`）。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试**：
+   - 使用 Docker 运行全套单元测试，全部测试用例 100% 通过（PASS）。
+2. **飞牛 OS 原生安装包构建与清理**：
+   - 运行 `./scripts/build-fpk.sh x86` 编译并通过 SHA 校验，测试完成后严格按规范删除本地 `.fpk` 文件。
+3. **版本发布与 Tag 推送**：
+   - 提交代码至 `master` 分支，创建 Git Tag `v1.1.13` 并推送到 GitHub 远程仓库，触发自动化 Release。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 155,000
+- **思维链 Token (Thinking Tokens)**：约 25,000
+- **输出 Token (Completion Tokens)**：约 8,500
+- **总消耗 Token (Total Tokens)**：**约 188,500**
+
+
 
 
 

@@ -292,7 +292,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.12',
+    version: state.settings?.version || '1.1.13',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -369,6 +369,11 @@ async function fetchSettings() {
       state.originalSettings = {
         portal_name: settings.portal_name || '把 Docker 放到桌面',
         portal_all_users: settings.portal_all_users === true,
+        portal_icon: settings.portal_icon || 'icon.png',
+        portal_icon_type: settings.portal_icon_type || 'upload',
+        portal_icon_text: settings.portal_icon_text || '',
+        portal_icon_text_color: settings.portal_icon_text_color || '#ffffff',
+        portal_icon_bg_color: settings.portal_icon_bg_color || '#1e293b',
       };
       state.isSettingsDirty = false;
       updateSettingsForm();
@@ -399,6 +404,33 @@ function updateSettingsForm() {
   if (tipEl) tipEl.textContent = '';
   const statusEl = document.getElementById('settings-status');
   if (statusEl) statusEl.textContent = '';
+
+  // Update setting icon editor form fields and preview
+  const iconType = state.originalSettings?.portal_icon_type || 'upload';
+  const icon = state.originalSettings?.portal_icon || 'icon.png';
+  const iconText = state.originalSettings?.portal_icon_text || '';
+  const iconTextColor = state.originalSettings?.portal_icon_text_color || '#ffffff';
+  const iconBgColor = state.originalSettings?.portal_icon_bg_color || '#1e293b';
+
+  const elSettingIcon = document.getElementById('setting-portal-icon');
+  if (elSettingIcon) elSettingIcon.value = icon;
+
+  const elSettingTextInput = document.getElementById('setting-icon-text-input');
+  if (elSettingTextInput) elSettingTextInput.value = iconText;
+
+  updateSettingTextColorUI(iconTextColor);
+  updateSettingBgColorUI(iconBgColor);
+
+  const elSettingUrlInput = document.getElementById('setting-icon-url-input');
+  if (elSettingUrlInput) {
+    elSettingUrlInput.value = (iconType === 'url') ? icon : '';
+  }
+
+  const previewName = document.getElementById('setting-icon-preview-name');
+  if (previewName) previewName.textContent = state.originalSettings?.portal_name || '把 Docker 放到桌面';
+
+  setSettingIconTab(iconType);
+
   state.isSettingsDirty = false;
 }
 
@@ -414,7 +446,30 @@ function checkSettingsDirty() {
   const allUsersChanged = curAll !== state.originalSettings.portal_all_users;
   const pwdChanged = curPwd !== '' || curPwdConfirm !== '';
 
-  state.isSettingsDirty = nameChanged || allUsersChanged || pwdChanged;
+  const curIconType = state.activeSettingIconTab || 'upload';
+  let iconChanged = curIconType !== (state.originalSettings.portal_icon_type || 'upload');
+  if (curIconType === 'text') {
+    const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+    const curTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || '#ffffff').trim();
+    const curBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || '#1e293b').trim();
+    if (curText !== (state.originalSettings.portal_icon_text || '') ||
+        curTextColor.toLowerCase() !== (state.originalSettings.portal_icon_text_color || '#ffffff').toLowerCase() ||
+        curBgColor.toLowerCase() !== (state.originalSettings.portal_icon_bg_color || '#1e293b').toLowerCase()) {
+      iconChanged = true;
+    }
+  } else if (curIconType === 'url') {
+    const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
+    if (curUrl !== (state.originalSettings.portal_icon || '')) {
+      iconChanged = true;
+    }
+  } else if (curIconType === 'upload') {
+    const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
+    if (curIcon !== (state.originalSettings.portal_icon || '')) {
+      iconChanged = true;
+    }
+  }
+
+  state.isSettingsDirty = nameChanged || allUsersChanged || pwdChanged || iconChanged;
 
   const statusEl = document.getElementById('settings-status');
   if (statusEl) {
@@ -1179,6 +1234,7 @@ function initModals() {
 
   // Icon 3-Tab Editor Initialization
   initIconEditor();
+  initSettingIconEditor();
 
   // Auth form
   const formAuth = document.getElementById('form-auth');
@@ -1480,7 +1536,9 @@ function drawColorSpectrum(canvas, hue) {
 
 const spectrumPickers = {
   text: { hue: 0, s: 0, v: 1, isDragging: false },
-  bg: { hue: 215, s: 0.44, v: 0.23, isDragging: false }
+  bg: { hue: 215, s: 0.44, v: 0.23, isDragging: false },
+  'setting-text': { hue: 0, s: 0, v: 1, isDragging: false },
+  'setting-bg': { hue: 215, s: 0.44, v: 0.23, isDragging: false },
 };
 
 function setupSpectrumPicker(type) {
@@ -1511,10 +1569,19 @@ function setupSpectrumPicker(type) {
     const hex = rgbToHex(rgb[0], rgb[1], rgb[2]);
     if (type === 'text') {
       updateTextColorUI(hex, false);
-    } else {
+      renderTextIconCanvas();
+    } else if (type === 'bg') {
       updateBgColorUI(hex, false);
+      renderTextIconCanvas();
+    } else if (type === 'setting-text') {
+      updateSettingTextColorUI(hex, false);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    } else if (type === 'setting-bg') {
+      updateSettingBgColorUI(hex, false);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
     }
-    renderTextIconCanvas();
   }
 
   wrap.addEventListener('mousedown', (e) => {
@@ -1556,10 +1623,19 @@ function setupSpectrumPicker(type) {
     const hex = rgbToHex(rgb[0], rgb[1], rgb[2]);
     if (type === 'text') {
       updateTextColorUI(hex, false);
-    } else {
+      renderTextIconCanvas();
+    } else if (type === 'bg') {
       updateBgColorUI(hex, false);
+      renderTextIconCanvas();
+    } else if (type === 'setting-text') {
+      updateSettingTextColorUI(hex, false);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    } else if (type === 'setting-bg') {
+      updateSettingBgColorUI(hex, false);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
     }
-    renderTextIconCanvas();
   });
 
   redraw();
@@ -1806,6 +1882,488 @@ function initIconEditor() {
   }
 }
 
+// --- Setting Icon 3-Tab Editor ---
+function setSettingIconTab(tabName) {
+  state.activeSettingIconTab = tabName;
+  document.querySelectorAll('#setting-icon-tabs .icon-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.settingIconTab === tabName);
+  });
+  document.querySelectorAll('#pane-settings .icon-tab-pane').forEach(p => {
+    p.classList.toggle('active', p.id === `setting-icon-pane-${tabName}`);
+  });
+
+  const previewImg = document.getElementById('setting-icon-preview-img');
+  const previewName = document.getElementById('setting-icon-preview-name');
+  const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+
+  if (tabName === 'text') {
+    const text = document.getElementById('setting-icon-text-input')?.value || '';
+    if (text.trim()) {
+      renderSettingTextIconCanvas();
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = displayName;
+    }
+  } else if (tabName === 'url') {
+    const url = document.getElementById('setting-icon-url-input')?.value.trim() || '';
+    if (url) {
+      if (previewImg) {
+        previewImg.src = url;
+        previewImg.onerror = () => {
+          previewImg.src = apiUrl('/icon.png');
+          if (previewName) previewName.textContent = '图片载入失败';
+        };
+      }
+      if (previewName) previewName.textContent = displayName;
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = displayName;
+    }
+  } else if (tabName === 'upload') {
+    const val = document.getElementById('setting-portal-icon')?.value.trim() || '';
+    if (val && val !== 'icon.png') {
+      if (previewImg) previewImg.src = getIconUrl(val);
+      if (previewName) previewName.textContent = displayName;
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = displayName;
+    }
+  }
+}
+
+function renderSettingTextIconCanvas() {
+  const textInput = document.getElementById('setting-icon-text-input');
+  const text = (textInput ? textInput.value : '').trim();
+  const textColor = document.getElementById('setting-icon-text-color')?.value || '#ffffff';
+  const bgColor = document.getElementById('setting-icon-bg-color')?.value || '#1e293b';
+  const previewImg = document.getElementById('setting-icon-preview-img');
+  const previewName = document.getElementById('setting-icon-preview-name');
+  const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+
+  if (!text) {
+    if (previewImg) previewImg.src = apiUrl('/icon.png');
+    if (previewName) previewName.textContent = displayName;
+    state.currentSettingTextIconDataUrl = null;
+    return;
+  }
+
+  let canvas = document.getElementById('setting-icon-text-canvas');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'setting-icon-text-canvas';
+    canvas.width = 256;
+    canvas.height = 256;
+    canvas.style.display = 'none';
+    document.body.appendChild(canvas);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 256, 256);
+
+  // Background squircle
+  ctx.fillStyle = bgColor;
+  const r = 50;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(0, 0, 256, 256, r);
+  } else {
+    ctx.moveTo(r, 0);
+    ctx.lineTo(256 - r, 0);
+    ctx.quadraticCurveTo(256, 0, 256, r);
+    ctx.lineTo(256, 256 - r);
+    ctx.quadraticCurveTo(256, 256, 256 - r, 256);
+    ctx.lineTo(r, 256);
+    ctx.quadraticCurveTo(0, 256, 0, 256 - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+  }
+  ctx.fill();
+
+  // Multi-line adaptive font sizing
+  const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const lines = rawLines.length > 0 ? rawLines : [text];
+
+  const maxW = 200;
+  const maxH = 200;
+
+  let fontSize = 140;
+  const fontFam = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+
+  while (fontSize > 16) {
+    ctx.font = `bold ${fontSize}px ${fontFam}`;
+    const lineHeight = fontSize * 1.16;
+    const totalH = (lines.length - 1) * lineHeight + fontSize;
+    if (totalH <= maxH) {
+      let allFit = true;
+      for (const line of lines) {
+        if (ctx.measureText(line).width > maxW) {
+          allFit = false;
+          break;
+        }
+      }
+      if (allFit) break;
+    }
+    fontSize -= 2;
+  }
+
+  ctx.font = `bold ${fontSize}px ${fontFam}`;
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const lineHeight = fontSize * 1.16;
+  const totalH = (lines.length - 1) * lineHeight;
+  const startY = 128 - totalH / 2;
+
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, 128, startY + idx * lineHeight);
+  });
+
+  const dataUrl = canvas.toDataURL('image/png');
+  state.currentSettingTextIconDataUrl = dataUrl;
+  if (previewImg) previewImg.src = dataUrl;
+  if (previewName) previewName.textContent = displayName;
+}
+
+async function uploadSettingTextIconBlob() {
+  const canvas = document.getElementById('setting-icon-text-canvas');
+  if (!canvas) return null;
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) return resolve(null);
+      try {
+        const formData = new FormData();
+        formData.append('icon', blob, `self-icon-${Date.now()}.png`);
+        const res = await fetch(apiUrl('/api/icons/upload'), {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (res.ok && data.url) {
+          resolve(data.url);
+        } else {
+          resolve(null);
+        }
+      } catch (err) {
+        console.error('Upload setting text icon error:', err);
+        resolve(null);
+      }
+    }, 'image/png');
+  });
+}
+
+function updateSettingTextColorUI(val, updateSpectrum = true) {
+  if (!val) return;
+  const hex = normalizeHexColor(val) || val;
+  const picker = document.getElementById('setting-icon-text-color');
+  const input = document.getElementById('setting-icon-text-color-hex');
+  const preview = document.getElementById('setting-preview-text-color-block');
+  const display = document.getElementById('setting-display-text-color-hex');
+  if (picker) picker.value = hex;
+  if (input) input.value = hex;
+  if (preview) preview.style.backgroundColor = hex;
+  if (display) display.textContent = hex;
+  document.querySelectorAll('#setting-text-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
+  });
+
+  if (updateSpectrum) {
+    const [r, g, b] = hexToRgb(hex);
+    const [h, s, v] = rgbToHsv(r, g, b);
+    const sp = spectrumPickers['setting-text'];
+    if (sp) {
+      sp.hue = h; sp.s = s; sp.v = v;
+      const hueSlider = document.getElementById('hue-slider-setting-text');
+      if (hueSlider) hueSlider.value = Math.round(h);
+      const canvas = document.getElementById('spectrum-canvas-setting-text');
+      const cursor = document.getElementById('spectrum-cursor-setting-text');
+      if (canvas) drawColorSpectrum(canvas, h);
+      if (cursor) {
+        cursor.style.left = (s * 100) + '%';
+        cursor.style.top = ((1 - v) * 100) + '%';
+      }
+    }
+  }
+}
+
+function updateSettingBgColorUI(val, updateSpectrum = true) {
+  if (!val) return;
+  const hex = normalizeHexColor(val) || val;
+  const picker = document.getElementById('setting-icon-bg-color');
+  const input = document.getElementById('setting-icon-bg-color-hex');
+  const preview = document.getElementById('setting-preview-bg-color-block');
+  const display = document.getElementById('setting-display-bg-color-hex');
+  if (picker) picker.value = hex;
+  if (input) input.value = hex;
+  if (preview) preview.style.backgroundColor = hex;
+  if (display) display.textContent = hex;
+  document.querySelectorAll('#setting-bg-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
+  });
+
+  if (updateSpectrum) {
+    const [r, g, b] = hexToRgb(hex);
+    const [h, s, v] = rgbToHsv(r, g, b);
+    const sp = spectrumPickers['setting-bg'];
+    if (sp) {
+      sp.hue = h; sp.s = s; sp.v = v;
+      const hueSlider = document.getElementById('hue-slider-setting-bg');
+      if (hueSlider) hueSlider.value = Math.round(h);
+      const canvas = document.getElementById('spectrum-canvas-setting-bg');
+      const cursor = document.getElementById('spectrum-cursor-setting-bg');
+      if (canvas) drawColorSpectrum(canvas, h);
+      if (cursor) {
+        cursor.style.left = (s * 100) + '%';
+        cursor.style.top = ((1 - v) * 100) + '%';
+      }
+    }
+  }
+}
+
+function closeSettingColorPopovers() {
+  const popText = document.getElementById('setting-popover-text-color');
+  const popBg = document.getElementById('setting-popover-bg-color');
+  if (popText) popText.style.display = 'none';
+  if (popBg) popBg.style.display = 'none';
+}
+
+function initSettingIconEditor() {
+  document.querySelectorAll('#setting-icon-tabs .icon-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      setSettingIconTab(tab.dataset.settingIconTab);
+      checkSettingsDirty();
+    });
+  });
+
+  const textInput = document.getElementById('setting-icon-text-input');
+  if (textInput) {
+    textInput.addEventListener('input', () => {
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    });
+  }
+
+  // Live update preview name when portal name input changes
+  const nameInput = document.getElementById('setting-portal-name');
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      const previewName = document.getElementById('setting-icon-preview-name');
+      if (previewName) previewName.textContent = nameInput.value.trim() || '把 Docker 放到桌面';
+      checkSettingsDirty();
+    });
+  }
+
+  // Initialize 2D spectrum pickers for setting-text and setting-bg
+  setupSpectrumPicker('setting-text');
+  setupSpectrumPicker('setting-bg');
+
+  // Popover inner tab buttons
+  document.querySelectorAll('#pane-settings .color-popover-tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = btn.dataset.target;
+      const tab = btn.dataset.tab;
+      const pop = document.getElementById(`${target === 'setting-text' ? 'setting-popover-text-color' : 'setting-popover-bg-color'}`);
+      if (!pop) return;
+      pop.querySelectorAll('.color-popover-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+      const customPane = document.getElementById(`pane-${target}-color-custom`);
+      const presetsPane = document.getElementById(`pane-${target}-color-presets`);
+      if (customPane) customPane.classList.toggle('active', tab === 'custom');
+      if (presetsPane) presetsPane.classList.toggle('active', tab === 'presets');
+      if (tab === 'custom') {
+        const canvas = document.getElementById(`spectrum-canvas-${target}`);
+        if (canvas && spectrumPickers[target]) drawColorSpectrum(canvas, spectrumPickers[target].hue);
+      }
+    });
+  });
+
+  // Popover toggle buttons
+  const btnTextTrigger = document.getElementById('setting-btn-text-color-trigger');
+  const popoverText = document.getElementById('setting-popover-text-color');
+  if (btnTextTrigger && popoverText) {
+    btnTextTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = popoverText.style.display === 'block';
+      closeSettingColorPopovers();
+      if (!isVisible) {
+        popoverText.style.display = 'block';
+        const canvas = document.getElementById('spectrum-canvas-setting-text');
+        if (canvas && spectrumPickers['setting-text']) drawColorSpectrum(canvas, spectrumPickers['setting-text'].hue);
+      }
+    });
+    popoverText.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  const btnBgTrigger = document.getElementById('setting-btn-bg-color-trigger');
+  const popoverBg = document.getElementById('setting-popover-bg-color');
+  if (btnBgTrigger && popoverBg) {
+    btnBgTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = popoverBg.style.display === 'block';
+      closeSettingColorPopovers();
+      if (!isVisible) {
+        popoverBg.style.display = 'block';
+        const canvas = document.getElementById('spectrum-canvas-setting-bg');
+        if (canvas && spectrumPickers['setting-bg']) drawColorSpectrum(canvas, spectrumPickers['setting-bg'].hue);
+      }
+    });
+    popoverBg.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  document.addEventListener('click', () => {
+    closeSettingColorPopovers();
+  });
+
+  const textColorInput = document.getElementById('setting-icon-text-color');
+  const textColorHex = document.getElementById('setting-icon-text-color-hex');
+  if (textColorInput) {
+    textColorInput.addEventListener('input', () => {
+      updateSettingTextColorUI(textColorInput.value);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    });
+  }
+  if (textColorHex) {
+    textColorHex.addEventListener('input', () => {
+      const hex = normalizeHexColor(textColorHex.value);
+      if (hex) {
+        updateSettingTextColorUI(hex);
+        renderSettingTextIconCanvas();
+        checkSettingsDirty();
+      }
+    });
+    textColorHex.addEventListener('blur', () => {
+      const hex = normalizeHexColor(textColorHex.value);
+      updateSettingTextColorUI(hex || '#ffffff');
+      checkSettingsDirty();
+    });
+  }
+
+  const bgColorInput = document.getElementById('setting-icon-bg-color');
+  const bgColorHex = document.getElementById('setting-icon-bg-color-hex');
+  if (bgColorInput) {
+    bgColorInput.addEventListener('input', () => {
+      updateSettingBgColorUI(bgColorInput.value);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    });
+  }
+  if (bgColorHex) {
+    bgColorHex.addEventListener('input', () => {
+      const hex = normalizeHexColor(bgColorHex.value);
+      if (hex) {
+        updateSettingBgColorUI(hex);
+        renderSettingTextIconCanvas();
+        checkSettingsDirty();
+      }
+    });
+    bgColorHex.addEventListener('blur', () => {
+      const hex = normalizeHexColor(bgColorHex.value);
+      updateSettingBgColorUI(hex || '#1e293b');
+      checkSettingsDirty();
+    });
+  }
+
+  document.querySelectorAll('#setting-text-color-swatches .color-swatch').forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      updateSettingTextColorUI(swatch.dataset.color);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    });
+  });
+
+  document.querySelectorAll('#setting-bg-color-swatches .color-swatch').forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      updateSettingBgColorUI(swatch.dataset.color);
+      renderSettingTextIconCanvas();
+      checkSettingsDirty();
+    });
+  });
+
+  const urlInput = document.getElementById('setting-icon-url-input');
+  if (urlInput) {
+    urlInput.addEventListener('input', () => {
+      const val = urlInput.value.trim();
+      const previewImg = document.getElementById('setting-icon-preview-img');
+      const previewName = document.getElementById('setting-icon-preview-name');
+      const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+      if (!val) {
+        if (previewImg) previewImg.src = apiUrl('/icon.png');
+        if (previewName) previewName.textContent = displayName;
+      } else {
+        if (previewImg) {
+          previewImg.src = val;
+          previewImg.onerror = () => {
+            previewImg.src = apiUrl('/icon.png');
+            if (previewName) previewName.textContent = '图片载入失败';
+          };
+        }
+        if (previewName) previewName.textContent = displayName;
+      }
+      checkSettingsDirty();
+    });
+  }
+
+  const fileInput = document.getElementById('setting-icon-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const elIcon = document.getElementById('setting-portal-icon');
+      const imgEl = document.getElementById('setting-icon-preview-img');
+      const statusEl = document.getElementById('setting-icon-upload-status');
+
+      if (statusEl) statusEl.textContent = '正在上传图标...';
+
+      const formData = new FormData();
+      formData.append('icon', file);
+
+      try {
+        const res = await fetch(apiUrl('/api/icons/upload'), {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (res.ok && data.url) {
+          if (elIcon) elIcon.value = data.url;
+          if (imgEl) imgEl.src = apiUrl(data.url);
+          if (statusEl) statusEl.textContent = `已选择: ${file.name}`;
+          checkSettingsDirty();
+          showToast(`自身桌面图标「${file.name}」上传成功`, 'success');
+        } else {
+          if (statusEl) statusEl.textContent = '上传失败';
+          showToast(data.error || '上传图标失败', 'error');
+        }
+      } catch (err) {
+        if (statusEl) statusEl.textContent = '网络异常';
+        showToast('上传图标网络异常: ' + err.message, 'error');
+      }
+    });
+  }
+
+  const btnReset = document.getElementById('setting-btn-reset-icon');
+  if (btnReset) {
+    btnReset.addEventListener('click', () => {
+      const elSettingIcon = document.getElementById('setting-portal-icon');
+      if (elSettingIcon) elSettingIcon.value = 'icon.png';
+      if (textInput) textInput.value = '';
+      if (urlInput) urlInput.value = '';
+      updateSettingTextColorUI('#ffffff');
+      updateSettingBgColorUI('#1e293b');
+      closeSettingColorPopovers();
+      state.currentSettingTextIconDataUrl = null;
+      const previewImg = document.getElementById('setting-icon-preview-img');
+      const previewName = document.getElementById('setting-icon-preview-name');
+      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewName) previewName.textContent = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+      setSettingIconTab('upload');
+      checkSettingsDirty();
+    });
+  }
+}
+
 function resetDesktopForm() {
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
@@ -1970,7 +2528,6 @@ function openEditDesktopModal(id) {
         target._statusText = '正在移出中...';
         renderDesktopTable();
       }
-      showToast(`正在从桌面移出「${item.name}」...`, 'info');
 
       try {
         let res = await fetch(apiUrl(`/api/desktop/items/${id}/delete`), { method: 'POST' });
@@ -2180,7 +2737,6 @@ async function handleSaveDesktopItem(e) {
       iconTextColor = (document.getElementById('icon-text-color-hex')?.value || document.getElementById('icon-text-color')?.value || '#ffffff').trim();
       iconBgColor = (document.getElementById('icon-bg-color-hex')?.value || document.getElementById('icon-bg-color')?.value || '#1e293b').trim();
       if (iconText && state.currentTextIconDataUrl) {
-        showToast('正在生成并上传文字图标...', 'info');
         const uploadedUrl = await uploadTextIconBlob();
         if (uploadedUrl) {
           icon = uploadedUrl;
@@ -2479,7 +3035,6 @@ function handleCancelSettings() {
     }
   }
   updateSettingsForm();
-  showToast('已恢复设置', 'info');
 }
 
 async function handleSaveSettingsManual() {
@@ -2494,10 +3049,37 @@ async function handleSaveSettingsManual() {
   const matchTip = document.getElementById('password-match-tip');
   const statusEl = document.getElementById('settings-status');
 
+  let icon = '';
+  let iconType = state.activeSettingIconTab || 'upload';
+  let iconText = '';
+  let iconTextColor = '';
+  let iconBgColor = '';
+
+  if (iconType === 'text') {
+    iconText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+    iconTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || document.getElementById('setting-icon-text-color')?.value || '#ffffff').trim();
+    iconBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || document.getElementById('setting-icon-bg-color')?.value || '#1e293b').trim();
+    if (iconText && state.currentSettingTextIconDataUrl) {
+      const uploadedUrl = await uploadSettingTextIconBlob();
+      if (uploadedUrl) {
+        icon = uploadedUrl;
+      }
+    }
+  } else if (iconType === 'url') {
+    icon = (document.getElementById('setting-icon-url-input')?.value || '').trim();
+  } else if (iconType === 'upload') {
+    icon = (document.getElementById('setting-portal-icon')?.value || '').trim() || 'icon.png';
+  }
+
   const payload = {
     portal_name: name || '把 Docker 放到桌面',
     portal_ui_type: 'iframe',
     portal_all_users: allUsers,
+    portal_icon: icon || state.originalSettings?.portal_icon || 'icon.png',
+    portal_icon_type: iconType,
+    portal_icon_text: iconText,
+    portal_icon_text_color: iconTextColor,
+    portal_icon_bg_color: iconBgColor,
   };
 
   // Password confirmation check
@@ -2529,6 +3111,11 @@ async function handleSaveSettingsManual() {
       state.originalSettings = {
         portal_name: payload.portal_name,
         portal_all_users: payload.portal_all_users,
+        portal_icon: payload.portal_icon,
+        portal_icon_type: payload.portal_icon_type,
+        portal_icon_text: payload.portal_icon_text,
+        portal_icon_text_color: payload.portal_icon_text_color,
+        portal_icon_bg_color: payload.portal_icon_bg_color,
       };
       state.isSettingsDirty = false;
       document.getElementById('setting-portal-password').value = '';
@@ -2715,7 +3302,6 @@ function initApp() {
   if (btnRefreshPorts) {
     btnRefreshPorts.addEventListener('click', () => {
       fetchPorts();
-      showToast('进程列表已刷新', 'info');
     });
   }
 
@@ -2723,7 +3309,6 @@ function initApp() {
   if (btnRefreshDesktop) {
     btnRefreshDesktop.addEventListener('click', () => {
       fetchDesktopItems();
-      showToast('桌面图标列表已刷新', 'info');
     });
   }
 
@@ -2731,7 +3316,6 @@ function initApp() {
   if (btnRefreshProcs) {
     btnRefreshProcs.addEventListener('click', () => {
       fetchProcesses();
-      showToast('系统进程列表已刷新', 'info');
     });
   }
 

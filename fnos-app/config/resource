@@ -1,14 +1,1 @@
-{
-    "data-share": {
-        "shares": [
-            {
-                "name": "icons",
-                "permission": {
-                    "rw": [
-                        "fn-docker-to-desktop"
-                    ]
-                }
-            }
-        ]
-    }
-}
+{}

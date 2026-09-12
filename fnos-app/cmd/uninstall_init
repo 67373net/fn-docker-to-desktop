@@ -55,8 +55,8 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
     cli_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' || true)
     RAW_APPS="${RAW_APPS} ${cli_apps}"
 
-    # 去重
-    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -v '^$' | sort -u || true)
+    # 严格过滤仅保留本程序专属命名空间的子应用 (fndocker.* 与 put-port.*)，绝不波及任何外部第三方应用
+    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
 
     if [ -n "${UNIQUE_APPS}" ]; then
         log_msg "发现待清理子应用列表: ${UNIQUE_APPS}"

@@ -914,12 +914,16 @@ func (h *Handler) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings.AuthPassword = ""
 	// Include version in response for frontend display
 	resp := map[string]interface{}{
-		"portal_port":      settings.PortalPort,
-		"portal_name":      settings.PortalName,
-		"portal_ui_type":   settings.PortalUIType,
-		"portal_all_users": settings.PortalAllUsers,
-		"portal_icon":      settings.PortalIcon,
-		"version":          h.appVersion,
+		"portal_port":            settings.PortalPort,
+		"portal_name":            settings.PortalName,
+		"portal_ui_type":         settings.PortalUIType,
+		"portal_all_users":       settings.PortalAllUsers,
+		"portal_icon":            settings.PortalIcon,
+		"portal_icon_type":       settings.PortalIconType,
+		"portal_icon_text":       settings.PortalIconText,
+		"portal_icon_text_color": settings.PortalIconTextColor,
+		"portal_icon_bg_color":   settings.PortalIconBgColor,
+		"version":                h.appVersion,
 	}
 	h.jsonResponse(w, r, resp, http.StatusOK)
 }
@@ -945,6 +949,8 @@ func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"portalName", req.PortalName,
 		"portalUIType", req.PortalUIType,
 		"portalAllUsers", req.PortalAllUsers,
+		"portalIcon", req.PortalIcon,
+		"portalIconType", req.PortalIconType,
 		"hasNewPassword", req.AuthPassword != "",
 		"clearPassword", req.ClearPassword,
 		"remote", r.RemoteAddr,
@@ -969,6 +975,19 @@ func (h *Handler) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		current.PortalUIType = req.PortalUIType
 	}
 	current.PortalAllUsers = req.PortalAllUsers
+	if req.PortalIcon != "" {
+		current.PortalIcon = req.PortalIcon
+	}
+	if req.PortalIconType != "" {
+		current.PortalIconType = req.PortalIconType
+	}
+	current.PortalIconText = req.PortalIconText
+	if req.PortalIconTextColor != "" {
+		current.PortalIconTextColor = req.PortalIconTextColor
+	}
+	if req.PortalIconBgColor != "" {
+		current.PortalIconBgColor = req.PortalIconBgColor
+	}
 
 	if err := h.storage.UpdateSettings(current); err != nil {
 		slog.Error("[AUDIT] 保存系统设置失败", "error", err)

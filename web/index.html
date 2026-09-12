@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.12">
+  <link rel="stylesheet" href="style.css?v=1.1.13">
 </head>
 <body>
   <!-- Header Bar -->
@@ -228,7 +228,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="info-section">
-          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.12 - 自身桌面图标设置</h3>
+          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.13 - 自身桌面图标设置</h3>
           <div class="settings-card">
             
             <div class="form-group">
@@ -247,6 +247,148 @@
                   <input type="radio" name="setting-portal-all-users" value="true">
                   <span>所有用户可见</span>
                 </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">自身桌面图标</label>
+              <input type="hidden" id="setting-portal-icon">
+              <div class="icon-editor-layout">
+                <div class="icon-editor-main">
+                  <div class="icon-tabs" id="setting-icon-tabs">
+                    <button type="button" class="icon-tab active" data-setting-icon-tab="text">文字图标</button>
+                    <button type="button" class="icon-tab" data-setting-icon-tab="url">网络图标</button>
+                    <button type="button" class="icon-tab" data-setting-icon-tab="upload">上传图标</button>
+                  </div>
+
+                  <!-- Tab Pane 1: 文字图标 -->
+                  <div class="icon-tab-pane active" id="setting-icon-pane-text">
+                    <div class="form-group" style="margin-bottom: 8px;">
+                      <textarea id="setting-icon-text-input" class="form-input" rows="2" placeholder="输入图标文字，支持换行（如 NAS 或 监控&#10;服务）" style="resize: vertical; min-height: 54px;"></textarea>
+                    </div>
+                    <div class="color-picker-row">
+                      <span class="color-picker-label">文字颜色:</span>
+                      <div class="color-picker-trigger-wrapper">
+                        <button type="button" class="color-picker-trigger" id="setting-btn-text-color-trigger" title="点击选择文字颜色">
+                          <span class="color-preview-block" id="setting-preview-text-color-block" style="background-color: #ffffff;"></span>
+                          <span class="color-hex-display" id="setting-display-text-color-hex">#ffffff</span>
+                        </button>
+                        <div class="color-popover" id="setting-popover-text-color">
+                          <div class="color-popover-tabs">
+                            <button type="button" class="color-popover-tab-btn active" data-tab="custom" data-target="setting-text">任意颜色</button>
+                            <button type="button" class="color-popover-tab-btn" data-tab="presets" data-target="setting-text">预设推荐</button>
+                          </div>
+                          <div class="color-popover-pane active" id="pane-setting-text-color-custom">
+                            <div class="color-spectrum-wrapper" id="spectrum-wrap-setting-text">
+                              <canvas class="color-spectrum-canvas" id="spectrum-canvas-setting-text" width="244" height="110"></canvas>
+                              <div class="color-spectrum-cursor" id="spectrum-cursor-setting-text"></div>
+                            </div>
+                            <div class="hue-slider-wrapper">
+                              <input type="range" min="0" max="360" value="0" class="hue-slider" id="hue-slider-setting-text" title="滑动选择色相">
+                            </div>
+                            <div class="color-popover-top">
+                              <input type="color" id="setting-icon-text-color" class="color-input" value="#ffffff" title="系统调色盘">
+                              <input type="text" id="setting-icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
+                            </div>
+                          </div>
+                          <div class="color-popover-pane" id="pane-setting-text-color-presets">
+                            <div class="color-popover-title">预设文字颜色</div>
+                            <div class="color-swatches" id="setting-text-color-swatches">
+                              <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
+                              <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
+                              <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
+                              <span class="color-swatch" data-color="#94a3b8" style="background-color: #94a3b8;" title="石板灰"></span>
+                              <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
+                              <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
+                              <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
+                              <span class="color-swatch" data-color="#86efac" style="background-color: #86efac;" title="薄荷绿"></span>
+                              <span class="color-swatch" data-color="#c4b5fd" style="background-color: #c4b5fd;" title="淡丁香紫"></span>
+                              <span class="color-swatch" data-color="#f472b6" style="background-color: #f472b6;" title="樱花粉"></span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="color-picker-row">
+                      <span class="color-picker-label">背景颜色:</span>
+                      <div class="color-picker-trigger-wrapper">
+                        <button type="button" class="color-picker-trigger" id="setting-btn-bg-color-trigger" title="点击选择背景颜色">
+                          <span class="color-preview-block" id="setting-preview-bg-color-block" style="background-color: #1e293b;"></span>
+                          <span class="color-hex-display" id="setting-display-bg-color-hex">#1e293b</span>
+                        </button>
+                        <div class="color-popover" id="setting-popover-bg-color">
+                          <div class="color-popover-tabs">
+                            <button type="button" class="color-popover-tab-btn active" data-tab="custom" data-target="setting-bg">任意颜色</button>
+                            <button type="button" class="color-popover-tab-btn" data-tab="presets" data-target="setting-bg">预设推荐</button>
+                          </div>
+                          <div class="color-popover-pane active" id="pane-setting-bg-color-custom">
+                            <div class="color-spectrum-wrapper" id="spectrum-wrap-setting-bg">
+                              <canvas class="color-spectrum-canvas" id="spectrum-canvas-setting-bg" width="244" height="110"></canvas>
+                              <div class="color-spectrum-cursor" id="spectrum-cursor-setting-bg"></div>
+                            </div>
+                            <div class="hue-slider-wrapper">
+                              <input type="range" min="0" max="360" value="215" class="hue-slider" id="hue-slider-setting-bg" title="滑动选择色相">
+                            </div>
+                            <div class="color-popover-top">
+                              <input type="color" id="setting-icon-bg-color" class="color-input" value="#1e293b" title="系统调色盘">
+                              <input type="text" id="setting-icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
+                            </div>
+                          </div>
+                          <div class="color-popover-pane" id="pane-setting-bg-color-presets">
+                            <div class="color-popover-title">预设背景颜色</div>
+                            <div class="color-swatches" id="setting-bg-color-swatches">
+                              <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
+                              <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深邃黑 (Navy Night)"></span>
+                              <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
+                              <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
+                              <span class="color-swatch" data-color="#0284c7" style="background-color: #0284c7;" title="天青蓝 (Sky)"></span>
+                              <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
+                              <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
+                              <span class="color-swatch" data-color="#16a34a" style="background-color: #16a34a;" title="青草绿 (Forest)"></span>
+                              <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
+                              <span class="color-swatch" data-color="#c026d3" style="background-color: #c026d3;" title="洋红 (Fuchsia)"></span>
+                              <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
+                              <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="焦糖暖金 (Gold)"></span>
+                              <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
+                              <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="中国红 (Crimson)"></span>
+                              <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Tab Pane 2: 网络图标 -->
+                  <div class="icon-tab-pane" id="setting-icon-pane-url">
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <input type="text" id="setting-icon-url-input" class="form-input" placeholder="输入网络图片完整 URL，例如 https://example.com/logo.png">
+                      <div class="form-tip" style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
+                        支持外链或已下载到本地的 /icons/xxx.png 路径
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Tab Pane 3: 上传图标 -->
+                  <div class="icon-tab-pane" id="setting-icon-pane-upload">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                      <label class="btn btn-secondary file-upload-btn" style="cursor: pointer;">
+                        <span>选择本地图片...</span>
+                        <input type="file" id="setting-icon-file-input" accept=".png,.jpg,.jpeg,.webp,.svg,.ico" style="display: none;">
+                      </label>
+                      <span id="setting-icon-upload-status" style="font-size: 12px; color: var(--text-muted);">支持 PNG、JPG、SVG、ICO 格式</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Right: Real-time Preview Box -->
+                <div class="icon-editor-preview">
+                  <div class="icon-preview-card">
+                    <img id="setting-icon-preview-img" src="icon.png" alt="图标预览">
+                    <span id="setting-icon-preview-name" class="icon-preview-text">把 Docker 放到桌面</span>
+                    <button type="button" class="btn btn-sm btn-link" id="setting-btn-reset-icon" style="font-size: 11px; margin-top: 6px; padding: 2px 4px; color: var(--text-muted);">恢复默认</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -729,6 +871,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.12"></script>
+  <script src="app.js?v=1.1.13"></script>
 </body>
 </html>

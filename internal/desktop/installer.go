@@ -623,8 +623,16 @@ func (i *Installer) PruneOrphanApps(activeApps map[string]bool) error {
 	return nil
 }
 
+// isManagedApp checks if an app identifier strictly belongs to fn-docker-to-desktop namespaces.
+func isManagedApp(appName string) bool {
+	return strings.HasPrefix(appName, "fndocker.") || strings.HasPrefix(appName, "put-port.")
+}
+
 // findInstalledAppDir returns the directory where the installed app resides.
 func (i *Installer) findInstalledAppDir(appName string) string {
+	if !isManagedApp(appName) {
+		return ""
+	}
 	candidates := []string{
 		filepath.Join("/var/apps", appName, "target"),
 		filepath.Join("/var/apps", appName),
@@ -648,6 +656,11 @@ func (i *Installer) RefreshInstalledApp(item DesktopItem) error {
 	appName := item.AppName
 	if appName == "" {
 		appName = i.DeriveAppName(item)
+	}
+
+	if !isManagedApp(appName) {
+		slog.Warn("拒绝刷新非本程序管理的外部第三方应用目录", "appName", appName)
+		return fmt.Errorf("拒绝操作非本程序创建的应用: %s", appName)
 	}
 
 	appDirs := []string{
@@ -891,6 +904,10 @@ func (i *Installer) uninstallSingleApp(appName string) error {
 	if !i.hasAppcenterCLI || appName == "" {
 		return nil
 	}
+	if !isManagedApp(appName) {
+		slog.Warn("拒绝卸载非本程序管理的外部第三方应用", "appName", appName)
+		return fmt.Errorf("拒绝操作非本程序创建的应用: %s", appName)
+	}
 
 	slog.Info("正在通过 appcenter-cli 停止并卸载桌面应用...", "appName", appName)
 	_ = exec.Command(i.cliPath, "stop", appName).Run()
@@ -939,56 +956,126 @@ func isCliSpinnerLine(s string) bool {
 	return false
 }
 
+// updateManifestDisplayName updates display_name in fnOS manifest file.
+func updateManifestDisplayName(mfPath string, displayName string) error {
+	data, err := os.ReadFile(mfPath)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "display_name") {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) >= 1 && strings.TrimSpace(parts[0]) == "display_name" {
+				newLines = append(newLines, fmt.Sprintf("display_name    = %s", displayName))
+				changed = true
+				continue
+			}
+		}
+		newLines = append(newLines, line)
+	}
+	if !changed {
+		newLines = append(newLines, fmt.Sprintf("display_name    = %s", displayName))
+	}
+	return os.WriteFile(mfPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
 // SyncSelfApp updates fn-docker-to-desktop itself on fnOS desktop with user settings.
 func (i *Installer) SyncSelfApp(settings Settings) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	appName := "fn-docker-to-desktop"
-	slog.Info("正在同步自身桌面图标配置...", "appName", appName, "uiType", settings.PortalUIType, "allUsers", settings.PortalAllUsers)
+	slog.Info("正在同步自身桌面图标配置...", "appName", appName, "title", settings.PortalName, "icon", settings.PortalIcon, "allUsers", settings.PortalAllUsers)
 
-	// In-place update of native ui/config
 	trimAppDest := os.Getenv("TRIM_APPDEST")
-	var possibleConfigs []string
+	var possibleDirs []string
 	if trimAppDest != "" {
-		possibleConfigs = append(possibleConfigs,
-			filepath.Join(trimAppDest, "ui", "config"),
-			filepath.Join(trimAppDest, "app", "ui", "config"),
-		)
+		possibleDirs = append(possibleDirs, trimAppDest)
 	}
-	possibleConfigs = append(possibleConfigs,
-		fmt.Sprintf("/var/apps/%s/target/ui/config", appName),
-		fmt.Sprintf("/var/apps/%s/ui/config", appName),
+	if execPath, err := os.Executable(); err == nil && execPath != "" {
+		execDir := filepath.Dir(execPath)
+		possibleDirs = append(possibleDirs, execDir, filepath.Dir(execDir))
+	}
+	possibleDirs = append(possibleDirs,
+		filepath.Join("/var/apps", appName, "target"),
+		filepath.Join("/var/apps", appName),
+		filepath.Join("/usr/local/apps/@appcenter", appName),
+		filepath.Join("/host/root/var/apps", appName, "target"),
+		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
 	)
+
+	seenDirs := make(map[string]bool)
+	var validDirs []string
+	for _, d := range possibleDirs {
+		d = filepath.Clean(d)
+		if seenDirs[d] {
+			continue
+		}
+		seenDirs[d] = true
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			validDirs = append(validDirs, d)
+		}
+	}
 
 	updatedNative := false
-	for _, cfgPath := range possibleConfigs {
-		if fi, err := os.Stat(cfgPath); err == nil && !fi.IsDir() {
-			if err := updateUIConfigFile(cfgPath, settings); err == nil {
-				slog.Info("已直接更新原生飞牛桌面配置文件", "path", cfgPath)
-				updatedNative = true
-			} else {
-				slog.Warn("更新原生桌面配置异常", "path", cfgPath, "error", err)
+	for _, dir := range validDirs {
+		// Update manifest
+		mfCandidates := []string{
+			filepath.Join(dir, "manifest"),
+			filepath.Join(dir, "app", "manifest"),
+		}
+		for _, mfPath := range mfCandidates {
+			if fi, err := os.Stat(mfPath); err == nil && !fi.IsDir() {
+				_ = removeManifestServicePort(mfPath)
+				if settings.PortalName != "" {
+					if err := updateManifestDisplayName(mfPath, settings.PortalName); err == nil {
+						slog.Info("已更新 manifest 应用显示名称", "path", mfPath, "displayName", settings.PortalName)
+					} else {
+						slog.Warn("更新 manifest 异常", "path", mfPath, "error", err)
+					}
+				}
 			}
+		}
+
+		// In-place update of native ui/config
+		cfgCandidates := []string{
+			filepath.Join(dir, "ui", "config"),
+			filepath.Join(dir, "app", "ui", "config"),
+		}
+		for _, cfgPath := range cfgCandidates {
+			if fi, err := os.Stat(cfgPath); err == nil && !fi.IsDir() {
+				if err := updateUIConfigFile(cfgPath, settings); err == nil {
+					slog.Info("已直接更新原生飞牛桌面配置文件", "path", cfgPath)
+					updatedNative = true
+				} else {
+					slog.Warn("更新原生桌面配置异常", "path", cfgPath, "error", err)
+				}
+			}
+		}
+
+		// Update package icons
+		if settings.PortalIcon != "" && settings.PortalIcon != "icon.png" {
+			if err := WritePackageIcons(dir, settings.PortalIcon, i.iconsDir, appName, "docker", settings.PortalName); err == nil {
+				slog.Info("已同步更新自身桌面图标资源", "dir", dir, "icon", settings.PortalIcon)
+			} else {
+				slog.Warn("同步自身桌面图标资源异常", "dir", dir, "error", err)
+			}
+		} else if settings.PortalIcon == "icon.png" {
+			_ = WritePackageIcons(dir, "", i.iconsDir)
 		}
 	}
 
-	// Clean service_port from manifest
-	var possibleManifests []string
-	if trimAppDest != "" {
-		possibleManifests = append(possibleManifests,
-			filepath.Join(trimAppDest, "manifest"),
-			filepath.Join(trimAppDest, "app", "manifest"),
-		)
-	}
-	possibleManifests = append(possibleManifests,
-		fmt.Sprintf("/var/apps/%s/target/manifest", appName),
-		fmt.Sprintf("/var/apps/%s/manifest", appName),
-	)
-	for _, mfPath := range possibleManifests {
-		if fi, err := os.Stat(mfPath); err == nil && !fi.IsDir() {
-			_ = removeManifestServicePort(mfPath)
-		}
+	// Trigger restart via appcenter-cli so fnOS desktop cache reloads manifest & ui/config
+	if i.hasAppcenterCLI {
+		go func(cli, name string) {
+			time.Sleep(800 * time.Millisecond)
+			slog.Info("正在通过 appcenter-cli 重载自身服务以应用桌面图标和显示名称...", "appName", name)
+			_ = exec.Command(cli, "restart", name).Run()
+		}(i.cliPath, appName)
 	}
 
 	if updatedNative {
