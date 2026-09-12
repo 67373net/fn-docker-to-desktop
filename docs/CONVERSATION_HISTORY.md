@@ -2316,6 +2316,46 @@ INFO
 - **输出 Token (Completion Tokens)**：约 8,500
 - **总消耗 Token (Total Tokens)**：**约 178,500**
 
+---
+
+## Turn 24 - 统一发版 v1.1.10、飞牛平滑覆盖更新支持、Release 机制对齐
+
+### 需求背景与发版决策 (Release Objectives & Decisions)
+
+1. **版本号升级与发布确认**：
+   - 遵循飞牛 OS 应用中心单调递增覆盖安装规则与 GitHub Releases SemVer 规范，正式发布版本 **`v1.1.10`**；
+   - 保证飞牛系统用户可以直接无感平滑覆盖升级，彻底解决因同版本号导致的“已安装相同或更高版本”安装阻碍；
+   - 将上一轮实现的「飞牛 Connect 远程鉴权优化」、「端口提示协议状态显示」、「设置去线与统一风格」、「投喂满宽大图」全部打包入正式 Release。
+2. **版本号统一提升为 `1.1.10`**：
+   - `cmd/server/main.go`：`const appVersion = "1.1.10"`；
+   - `fnos-app/manifest`：`version = 1.1.10`；
+   - `web/app.js`：`version: state.settings?.version || '1.1.10'`；
+   - `web/index.html`：`style.css?v=1.1.10`、`app.js?v=1.1.10`、设置卡片标题升级为 `v1.1.10`；
+   - `internal/api/handler_test.go`：全面更新所有测试用例的版本预期为 `1.1.10`。
+3. **流程规范承诺**：
+   - 严格落实“每次发布必打 Tag、必更新版本号”的工程发布规范，杜绝 Release 脱节与错位。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 单元测试与验证**：
+   - Docker 容器环境运行 `go test -v ./...`，覆盖数据导出、未鉴权公网阻断、合法前端会话放行等全部场景，100% 通过（PASS）。
+2. **飞牛 OS 原生包构建与校验**：
+   - 运行 `./scripts/build-fpk.sh x86` 验证包构建通过，本地 `.fpk` 文件已清理干净。
+3. **版本发布与 Git 同步**：
+   - 提交全部改动，打上正式标签 `v1.1.10`，并推送到 GitHub 远程仓库（`master` 与 `v1.1.10`），触发 GitHub Actions 自动编译与 Release 发布。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 154,000
+- **思维链 Token (Thinking Tokens)**：约 21,000
+- **输出 Token (Completion Tokens)**：约 6,500
+- **总消耗 Token (Total Tokens)**：**约 181,500**
+
+
 
 
 

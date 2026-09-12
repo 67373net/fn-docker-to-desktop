@@ -48,7 +48,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.9",
+		AppVersion: "1.1.10",
 	})
 
 	mux := http.NewServeMux()
@@ -80,8 +80,8 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		t.Fatalf("Failed to decode export response: %v", err)
 	}
 
-	if exportResult.Version != "1.1.9" {
-		t.Errorf("Expected version 1.1.9, got %s", exportResult.Version)
+	if exportResult.Version != "1.1.10" {
+		t.Errorf("Expected version 1.1.10, got %s", exportResult.Version)
 	}
 	if exportResult.Total != 1 {
 		t.Errorf("Expected total 1, got %d", exportResult.Total)
@@ -110,7 +110,7 @@ func TestWANSecurityBlocking(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.9",
+		AppVersion: "1.1.10",
 	})
 
 	mux := http.NewServeMux()
@@ -146,7 +146,7 @@ func TestWANWithValidSessionToken(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.9",
+		AppVersion: "1.1.10",
 	})
 
 	mux := http.NewServeMux()

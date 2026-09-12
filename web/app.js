@@ -292,7 +292,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.9',
+    version: state.settings?.version || '1.1.10',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
