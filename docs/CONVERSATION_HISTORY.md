@@ -2180,5 +2180,79 @@ INFO
 - **输出 Token (Completion Tokens)**：约 7,200
 - **总消耗 Token (Total Tokens)**：**约 161,200**
 
+---
+
+## Turn 22 - 公网暴露安全与数据泄露全面防护、文字图标全能调色板、列表三色规范、host 模式解析解答、README 精简与投喂支持 (v1.1.9)
+
+### 需求背景与目标 (Requirements & Objectives)
+
+1. **公网暴露安全与数据泄露全面排查与加固**：
+   - 深入排查直接暴露端口、CORS/CSRF 跨域越权、进程敏感命令行参数（密码/Token）、SSRF 探测、开放重定向、SVG 脚本 XSS、未设密码时的公网扫描等风险并进行纵深防御加固。
+2. **桌面图标颜色规范化（严格三色系）**：
+   - 桌面图标列表的「类型」、「打开方式」、「访问权限」仅从以下三色选择：黑色 (`var(--text-main)`)、UI 匹配蓝色 (`var(--primary, #0284c7)`)、UI 匹配绿色 (`#10b981`)。
+3. **文字图标颜色选择器向上弹出**：
+   - 将 Popover 从向下弹出改为向上弹出 (`bottom: calc(100% + 8px); top: auto;`)，防止在弹窗底部溢出屏幕。
+4. **文字图标颜色选择器增加任意颜色选择界面**：
+   - 在预设颜色之外，集成专业 2D 色相/饱和度/明度 Canvas 调色板、渐变 Hue Slider 滑块与 HEX/RGB 实时联动，提供「任意颜色」与「预设推荐」子标签页切换，支持鼠标拖拽及触控。
+5. **进程列表协议与端口列样式改造**：
+   - 协议列去 tag 样式改为普通文字；TCP 黑色，UDP 蓝色；
+   - 端口列：TCP 和 TCP/UDP 均改成黑色，UDP 保持蓝色。
+6. **提问解答 1（Docker host 模式映射端口是否出现在列表中）**：
+   - 深入分析内核网络命名空间与 cgroup 解析机制，提供详尽权威的解答。
+7. **提问解答 2（默认筛选从 Docker 容器+TCP 改为 Docker 容器+全部是否更好）**：
+   - 分析兼顾 UDP 容器服务（DNS/WireGuard/游戏服务等），支持并调整默认筛选为「Docker 容器 + 全部」。
+8. **README 精简重构与 LICENSE**：
+   - 严格按照 5 点精简：watchcow 灵感、三大核心功能、Releases 使用方式、🥺投喂二维码（附带“请吃外卖”文字）、MIT License。
+   - 根目录添加标准 `LICENSE` 文件。
+9. **设置界面右侧增加「🥺投喂」Tab**：
+   - 在导航栏设置右侧添加「🥺投喂」，卡片内嵌本地权威二维码图片及文字（请吃外卖）。
+10. **版本号统一提升至 `v1.1.9`**，测试与打包验证。
+
+---
+
+### 技术实现细节 (Implementation Details)
+
+1. **公网暴露纵深安全防护与防数据泄露 (`internal/api/security.go`, `internal/api/handler.go`, `internal/monitor/`)**：
+   - **公网未鉴权强阻断**：在 `checkAuth` 中结合 `GetClientIP` 与 `IsPrivateOrLocalIP`，当检测到客户端属于公网 IP 且用户未配置密码时，强制拦截对 `/api/ports`、`/api/desktop/*`、`/api/logs/*`、`/api/system/*` 等所有敏感接口的访问，返回 HTTP 401，从协议层面根除公网 IP 扫描器（如 Shodan、Censys）嗅探飞牛宿主机进程与端口资产的风险；
+   - **标准安全响应头与 CSRF 拦截**：`SecurityHeadersMiddleware` 注入 `X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-XSS-Protection: 1; mode=block`、`Permissions-Policy`，并对所有跨域的 mutating 请求（POST/PUT/DELETE）实施 Origin 校验拦截；
+   - **SSRF 与 Open Redirect 过滤**：代理测试与重定向接口严格过滤云厂商元数据地址（`169.254.169.254`、`metadata.google.internal` 等），阻断内网穿透探测；
+   - **SVG 恶意脚本检测与 CSP**：图标上传及提供接口通过 `SanitizeSVGContent` 静态检查 `<script>`、`javascript:`、`onload=` 等危险 Payload，并为 SVG 响应补充强隔离 Content-Security-Policy；
+   - **登录防暴力破解速率限制**：`SecurityManager` 实现 IP 维度的滑动窗口限流（5 分钟内连续失败 5 次自动锁定 5 分钟）；
+   - **进程命令行密码/密钥脱敏**：`internal/monitor/process.go` 引入 `maskSensitiveCmdline`，对常见 `--password`、`-p`、`token`、`secret` 等命令行参数进行自动星号脱敏，防止通过进程列表暴露敏感凭据。
+2. **样式与颜色规范化 (`web/style.css`, `web/app.js`)**：
+   - 桌面图标列表：类型/打开方式/权限严格限制为黑色 (`#1e293b`)、UI 匹配蓝 (`#0284c7`)、UI 匹配绿 (`#10b981`)；
+   - 进程列表：协议与端口列移去 tag 样式，TCP 黑色，UDP 蓝色，TCP/UDP 端口链接为黑色；
+   - 文字图标 Popover：向上弹出定位（`bottom: calc(100% + 8px); top: auto;`），完美规避屏幕边缘溢出。
+3. **文字图标任意调色板交互与内嵌投喂 (`web/index.html`, `web/app.js`, `web/embed.go`)**：
+   - 集成 2D 色相/饱和度/明度 Canvas 调色板与滑动条，支持触控与鼠标实时拾色；
+   - 导航栏设置右侧添加「🥺投喂」标签页，内嵌微信与支付宝二维码。
+4. **README 精简与开源协议**：
+   - 重构 `README.md`，语言精炼通顺；添加根目录 `LICENSE`。
+5. **版本升级与测试**：
+   - 版本统一提升为 `1.1.9`；
+   - 新增 `TestWANSecurityBlocking` 单元测试，测试套件 100% PASS，打包构建验证成功。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 单元测试与验证**：
+   - 新增 `TestWANSecurityBlocking`，验证公网未鉴权阻断；
+   - 全套测试 100% 通过（PASS）。
+2. **构建打包**：
+   - `./scripts/build-fpk.sh x86` 验证打包成功，已清理本地 `.fpk` 文件。
+3. **版本号统一发布为 `v1.1.9`**：
+   - `cmd/server/main.go`、`fnos-app/manifest`、`web/app.js`、`web/index.html`。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 132,000
+- **思维链 Token (Thinking Tokens)**：约 28,000
+- **输出 Token (Completion Tokens)**：约 7,800
+- **总消耗 Token (Total Tokens)**：**约 167,800**
+
+
 
 

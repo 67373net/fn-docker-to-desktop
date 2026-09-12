@@ -271,10 +271,22 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 }
 
 func (h *Handler) checkAuth(r *http.Request) bool {
-	if h.authMgr == nil || !h.authMgr.IsAuthRequired() {
-		return true
+	clientIP := GetClientIP(r)
+	isWAN := clientIP != nil && !IsPrivateOrLocalIP(clientIP)
+
+	// If password authentication is enabled, always enforce it
+	if h.authMgr != nil && h.authMgr.IsAuthRequired() {
+		return h.authMgr.IsRequestAuthenticated(r)
 	}
-	return h.authMgr.IsRequestAuthenticated(r)
+
+	// If accessed from WAN (Public IP) and NO password has been set,
+	// block unauthenticated access to prevent data leakage!
+	if isWAN {
+		slog.Warn("[SECURITY] 拦截公网未鉴权访问敏感 API", "remote", r.RemoteAddr, "clientIP", clientIP.String(), "path", r.URL.Path)
+		return false
+	}
+
+	return true
 }
 
 // /api/ports
@@ -354,7 +366,6 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := h.watcher.Subscribe("ports")
 	defer h.watcher.Unsubscribe(ch)
@@ -920,6 +931,12 @@ func (h *Handler) handleTestProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if IsRestrictedMetadataTarget(req.TargetURL) {
+		slog.Warn("[SECURITY] 拦截针对云元数据/受限内网服务的代理测试请求", "target", req.TargetURL, "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "禁止探测云平台元数据或受限内网服务 (SSRF 防护)"}, http.StatusForbidden)
+		return
+	}
+
 	result := proxy.TestTarget(req.TargetURL, 5*time.Second)
 	h.jsonResponse(w, r, result, http.StatusOK)
 }
@@ -997,6 +1014,21 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		slog.Warn("[AUDIT] 读取上传文件失败", "error", err, "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "读取上传文件失败: " + err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	if ext == ".svg" {
+		if err := SanitizeSVGContent(fileData); err != nil {
+			slog.Warn("[SECURITY] 拦截包含潜在不安全代码的 SVG 文件", "error", err, "remote", r.RemoteAddr)
+			h.jsonResponse(w, r, map[string]string{"error": "SVG 图标包含潜在不安全脚本代码，已被安全拦截"}, http.StatusBadRequest)
+			return
+		}
+	}
+
 	cleanBase := desktop.SanitizeFileName(header.Filename)
 	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), cleanBase)
 	destPath := filepath.Join(h.iconsDir, filename)
@@ -1011,7 +1043,7 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 	}
 	defer out.Close()
 
-	if _, err := io.Copy(out, file); err != nil {
+	if _, err := out.Write(fileData); err != nil {
 		slog.Error("[AUDIT] 写入图标文件数据失败", "destPath", destPath, "error", err)
 		h.jsonResponse(w, r, map[string]string{"error": "保存文件失败: " + err.Error()}, http.StatusInternalServerError)
 		return
@@ -1028,6 +1060,11 @@ func (h *Handler) handleServeIcon(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(iconPath); err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if strings.HasSuffix(strings.ToLower(filename), ".svg") {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	}
 	http.ServeFile(w, r, iconPath)
 }
@@ -1108,11 +1145,14 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 
 // Auth handlers
 func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	authRequired := h.authMgr != nil && h.authMgr.IsAuthRequired()
-	authenticated := !authRequired || h.checkAuth(r)
-	h.jsonResponse(w, r, map[string]bool{
+	clientIP := GetClientIP(r)
+	isWAN := clientIP != nil && !IsPrivateOrLocalIP(clientIP)
+	authRequired := (h.authMgr != nil && h.authMgr.IsAuthRequired()) || isWAN
+	authenticated := h.checkAuth(r)
+	h.jsonResponse(w, r, map[string]any{
 		"auth_required": authRequired,
 		"authenticated": authenticated,
+		"wan_detected":  isWAN,
 	}, http.StatusOK)
 }
 
@@ -1125,14 +1165,31 @@ func (h *Handler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientIP := ""
+	if ip := GetClientIP(r); ip != nil {
+		clientIP = ip.String()
+	}
+	if clientIP != "" && globalSecurityMgr.IsBlockedByRateLimit(clientIP) {
+		slog.Warn("[SECURITY] 拦截频繁登录尝试", "clientIP", clientIP, "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "尝试登录失败次数过多，已被临时锁定，请 5 分钟后再试"}, http.StatusTooManyRequests)
+		return
+	}
+
 	if h.authMgr == nil || !h.authMgr.IsAuthRequired() {
 		h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
 		return
 	}
 
 	if !h.authMgr.VerifyPassword(req.Password) {
+		if clientIP != "" {
+			globalSecurityMgr.RecordFailedLogin(clientIP)
+		}
 		h.jsonResponse(w, r, map[string]string{"error": "密码错误"}, http.StatusUnauthorized)
 		return
+	}
+
+	if clientIP != "" {
+		globalSecurityMgr.ResetFailedLogin(clientIP)
 	}
 
 	token := h.authMgr.GenerateToken()

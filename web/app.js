@@ -92,7 +92,7 @@ let state = {
   system: null,
   host: null,
   portFilterSource: 'docker', // 'all' | 'docker' | 'host' (默认: Docker 容器)
-  portFilterProto: 'tcp',     // 'all' | 'tcp' | 'udp' (默认: TCP)
+  portFilterProto: 'all',     // 'all' | 'tcp' | 'udp' (默认: 全部)
   portSearch: '',
   desktopSearch: '',
   procSearch: '',
@@ -263,7 +263,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.8',
+    version: state.settings?.version || '1.1.9',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -587,15 +587,20 @@ function renderPortsTable() {
     const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
     const resText = (cpuText === '-' && rssText === '-') ? '-' : `${cpuText} / ${rssText}`;
 
+    const protoUpper = (p.protocol || '').toUpperCase();
+    const isPureUdp = protoUpper === 'UDP';
+    const protoClass = isPureUdp ? 'text-proto-udp' : 'text-proto-tcp';
+    const portClass = isPureUdp ? 'port-link-udp' : 'port-link-tcp';
+
     html += `<tr>
       <td>
-        <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link" title="在浏览器新窗口打开 ${portUrl}">
+        <a href="${portUrl}" target="_blank" rel="noopener noreferrer" class="port-link ${portClass}" title="在浏览器新窗口打开 ${portUrl}">
           <span>${p.local_port}</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         </a>
       </td>
       <td class="col-hide-minimal">
-        <span class="protocol-tag">${escapeHtml(p.protocol)}</span>
+        <span class="${protoClass}">${escapeHtml(p.protocol)}</span>
       </td>
       <td class="col-hide-minimal"><code>${escapeHtml(p.local_ip || '0.0.0.0')}</code></td>
       <td>${procTag}</td>
@@ -1282,7 +1287,165 @@ async function uploadTextIconBlob() {
   });
 }
 
-function updateTextColorUI(val) {
+// --- Color Math & Spectrum Picker Helpers ---
+function hexToRgb(hex) {
+  const norm = normalizeHexColor(hex);
+  if (!norm) return [255, 255, 255];
+  const num = parseInt(norm.slice(1), 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function rgbToHex(r, g, b) {
+  const toHex = (c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0');
+  return '#' + toHex(r) + toHex(g) + toHex(b);
+}
+
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  const s = max === 0 ? 0 : d / max;
+  const v = max;
+
+  if (max !== min) {
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h *= 60;
+  }
+  return [h, s, v];
+}
+
+function hsvToRgb(h, s, v) {
+  h = (h % 360 + 360) % 360;
+  let r, g, b;
+  const i = Math.floor(h / 60);
+  const f = (h / 60) - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+
+  switch (i) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    default: r = v; g = p; b = q; break;
+  }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function drawColorSpectrum(canvas, hue) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const horizGrad = ctx.createLinearGradient(0, 0, w, 0);
+  horizGrad.addColorStop(0, '#ffffff');
+  horizGrad.addColorStop(1, `hsl(${hue}, 100%, 50%)`);
+  ctx.fillStyle = horizGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  const vertGrad = ctx.createLinearGradient(0, 0, 0, h);
+  vertGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vertGrad.addColorStop(1, '#000000');
+  ctx.fillStyle = vertGrad;
+  ctx.fillRect(0, 0, w, h);
+}
+
+const spectrumPickers = {
+  text: { hue: 0, s: 0, v: 1, isDragging: false },
+  bg: { hue: 215, s: 0.44, v: 0.23, isDragging: false }
+};
+
+function setupSpectrumPicker(type) {
+  const canvas = document.getElementById(`spectrum-canvas-${type}`);
+  const cursor = document.getElementById(`spectrum-cursor-${type}`);
+  const hueSlider = document.getElementById(`hue-slider-${type}`);
+  const wrap = document.getElementById(`spectrum-wrap-${type}`);
+  if (!canvas || !cursor || !hueSlider || !wrap) return;
+
+  const spState = spectrumPickers[type];
+
+  function redraw() {
+    drawColorSpectrum(canvas, spState.hue);
+    cursor.style.left = (spState.s * 100) + '%';
+    cursor.style.top = ((1 - spState.v) * 100) + '%';
+  }
+
+  function pickFromCoords(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    spState.s = x / rect.width;
+    spState.v = 1 - (y / rect.height);
+    cursor.style.left = x + 'px';
+    cursor.style.top = y + 'px';
+
+    const rgb = hsvToRgb(spState.hue, spState.s, spState.v);
+    const hex = rgbToHex(rgb[0], rgb[1], rgb[2]);
+    if (type === 'text') {
+      updateTextColorUI(hex, false);
+    } else {
+      updateBgColorUI(hex, false);
+    }
+    renderTextIconCanvas();
+  }
+
+  wrap.addEventListener('mousedown', (e) => {
+    spState.isDragging = true;
+    pickFromCoords(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (spState.isDragging) {
+      pickFromCoords(e.clientX, e.clientY);
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    spState.isDragging = false;
+  });
+
+  wrap.addEventListener('touchstart', (e) => {
+    if (e.touches && e.touches[0]) {
+      spState.isDragging = true;
+      pickFromCoords(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (spState.isDragging && e.touches && e.touches[0]) {
+      pickFromCoords(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    spState.isDragging = false;
+  });
+
+  hueSlider.addEventListener('input', () => {
+    spState.hue = parseFloat(hueSlider.value);
+    drawColorSpectrum(canvas, spState.hue);
+    const rgb = hsvToRgb(spState.hue, spState.s, spState.v);
+    const hex = rgbToHex(rgb[0], rgb[1], rgb[2]);
+    if (type === 'text') {
+      updateTextColorUI(hex, false);
+    } else {
+      updateBgColorUI(hex, false);
+    }
+    renderTextIconCanvas();
+  });
+
+  redraw();
+}
+
+function updateTextColorUI(val, updateSpectrum = true) {
   if (!val) return;
   const hex = normalizeHexColor(val) || val;
   const picker = document.getElementById('icon-text-color');
@@ -1296,9 +1459,25 @@ function updateTextColorUI(val) {
   document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
     s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
   });
+
+  if (updateSpectrum) {
+    const [r, g, b] = hexToRgb(hex);
+    const [h, s, v] = rgbToHsv(r, g, b);
+    const sp = spectrumPickers.text;
+    sp.hue = h; sp.s = s; sp.v = v;
+    const hueSlider = document.getElementById('hue-slider-text');
+    if (hueSlider) hueSlider.value = Math.round(h);
+    const canvas = document.getElementById('spectrum-canvas-text');
+    const cursor = document.getElementById('spectrum-cursor-text');
+    if (canvas) drawColorSpectrum(canvas, h);
+    if (cursor) {
+      cursor.style.left = (s * 100) + '%';
+      cursor.style.top = ((1 - v) * 100) + '%';
+    }
+  }
 }
 
-function updateBgColorUI(val) {
+function updateBgColorUI(val, updateSpectrum = true) {
   if (!val) return;
   const hex = normalizeHexColor(val) || val;
   const picker = document.getElementById('icon-bg-color');
@@ -1312,6 +1491,22 @@ function updateBgColorUI(val) {
   document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
     s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
   });
+
+  if (updateSpectrum) {
+    const [r, g, b] = hexToRgb(hex);
+    const [h, s, v] = rgbToHsv(r, g, b);
+    const sp = spectrumPickers.bg;
+    sp.hue = h; sp.s = s; sp.v = v;
+    const hueSlider = document.getElementById('hue-slider-bg');
+    if (hueSlider) hueSlider.value = Math.round(h);
+    const canvas = document.getElementById('spectrum-canvas-bg');
+    const cursor = document.getElementById('spectrum-cursor-bg');
+    if (canvas) drawColorSpectrum(canvas, h);
+    if (cursor) {
+      cursor.style.left = (s * 100) + '%';
+      cursor.style.top = ((1 - v) * 100) + '%';
+    }
+  }
 }
 
 function closeColorPopovers() {
@@ -1331,6 +1526,30 @@ function initIconEditor() {
     textInput.addEventListener('input', renderTextIconCanvas);
   }
 
+  // Initialize 2D spectrum pickers for text and bg
+  setupSpectrumPicker('text');
+  setupSpectrumPicker('bg');
+
+  // Popover inner tab buttons (任意颜色 / 预设推荐)
+  document.querySelectorAll('.color-popover-tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = btn.dataset.target;
+      const tab = btn.dataset.tab;
+      const pop = document.getElementById(`popover-${target}-color`);
+      if (!pop) return;
+      pop.querySelectorAll('.color-popover-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+      const customPane = document.getElementById(`pane-${target}-color-custom`);
+      const presetsPane = document.getElementById(`pane-${target}-color-presets`);
+      if (customPane) customPane.classList.toggle('active', tab === 'custom');
+      if (presetsPane) presetsPane.classList.toggle('active', tab === 'presets');
+      if (tab === 'custom') {
+        const canvas = document.getElementById(`spectrum-canvas-${target}`);
+        if (canvas) drawColorSpectrum(canvas, spectrumPickers[target].hue);
+      }
+    });
+  });
+
   // Popover toggle buttons
   const btnTextTrigger = document.getElementById('btn-text-color-trigger');
   const popoverText = document.getElementById('popover-text-color');
@@ -1341,6 +1560,8 @@ function initIconEditor() {
       closeColorPopovers();
       if (!isVisible) {
         popoverText.style.display = 'block';
+        const canvas = document.getElementById('spectrum-canvas-text');
+        if (canvas) drawColorSpectrum(canvas, spectrumPickers.text.hue);
       }
     });
     popoverText.addEventListener('click', (e) => e.stopPropagation());
@@ -1355,6 +1576,8 @@ function initIconEditor() {
       closeColorPopovers();
       if (!isVisible) {
         popoverBg.style.display = 'block';
+        const canvas = document.getElementById('spectrum-canvas-bg');
+        if (canvas) drawColorSpectrum(canvas, spectrumPickers.bg.hue);
       }
     });
     popoverBg.addEventListener('click', (e) => e.stopPropagation());

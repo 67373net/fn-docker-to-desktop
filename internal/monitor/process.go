@@ -2,9 +2,31 @@ package monitor
 
 import (
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 )
+
+var sensitiveArgRegex = regexp.MustCompile(`(?i)(password|passwd|pwd|token|secret|key|auth|api[-_]?key)[=:\s]+([^\s]+)`)
+
+func maskSensitiveCmdline(cmd string) string {
+	if cmd == "" {
+		return ""
+	}
+	return sensitiveArgRegex.ReplaceAllStringFunc(cmd, func(match string) string {
+		parts := strings.FieldsFunc(match, func(r rune) bool {
+			return r == '=' || r == ':' || r == ' '
+		})
+		if len(parts) >= 2 {
+			sepIdx := strings.IndexAny(match, "=:\t ")
+			if sepIdx != -1 {
+				return match[:sepIdx+1] + "******"
+			}
+		}
+		return match
+	})
+}
 
 // ScanAllProcesses scans all active processes in procPath and returns a list sorted by CPU% descending.
 func ScanAllProcesses(procPath string) []ProcessDetail {
@@ -42,7 +64,7 @@ func ScanAllProcesses(procPath string) []ProcessDetail {
 		detail := ProcessDetail{
 			PID:          p.PID,
 			Name:         p.Name,
-			Cmdline:      p.Cmdline,
+			Cmdline:      maskSensitiveCmdline(p.Cmdline),
 			Exe:          p.Exe,
 			State:        p.State,
 			User:         p.Username,

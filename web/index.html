@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.8">
+  <link rel="stylesheet" href="style.css?v=1.1.9">
 </head>
 <body>
   <!-- Header Bar -->
@@ -39,6 +39,9 @@
       <button class="nav-tab" data-tab="settings">
         <span>设置</span>
       </button>
+      <button class="nav-tab" data-tab="donate">
+        <span>🥺投喂</span>
+      </button>
     </nav>
   </header>
 
@@ -58,8 +61,8 @@
           <option value="host">系统原生</option>
         </select>
         <select id="port-filter-proto" class="toolbar-select" title="协议筛选">
-          <option value="all">全部</option>
-          <option value="tcp" selected>TCP</option>
+          <option value="all" selected>全部</option>
+          <option value="tcp">TCP</option>
           <option value="udp">UDP</option>
         </select>
         <div class="toolbar-spacer"></div>
@@ -227,7 +230,7 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.8 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.9 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -318,6 +321,39 @@
                 <tr><td colspan="6" class="empty-state">正在获取网络接口...</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 6: 🥺投喂 ==================== -->
+    <section class="tab-pane" id="pane-donate">
+      <div class="donate-container">
+        <div class="donate-card">
+          <h2 class="donate-title">🥺 请作者吃顿外卖</h2>
+          <p class="donate-subtitle">「把 Docker 放到桌面」是一款开源免费应用。如果它为您带来了便利与价值，欢迎扫描下方二维码投喂支持，感谢您的认可与鼓励！☕</p>
+          <div class="donate-qr-grid">
+            <div class="donate-qr-item">
+              <div class="donate-qr-frame">
+                <img src="donate_wechat.jpg" alt="微信收款码" class="donate-qr-img">
+              </div>
+              <div class="donate-qr-label">
+                <span class="donate-pay-icon wechat">微</span>
+                <span>微信支付</span>
+              </div>
+            </div>
+            <div class="donate-qr-item">
+              <div class="donate-qr-frame">
+                <img src="donate_alipay.jpg" alt="支付宝收款码" class="donate-qr-img">
+              </div>
+              <div class="donate-qr-label">
+                <span class="donate-pay-icon alipay">支</span>
+                <span>支付宝支付</span>
+              </div>
+            </div>
+          </div>
+          <div class="donate-footer">
+            <p class="donate-quote">大家的每一份支持，都是推动该项目持续迭代、优化体验的强劲动力 ❤️</p>
           </div>
         </div>
       </div>
@@ -460,22 +496,37 @@
                         <span class="color-hex-display" id="display-text-color-hex">#ffffff</span>
                       </button>
                       <div class="color-popover" id="popover-text-color">
-                        <div class="color-popover-top">
-                          <input type="color" id="icon-text-color" class="color-input" value="#ffffff">
-                          <input type="text" id="icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
+                        <div class="color-popover-tabs">
+                          <button type="button" class="color-popover-tab-btn active" data-tab="custom" data-target="text">任意颜色</button>
+                          <button type="button" class="color-popover-tab-btn" data-tab="presets" data-target="text">预设推荐</button>
                         </div>
-                        <div class="color-popover-title">预设文字颜色</div>
-                        <div class="color-swatches" id="text-color-swatches">
-                          <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
-                          <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
-                          <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
-                          <span class="color-swatch" data-color="#94a3b8" style="background-color: #94a3b8;" title="石板灰"></span>
-                          <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
-                          <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
-                          <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
-                          <span class="color-swatch" data-color="#86efac" style="background-color: #86efac;" title="薄荷绿"></span>
-                          <span class="color-swatch" data-color="#c4b5fd" style="background-color: #c4b5fd;" title="淡丁香紫"></span>
-                          <span class="color-swatch" data-color="#f472b6" style="background-color: #f472b6;" title="樱花粉"></span>
+                        <div class="color-popover-pane active" id="pane-text-color-custom">
+                          <div class="color-spectrum-wrapper" id="spectrum-wrap-text">
+                            <canvas class="color-spectrum-canvas" id="spectrum-canvas-text" width="244" height="110"></canvas>
+                            <div class="color-spectrum-cursor" id="spectrum-cursor-text"></div>
+                          </div>
+                          <div class="hue-slider-wrapper">
+                            <input type="range" min="0" max="360" value="0" class="hue-slider" id="hue-slider-text" title="滑动选择色相">
+                          </div>
+                          <div class="color-popover-top">
+                            <input type="color" id="icon-text-color" class="color-input" value="#ffffff" title="系统调色盘">
+                            <input type="text" id="icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
+                          </div>
+                        </div>
+                        <div class="color-popover-pane" id="pane-text-color-presets">
+                          <div class="color-popover-title">预设文字颜色</div>
+                          <div class="color-swatches" id="text-color-swatches">
+                            <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
+                            <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
+                            <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
+                            <span class="color-swatch" data-color="#94a3b8" style="background-color: #94a3b8;" title="石板灰"></span>
+                            <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
+                            <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
+                            <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
+                            <span class="color-swatch" data-color="#86efac" style="background-color: #86efac;" title="薄荷绿"></span>
+                            <span class="color-swatch" data-color="#c4b5fd" style="background-color: #c4b5fd;" title="淡丁香紫"></span>
+                            <span class="color-swatch" data-color="#f472b6" style="background-color: #f472b6;" title="樱花粉"></span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -488,27 +539,42 @@
                         <span class="color-hex-display" id="display-bg-color-hex">#1e293b</span>
                       </button>
                       <div class="color-popover" id="popover-bg-color">
-                        <div class="color-popover-top">
-                          <input type="color" id="icon-bg-color" class="color-input" value="#1e293b">
-                          <input type="text" id="icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
+                        <div class="color-popover-tabs">
+                          <button type="button" class="color-popover-tab-btn active" data-tab="custom" data-target="bg">任意颜色</button>
+                          <button type="button" class="color-popover-tab-btn" data-tab="presets" data-target="bg">预设推荐</button>
                         </div>
-                        <div class="color-popover-title">预设背景颜色</div>
-                        <div class="color-swatches" id="bg-color-swatches">
-                          <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
-                          <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深邃黑 (Navy Night)"></span>
-                          <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
-                          <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
-                          <span class="color-swatch" data-color="#0284c7" style="background-color: #0284c7;" title="天青蓝 (Sky)"></span>
-                          <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
-                          <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
-                          <span class="color-swatch" data-color="#16a34a" style="background-color: #16a34a;" title="青草绿 (Forest)"></span>
-                          <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
-                          <span class="color-swatch" data-color="#c026d3" style="background-color: #c026d3;" title="洋红 (Fuchsia)"></span>
-                          <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
-                          <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="焦糖暖金 (Gold)"></span>
-                          <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
-                          <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="中国红 (Crimson)"></span>
-                          <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
+                        <div class="color-popover-pane active" id="pane-bg-color-custom">
+                          <div class="color-spectrum-wrapper" id="spectrum-wrap-bg">
+                            <canvas class="color-spectrum-canvas" id="spectrum-canvas-bg" width="244" height="110"></canvas>
+                            <div class="color-spectrum-cursor" id="spectrum-cursor-bg"></div>
+                          </div>
+                          <div class="hue-slider-wrapper">
+                            <input type="range" min="0" max="360" value="215" class="hue-slider" id="hue-slider-bg" title="滑动选择色相">
+                          </div>
+                          <div class="color-popover-top">
+                            <input type="color" id="icon-bg-color" class="color-input" value="#1e293b" title="系统调色盘">
+                            <input type="text" id="icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
+                          </div>
+                        </div>
+                        <div class="color-popover-pane" id="pane-bg-color-presets">
+                          <div class="color-popover-title">预设背景颜色</div>
+                          <div class="color-swatches" id="bg-color-swatches">
+                            <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
+                            <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深邃黑 (Navy Night)"></span>
+                            <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
+                            <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
+                            <span class="color-swatch" data-color="#0284c7" style="background-color: #0284c7;" title="天青蓝 (Sky)"></span>
+                            <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
+                            <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
+                            <span class="color-swatch" data-color="#16a34a" style="background-color: #16a34a;" title="青草绿 (Forest)"></span>
+                            <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
+                            <span class="color-swatch" data-color="#c026d3" style="background-color: #c026d3;" title="洋红 (Fuchsia)"></span>
+                            <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
+                            <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="焦糖暖金 (Gold)"></span>
+                            <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
+                            <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="中国红 (Crimson)"></span>
+                            <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -633,6 +699,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.8"></script>
+  <script src="app.js?v=1.1.9"></script>
 </body>
 </html>

@@ -282,9 +282,27 @@ func extractContainerID(cgroupText string) string {
 			if dot := strings.Index(rest, ".scope"); dot != -1 {
 				return rest[:dot]
 			}
+			fields := strings.FieldsFunc(rest, func(r rune) bool {
+				return r == '/' || r == '.' || r == ' ' || r == '\n'
+			})
+			if len(fields) > 0 && len(fields[0]) >= 12 {
+				return fields[0]
+			}
 		}
 		if idx := strings.Index(line, "/docker/"); idx != -1 {
 			rest := line[idx+8:]
+			fields := strings.FieldsFunc(rest, func(r rune) bool {
+				return r == '/' || r == '.' || r == ' ' || r == '\n'
+			})
+			if len(fields) > 0 && len(fields[0]) >= 12 {
+				return fields[0]
+			}
+		}
+		if idx := strings.Index(line, "containerd-"); idx != -1 {
+			rest := line[idx+11:]
+			if dot := strings.Index(rest, ".scope"); dot != -1 {
+				return rest[:dot]
+			}
 			fields := strings.FieldsFunc(rest, func(r rune) bool {
 				return r == '/' || r == '.' || r == ' ' || r == '\n'
 			})

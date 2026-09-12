@@ -25,7 +25,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.8"
+const appVersion = "1.1.9"
 
 func main() {
 	modeFlag := flag.String("mode", "server", "Run mode: server or cgi")
@@ -230,8 +230,9 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	// Wrap with HTTP Request Logging Middleware
-	loggingHandler := api.RequestLoggingMiddleware(mux)
+	// Wrap with Security Headers and HTTP Request Logging Middleware
+	securedHandler := api.SecurityHeadersMiddleware(mux)
+	loggingHandler := api.RequestLoggingMiddleware(securedHandler)
 
 	// Middleware to support fnOS Unified Gateway prefix and normalize paths
 	var rootHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
