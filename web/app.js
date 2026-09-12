@@ -306,7 +306,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.15',
+    version: state.settings?.version || '1.1.16',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -404,7 +404,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.15';
+    const ver = state.settings?.version || '1.1.16';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -423,7 +423,14 @@ function updateSettingsForm() {
   if (statusEl) statusEl.textContent = '';
 
   // Update setting icon editor form fields and preview
-  const iconType = state.originalSettings?.portal_icon_type || 'upload';
+  let iconType = state.originalSettings?.portal_icon_type;
+  if (!iconType) {
+    if (state.originalSettings?.portal_icon_text) {
+      iconType = 'text';
+    } else {
+      iconType = 'upload';
+    }
+  }
   const icon = state.originalSettings?.portal_icon || 'icon.png';
   const iconText = state.originalSettings?.portal_icon_text || '';
   const iconTextColor = state.originalSettings?.portal_icon_text_color || '#ffffff';
@@ -447,6 +454,9 @@ function updateSettingsForm() {
   if (previewName) previewName.textContent = '把 Docker 放到桌面';
 
   setSettingIconTab(iconType);
+  if (iconType === 'text') {
+    renderSettingTextIconCanvas();
+  }
 
   state.isSettingsDirty = false;
 }
@@ -649,6 +659,19 @@ function saveSinkRules(rules) {
   localStorage.setItem('fn_docker_sink_rules', JSON.stringify(rules));
 }
 
+function matchSinkRule(targetStr, rule) {
+  if (!targetStr || !rule) return false;
+  // If rule is short (<= 4 chars, e.g. nps, npc, frpc), require word/punctuation boundary
+  // so that "synps", "jsonps", etc. won't be falsely matched
+  if (rule.length <= 4) {
+    const escaped = rule.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+    return regex.test(targetStr);
+  }
+  // For longer distinctive names (>= 5 chars, e.g. tailscale, zerotier, cloudflared), substring match is safe
+  return targetStr.includes(rule);
+}
+
 function renderPortRowHtml(p) {
   const portUrl = getHostTargetUrl(p.local_port, 'http', '/');
   const isDocker = p.docker && p.docker.is_docker;
@@ -768,10 +791,10 @@ function renderPortsTable() {
     const procName = (p.process_name || '').toLowerCase();
     const exeName = (p.exe || '').toLowerCase();
     return sinkRules.some(r =>
-      (containerName && containerName.includes(r)) ||
-      (imageName && imageName.includes(r)) ||
-      (procName && procName.includes(r)) ||
-      (exeName && exeName.includes(r))
+      matchSinkRule(containerName, r) ||
+      matchSinkRule(imageName, r) ||
+      matchSinkRule(procName, r) ||
+      matchSinkRule(exeName, r)
     );
   };
 
@@ -1317,10 +1340,10 @@ function setDesktopModalMode(mode) {
 // --- Icon 3-Tab Editor ---
 function setIconModalTab(tabName) {
   state.activeIconTab = tabName;
-  document.querySelectorAll('.icon-tab').forEach(b => {
+  document.querySelectorAll('#modal-desktop-item .icon-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.iconTab === tabName);
   });
-  document.querySelectorAll('.icon-tab-pane').forEach(p => {
+  document.querySelectorAll('#modal-desktop-item .icon-tab-pane').forEach(p => {
     p.classList.toggle('active', p.id === `icon-pane-${tabName}`);
   });
 
@@ -1743,26 +1766,6 @@ function initIconEditor() {
   setupSpectrumPicker('text');
   setupSpectrumPicker('bg');
 
-  // Popover inner tab buttons (任意颜色 / 预设推荐)
-  document.querySelectorAll('.color-popover-tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const target = btn.dataset.target;
-      const tab = btn.dataset.tab;
-      const pop = document.getElementById(`popover-${target}-color`);
-      if (!pop) return;
-      pop.querySelectorAll('.color-popover-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-      const customPane = document.getElementById(`pane-${target}-color-custom`);
-      const presetsPane = document.getElementById(`pane-${target}-color-presets`);
-      if (customPane) customPane.classList.toggle('active', tab === 'custom');
-      if (presetsPane) presetsPane.classList.toggle('active', tab === 'presets');
-      if (tab === 'custom') {
-        const canvas = document.getElementById(`spectrum-canvas-${target}`);
-        if (canvas) drawColorSpectrum(canvas, spectrumPickers[target].hue);
-      }
-    });
-  });
-
   // Popover toggle buttons
   const btnTextTrigger = document.getElementById('btn-text-color-trigger');
   const popoverText = document.getElementById('popover-text-color');
@@ -2174,26 +2177,6 @@ function initSettingIconEditor() {
   // Initialize 2D spectrum pickers for setting-text and setting-bg
   setupSpectrumPicker('setting-text');
   setupSpectrumPicker('setting-bg');
-
-  // Popover inner tab buttons
-  document.querySelectorAll('#pane-settings .color-popover-tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const target = btn.dataset.target;
-      const tab = btn.dataset.tab;
-      const pop = document.getElementById(`${target === 'setting-text' ? 'setting-popover-text-color' : 'setting-popover-bg-color'}`);
-      if (!pop) return;
-      pop.querySelectorAll('.color-popover-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-      const customPane = document.getElementById(`pane-${target}-color-custom`);
-      const presetsPane = document.getElementById(`pane-${target}-color-presets`);
-      if (customPane) customPane.classList.toggle('active', tab === 'custom');
-      if (presetsPane) presetsPane.classList.toggle('active', tab === 'presets');
-      if (tab === 'custom') {
-        const canvas = document.getElementById(`spectrum-canvas-${target}`);
-        if (canvas && spectrumPickers[target]) drawColorSpectrum(canvas, spectrumPickers[target].hue);
-      }
-    });
-  });
 
   // Popover toggle buttons
   const btnTextTrigger = document.getElementById('setting-btn-text-color-trigger');
@@ -3067,7 +3050,8 @@ async function handleSaveSettingsManual() {
   const statusEl = document.getElementById('settings-status');
 
   let icon = '';
-  let iconType = state.activeSettingIconTab || 'upload';
+  const activeTabEl = document.querySelector('#setting-icon-tabs .icon-tab.active');
+  let iconType = activeTabEl?.dataset.settingIconTab || state.activeSettingIconTab || 'upload';
   let iconText = '';
   let iconTextColor = '';
   let iconBgColor = '';
@@ -3076,10 +3060,13 @@ async function handleSaveSettingsManual() {
     iconText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
     iconTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || document.getElementById('setting-icon-text-color')?.value || '#ffffff').trim();
     iconBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || document.getElementById('setting-icon-bg-color')?.value || '#1e293b').trim();
-    if (iconText && state.currentSettingTextIconDataUrl) {
-      const uploadedUrl = await uploadSettingTextIconBlob();
-      if (uploadedUrl) {
-        icon = uploadedUrl;
+    if (iconText) {
+      renderSettingTextIconCanvas();
+      if (state.currentSettingTextIconDataUrl) {
+        const uploadedUrl = await uploadSettingTextIconBlob();
+        if (uploadedUrl) {
+          icon = uploadedUrl;
+        }
       }
     }
   } else if (iconType === 'url') {
@@ -3139,7 +3126,7 @@ async function handleSaveSettingsManual() {
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.15';
+        const ver = state.settings?.version || '1.1.16';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

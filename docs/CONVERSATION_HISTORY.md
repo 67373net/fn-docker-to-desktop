@@ -2639,6 +2639,60 @@ INFO
 3. **Git Tag 与发布**：
    - 提交代码并打上 Git Tag `v1.1.15`，推送到 GitHub 远程仓库触发 CI/CD 自动构建。
 
+---
+
+## Turn 30 - 投喂界面与导航精简、设置文字图标持久化加固、颜色选择器整合、置底规则边界强化与开源地址添加 (v1.1.16)
+
+### 用户需求 (User Requirements)
+1. “🥺投喂” tab 改为 “🥺 投喂”（加空格），样式加粗。
+2. 投喂界面标题改为：`🙇🏻 请作者吃顿外卖 🥺`。
+3. 移除二维码下方的“（微）微信支付 （支）支付宝支付”。
+4. 移除“大家的每一份支持，都是推动该项目持续迭代、优化体验的强劲动力 ❤️”及上方的分割横线。
+5. 排查设置中设置文字图标后重新进入仍显示“上传图标”的问题并彻底修复。
+6. 在“桌面图标”搜索框右侧增加图标更新可能延迟的提示。
+7. 深入解析置底规则中的匹配机制，强化短规则防误伤安全边界。
+8. 颜色选择器弹窗重构：移除顶部 Tab 切换，将预设推荐色块整合至调色盘下半部分，单屏完整呈现。
+9. 在系统设置界面末尾添加本项目的 GitHub 开源仓库地址。
+10. 解答关于点击图标时增加弹窗提示（可选确认后再跳转）的可行性与实现方案。
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **投喂界面与导航优化 (`web/index.html`, `web/style.css`)**：
+   - 导航栏 Tab 文案改为 `🥺 投喂`，CSS 针对 `data-tab="donate"` 设定 `font-weight: 700`；
+   - 标题更新为 `🙇🏻 请作者吃顿外卖 🥺`；
+   - 彻底清除收款码下方的文字说明微章与底部感谢寄语及分割横线，卡片视觉更加精炼通透。
+2. **桌面图标缓存提示 (`web/index.html`, `web/style.css`)**：
+   - 在桌面图标搜索栏右侧新增 `.desktop-cache-tip`：“💡 由于浏览器缓存，图标更新可能会延迟（约 1~3 分钟，按 Ctrl+F5 强制刷新可立即显示）”。
+3. **设置文字图标持久化与 Tab 联动加固 (`web/app.js`, `web/index.html`)**：
+   - 根因排查：`setIconModalTab` 全局查找 `.icon-tab` 导致设置页的 `#setting-icon-tabs` 激活态被意外清空，导致保存时错误回退为默认的 `'upload'`；
+   - 修复策略：严格限定 `setIconModalTab` 作用域为 `#modal-desktop-item .icon-tab`；
+   - `handleSaveSettingsManual` 中优先读取当前活跃的 `#setting-icon-tabs .icon-tab.active` 属性，并在保存前强制渲染文字图标 Canvas；
+   - `updateSettingsForm` 载入设置时，若为文字图标则同步触发 Canvas 渲染，确保即时回显。
+4. **颜色选择器弹窗上下结构重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 彻底移除 4 处调色盘弹窗的 Tab 切换按钮与分页面板；
+   - 上半部分展示 2D 色谱光谱、色相滑动条与 Hex 输入框；
+   - 下半部分通过精细分割线与小标题紧凑排列 10/15 色预设色块；
+   - 移除 JS 中已废弃的 Tab 切换事件监听。
+5. **置底规则安全边界强化 (`web/app.js`)**：
+   - 新增 `matchSinkRule` 函数，针对长度 <= 4 字符的短规则（如 `nps`, `npc`, `frpc`）引入单词与标点符号边界正则检测（前后需为边界或 `-`、`_`、`/` 等符号），彻底避免由于子串包含误伤其他正常 Docker 容器。
+6. **开源仓库卡片新增 (`web/index.html`)**：
+   - 在系统设置页面「网络接口」下方新增「关于与开源地址」卡片，包含 GitHub 图标、项目说明与直达仓库链接。
+7. **版本升级至 `v1.1.16`**：
+   - `cmd/server/main.go`, `fnos-app/manifest`, `internal/api/handler_test.go`, `web/index.html`, `web/app.js` 全局同步升级至 `1.1.16`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker `golang:1.22-alpine` 容器内运行 `go test ./...` 全部 PASS。
+2. **零 .fpk 文件残留**：
+   - 仓库内无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.16` 并推送至 GitHub 远程仓库。
+
 
 
 

@@ -157,6 +157,10 @@ html, body {
   box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.03);
 }
 
+.nav-tab[data-tab="donate"] {
+  font-weight: 700;
+}
+
 .tab-icon {
   width: 17px;
   height: 17px;
@@ -262,6 +266,16 @@ html, body {
 
 .search-box input:focus {
   border-color: var(--primary);
+}
+
+.desktop-cache-tip {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .filter-chips {
@@ -1637,49 +1651,15 @@ tr.row-updating {
   padding: 12px;
   box-shadow: 0 -10px 25px -5px rgba(0, 0, 0, 0.25), 0 -8px 10px -6px rgba(0, 0, 0, 0.2);
   width: 270px;
-}
-
-.color-popover-tabs {
-  display: flex;
-  background-color: var(--bg-surface-subtle);
-  border-radius: 6px;
-  padding: 2px;
-  margin-bottom: 10px;
-  gap: 2px;
-}
-
-.color-popover-tab-btn {
-  flex: 1;
-  padding: 4px 6px;
-  font-size: 11px;
-  font-weight: 500;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.color-popover-tab-btn.active {
-  background-color: var(--bg-surface);
-  color: var(--text-main);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
-.color-popover-pane {
-  display: none;
-}
-
-.color-popover-pane.active {
-  display: block;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 /* 2D Spectrum & Hue Slider */
 .color-spectrum-wrapper {
   position: relative;
   width: 100%;
-  height: 110px;
+  height: 100px;
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 8px;
@@ -1751,6 +1731,12 @@ tr.row-updating {
   margin-bottom: 8px;
 }
 
+.color-popover-divider {
+  height: 1px;
+  background-color: var(--border-color);
+  margin: 10px 0 8px 0;
+}
+
 .color-popover-title {
   font-size: 11px;
   color: var(--text-muted);
@@ -1761,20 +1747,20 @@ tr.row-updating {
 .color-popover .color-swatches {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  gap: 6px;
 }
 
 .color-popover .color-swatch {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 100%;
+  height: 26px;
+  border-radius: 4px;
   cursor: pointer;
   border: 2px solid transparent;
   transition: transform 0.15s, border-color 0.15s;
 }
 
 .color-popover .color-swatch:hover {
-  transform: scale(1.08);
+  transform: scale(1.06);
 }
 
 .color-popover .color-swatch.active {
@@ -1864,47 +1850,6 @@ tr.row-updating {
   height: 100%;
   object-fit: contain;
   border-radius: 6px;
-}
-
-.donate-qr-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.donate-pay-icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.donate-pay-icon.wechat {
-  background-color: #07c160;
-}
-
-.donate-pay-icon.alipay {
-  background-color: #1677ff;
-}
-
-.donate-footer {
-  border-top: 1px solid var(--border-color);
-  padding-top: 1.25rem;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-}
-
-.donate-quote {
-  margin: 0;
-  font-style: italic;
 }
 
 /* ==================== Table Sink Subheader ==================== */
