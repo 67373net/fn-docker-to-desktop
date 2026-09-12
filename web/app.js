@@ -36,12 +36,16 @@ function apiUrl(path) {
 }
 
 function getIconUrl(icon) {
-  if (!icon || icon === 'icon.png' || icon === '/icon.png') return apiUrl('/icon.png');
+  if (!icon || icon === 'icon.png' || icon === '/icon.png' || icon === 'default_item_icon.png' || icon === '/default_item_icon.png') {
+    return apiUrl('/default_item_icon.png');
+  }
   if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
     return icon;
   }
   const clean = icon.replace(/^\/?icons\//, '').replace(/^\/+/, '');
-  if (!clean || clean === 'icon.png') return apiUrl('/icon.png');
+  if (!clean || clean === 'icon.png' || clean === 'default_item_icon.png') {
+    return apiUrl('/default_item_icon.png');
+  }
   return apiUrl(`/icons/${clean}`);
 }
 
@@ -283,6 +287,16 @@ async function fetchDesktopItems() {
       state.desktopItems = merged;
       renderDesktopTable();
       updateDesktopCountBadge();
+
+      // If any item is reconciling or updating, poll again in 3s to live-update status
+      if (state.reconcilePollTimer) {
+        clearTimeout(state.reconcilePollTimer);
+        state.reconcilePollTimer = null;
+      }
+      const hasActive = merged.some(item => item.reconciling || item._updating);
+      if (hasActive) {
+        state.reconcilePollTimer = setTimeout(fetchDesktopItems, 3000);
+      }
     }
   } catch (err) {
     console.error('Fetch desktop items error:', err);
@@ -292,7 +306,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.14',
+    version: state.settings?.version || '1.1.15',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -384,13 +398,14 @@ async function fetchSettings() {
 }
 
 function updateSettingsForm() {
-  const portalName = state.originalSettings?.portal_name || '把 Docker 放到桌面';
+  const portalName = '把 Docker 放到桌面';
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
   const titleEl = document.getElementById('settings-card-title');
-  if (titleEl && state.settings && state.settings.version) {
-    titleEl.textContent = `${portalName} v${state.settings.version} - 系统与管理面板设置`;
+  if (titleEl) {
+    const ver = state.settings?.version || '1.1.15';
+    titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
 
@@ -429,7 +444,7 @@ function updateSettingsForm() {
   }
 
   const previewName = document.getElementById('setting-icon-preview-name');
-  if (previewName) previewName.textContent = state.originalSettings?.portal_name || '把 Docker 放到桌面';
+  if (previewName) previewName.textContent = '把 Docker 放到桌面';
 
   setSettingIconTab(iconType);
 
@@ -438,13 +453,11 @@ function updateSettingsForm() {
 
 function checkSettingsDirty() {
   if (!state.originalSettings) return;
-  const curName = document.getElementById('setting-portal-name')?.value.trim() || '';
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const curAll = rAll ? rAll.value === 'true' : false;
   const curPwd = document.getElementById('setting-portal-password')?.value || '';
   const curPwdConfirm = document.getElementById('setting-portal-password-confirm')?.value || '';
 
-  const nameChanged = curName !== state.originalSettings.portal_name;
   const allUsersChanged = curAll !== state.originalSettings.portal_all_users;
   const pwdChanged = curPwd !== '' || curPwdConfirm !== '';
 
@@ -471,7 +484,7 @@ function checkSettingsDirty() {
     }
   }
 
-  state.isSettingsDirty = nameChanged || allUsersChanged || pwdChanged || iconChanged;
+  state.isSettingsDirty = allUsersChanged || pwdChanged || iconChanged;
 
   const statusEl = document.getElementById('settings-status');
   if (statusEl) {
@@ -891,11 +904,13 @@ function renderDesktopTable() {
     const iconSrc = getIconUrl(item.icon);
 
     let statusColHtml = toggleHtml;
-    if (item._updating) {
+    const isReconciling = !!item.reconciling;
+    if (isReconciling || item._updating) {
+      const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '正在更新中...');
       statusColHtml = `
         <div class="status-updating-badge">
           <span class="spinner-small"></span>
-          <span>${escapeHtml(item._statusText || '正在更新中...')}</span>
+          <span>${escapeHtml(statusText)}</span>
         </div>`;
     } else if (item._error) {
       statusColHtml = `
@@ -905,11 +920,11 @@ function renderDesktopTable() {
         </div>`;
     }
 
-    const isUpdating = !!item._updating;
+    const isUpdating = !!item._updating || isReconciling;
 
     html += `<tr class="${isUpdating ? 'row-updating' : ''}">
       <td>
-        <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标">
+        <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
       </td>
       <td><strong>${escapeHtml(item.name)}</strong></td>
       <td><span class="${modeClass}">${modeText}</span></td>
@@ -1317,7 +1332,7 @@ function setIconModalTab(tabName) {
     if (text.trim()) {
       renderTextIconCanvas();
     } else {
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
       if (previewName) previewName.textContent = '默认图标';
     }
   } else if (tabName === 'url') {
@@ -1326,13 +1341,13 @@ function setIconModalTab(tabName) {
       if (previewImg) {
         previewImg.src = url;
         previewImg.onerror = () => {
-          previewImg.src = apiUrl('/icon.png');
+          previewImg.src = apiUrl('/default_item_icon.png');
           if (previewName) previewName.textContent = '图片载入失败';
         };
       }
       if (previewName) previewName.textContent = '网络图标';
     } else {
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
       if (previewName) previewName.textContent = '默认图标';
     }
   } else if (tabName === 'upload') {
@@ -1353,7 +1368,7 @@ function renderTextIconCanvas() {
   const previewName = document.getElementById('icon-preview-name');
 
   if (!text) {
-    if (previewImg) previewImg.src = apiUrl('/icon.png');
+    if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
     if (previewName) previewName.textContent = '默认图标';
     state.currentTextIconDataUrl = null;
     return;
@@ -1850,13 +1865,13 @@ function initIconEditor() {
       const previewImg = document.getElementById('icon-preview-img');
       const previewName = document.getElementById('icon-preview-name');
       if (!val) {
-        if (previewImg) previewImg.src = apiUrl('/icon.png');
+        if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
         if (previewName) previewName.textContent = '默认图标';
       } else {
         if (previewImg) {
           previewImg.src = val;
           previewImg.onerror = () => {
-            previewImg.src = apiUrl('/icon.png');
+            previewImg.src = apiUrl('/default_item_icon.png');
             if (previewName) previewName.textContent = '图片载入失败';
           };
         }
@@ -1877,7 +1892,7 @@ function initIconEditor() {
       state.currentTextIconDataUrl = null;
       const previewImg = document.getElementById('icon-preview-img');
       const previewName = document.getElementById('icon-preview-name');
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
       if (previewName) previewName.textContent = '默认图标';
       showToast('已恢复为默认图标', 'info');
     });
@@ -1896,7 +1911,7 @@ function setSettingIconTab(tabName) {
 
   const previewImg = document.getElementById('setting-icon-preview-img');
   const previewName = document.getElementById('setting-icon-preview-name');
-  const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+  const displayName = '把 Docker 放到桌面';
 
   if (tabName === 'text') {
     const text = document.getElementById('setting-icon-text-input')?.value || '';
@@ -1940,7 +1955,7 @@ function renderSettingTextIconCanvas() {
   const bgColor = document.getElementById('setting-icon-bg-color')?.value || '#1e293b';
   const previewImg = document.getElementById('setting-icon-preview-img');
   const previewName = document.getElementById('setting-icon-preview-name');
-  const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+  const displayName = '把 Docker 放到桌面';
 
   if (!text) {
     if (previewImg) previewImg.src = apiUrl('/icon.png');
@@ -2289,7 +2304,7 @@ function initSettingIconEditor() {
       const val = urlInput.value.trim();
       const previewImg = document.getElementById('setting-icon-preview-img');
       const previewName = document.getElementById('setting-icon-preview-name');
-      const displayName = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+      const displayName = '把 Docker 放到桌面';
       if (!val) {
         if (previewImg) previewImg.src = apiUrl('/icon.png');
         if (previewName) previewName.textContent = displayName;
@@ -2359,7 +2374,7 @@ function initSettingIconEditor() {
       const previewImg = document.getElementById('setting-icon-preview-img');
       const previewName = document.getElementById('setting-icon-preview-name');
       if (previewImg) previewImg.src = apiUrl('/icon.png');
-      if (previewName) previewName.textContent = document.getElementById('setting-portal-name')?.value.trim() || '把 Docker 放到桌面';
+      if (previewName) previewName.textContent = '把 Docker 放到桌面';
       setSettingIconTab('upload');
       checkSettingsDirty();
     });
@@ -2410,7 +2425,7 @@ function resetDesktopForm() {
   state.currentTextIconDataUrl = null;
   setIconModalTab('text');
 
-  document.getElementById('icon-preview-img').src = apiUrl('/icon.png');
+  document.getElementById('icon-preview-img').src = apiUrl('/default_item_icon.png');
   document.getElementById('icon-preview-name').textContent = '默认图标';
   document.getElementById('desktop-modal-title').textContent = '添加桌面图标';
   const btnSaveAsNew = document.getElementById('btn-save-as-new');
@@ -2467,10 +2482,10 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
       const elIcon = document.getElementById('item-icon');
       if (elIcon) elIcon.value = cdnUrl;
       imgEl.onerror = () => {
-        imgEl.src = apiUrl('/icon.png');
+        imgEl.src = apiUrl('/default_item_icon.png');
         if (urlInput) urlInput.value = '';
         if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
-        document.getElementById('icon-preview-name').textContent = '默认容器图标';
+        document.getElementById('icon-preview-name').textContent = '默认快捷方式图标';
       };
       document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
     }
@@ -2617,7 +2632,7 @@ function openEditDesktopModal(id) {
     if (previewImg) {
       previewImg.src = getIconUrl(item.icon);
       previewImg.onerror = () => {
-        previewImg.src = apiUrl('/icon.png');
+        previewImg.src = apiUrl('/default_item_icon.png');
         if (previewName) previewName.textContent = '图片载入失败';
       };
     }
@@ -2629,7 +2644,7 @@ function openEditDesktopModal(id) {
     if (previewImg) {
       previewImg.src = getIconUrl(item.icon);
       previewImg.onerror = () => {
-        previewImg.src = apiUrl('/icon.png');
+        previewImg.src = apiUrl('/default_item_icon.png');
         if (previewName) previewName.textContent = '图片载入失败';
       };
     }
@@ -2653,7 +2668,7 @@ function openPortDesktopListModal(port, procName, items) {
     const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
 
     html += `<tr>
-      <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标"></td>
+      <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标"></td>
       <td><strong>${escapeHtml(item.name)}</strong></td>
       <td><code>${escapeHtml(item.path || '/')}</code></td>
       <td><span class="${openModeClass}">${openModeText}</span></td>
@@ -3040,11 +3055,11 @@ function handleCancelSettings() {
 }
 
 async function handleSaveSettingsManual() {
-  const name = document.getElementById('setting-portal-name').value.trim();
+  const name = '把 Docker 放到桌面';
   const rAll = document.querySelector('input[name="setting-portal-all-users"]:checked');
   const allUsers = rAll ? rAll.value === 'true' : false;
 
-  reportClientLog('action', '用户保存系统设置', `名称: ${name}, 用户范围: ${allUsers ? '所有用户' : '仅管理员'}`, { name, allUsers });
+  reportClientLog('action', '用户保存系统设置', `用户范围: ${allUsers ? '所有用户' : '仅管理员'}`, { allUsers });
 
   const pwd = document.getElementById('setting-portal-password').value;
   const pwdConfirm = document.getElementById('setting-portal-password-confirm').value;
@@ -3074,7 +3089,7 @@ async function handleSaveSettingsManual() {
   }
 
   const payload = {
-    portal_name: name || '把 Docker 放到桌面',
+    portal_name: name,
     portal_ui_type: 'iframe',
     portal_all_users: allUsers,
     portal_icon: icon || state.originalSettings?.portal_icon || 'icon.png',
@@ -3120,11 +3135,12 @@ async function handleSaveSettingsManual() {
         portal_icon_bg_color: payload.portal_icon_bg_color,
       };
       state.isSettingsDirty = false;
-      const savedName = payload.portal_name || '把 Docker 放到桌面';
+      const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
-      if (titleEl && state.settings && state.settings.version) {
-        titleEl.textContent = `${savedName} v${state.settings.version} - 系统与管理面板设置`;
+      if (titleEl) {
+        const ver = state.settings?.version || '1.1.15';
+        titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';
       document.getElementById('setting-portal-password-confirm').value = '';

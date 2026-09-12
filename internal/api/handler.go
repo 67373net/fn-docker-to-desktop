@@ -491,6 +491,18 @@ func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	items := h.storage.GetAllItems()
+	if h.installer != nil {
+		for idx := range items {
+			appName := items[idx].AppName
+			if appName == "" {
+				appName = h.installer.DeriveAppName(items[idx])
+			}
+			if isRec, statusText := h.installer.GetReconcileStatus(items[idx].ID, appName); isRec {
+				items[idx].Reconciling = true
+				items[idx].StatusText = statusText
+			}
+		}
+	}
 	h.jsonResponse(w, r, items, http.StatusOK)
 }
 

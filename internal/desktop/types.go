@@ -34,6 +34,8 @@ type DesktopItem struct {
 	SkipTLSVerify bool      `json:"skip_tls_verify,omitempty"`// Skip TLS check for self-signed certs
 	Enabled       bool      `json:"enabled"`                  // Is active
 	Installed     bool      `json:"installed"`                // Is installed in fnOS App Center
+	Reconciling   bool      `json:"reconciling,omitempty"`   // Is recovering / installing in background
+	StatusText    string    `json:"status_text,omitempty"`    // Background recovery status text
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

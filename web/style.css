@@ -1851,21 +1851,12 @@ tr.row-updating {
   padding: 12px;
   background-color: #ffffff;
   border: 1px solid var(--border-color);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
   display: flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.28s ease;
-  cursor: zoom-in;
   position: relative;
-  z-index: 1;
-}
-
-.donate-qr-frame:hover {
-  transform: scale(1.22);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
-  z-index: 20;
 }
 
 .donate-qr-img {

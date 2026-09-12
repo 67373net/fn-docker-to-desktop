@@ -46,6 +46,7 @@ type Installer struct {
 	rootIconPath    string
 	iconsDir        string
 	hasAppcenterCLI bool
+	reconcileStatus map[string]string
 }
 
 // SetIconsDir sets the server icon directory for uploaded icons.
@@ -67,6 +68,7 @@ func NewInstaller(dataDir string, rootIconPath string) *Installer {
 		appsDir:         appsDir,
 		rootIconPath:    rootIconPath,
 		hasAppcenterCLI: found,
+		reconcileStatus: make(map[string]string),
 	}
 
 	if found {
@@ -76,6 +78,22 @@ func NewInstaller(dataDir string, rootIconPath string) *Installer {
 	}
 
 	return inst
+}
+
+// GetReconcileStatus returns whether the given item is currently being restored.
+func (i *Installer) GetReconcileStatus(itemID, appName string) (bool, string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.reconcileStatus == nil {
+		return false, ""
+	}
+	if status, ok := i.reconcileStatus[itemID]; ok && status != "" {
+		return true, status
+	}
+	if status, ok := i.reconcileStatus[appName]; ok && status != "" {
+		return true, status
+	}
+	return false, ""
 }
 
 // HasCLI returns whether appcenter-cli is detected on the host.
@@ -636,7 +654,12 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		return
 	}
 
-	slog.Info("开始启动桌面应用状态对齐检查...", "total", len(items))
+	// 1. Identify missing items and mark them as queued
+	var missing []DesktopItem
+	i.mu.Lock()
+	if i.reconcileStatus == nil {
+		i.reconcileStatus = make(map[string]string)
+	}
 	for _, item := range items {
 		if !item.Enabled {
 			continue
@@ -645,14 +668,49 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		if appName == "" {
 			appName = i.DeriveAppName(item)
 		}
-		if !i.IsAppInstalled(appName) {
-			slog.Info("检测到未安装的已启用桌面应用，执行补齐安装...", "appName", appName, "title", item.Name)
-			if err := i.InstallItem(item); err != nil {
-				slog.Warn("开机补齐安装应用失败", "appName", appName, "error", err)
+		if !i.isAppInstalled(appName) {
+			missing = append(missing, item)
+			i.reconcileStatus[item.ID] = "排队恢复中..."
+			if appName != "" {
+				i.reconcileStatus[appName] = "排队恢复中..."
 			}
 		}
 	}
-	slog.Info("启动桌面应用状态对齐检查完成，未对已安装应用产生任何扰动")
+	i.mu.Unlock()
+
+	if len(missing) == 0 {
+		return
+	}
+
+	total := len(missing)
+	slog.Info("开始启动桌面应用状态对齐与恢复...", "total_missing", total)
+	for idx, item := range missing {
+		appName := item.AppName
+		if appName == "" {
+			appName = i.DeriveAppName(item)
+		}
+
+		progressText := fmt.Sprintf("恢复中 (%d/%d)...", idx+1, total)
+		i.mu.Lock()
+		i.reconcileStatus[item.ID] = progressText
+		if appName != "" {
+			i.reconcileStatus[appName] = progressText
+		}
+		i.mu.Unlock()
+
+		slog.Info("检测到未安装的已启用桌面应用，执行补齐安装...", "appName", appName, "title", item.Name, "progress", fmt.Sprintf("%d/%d", idx+1, total))
+		if err := i.InstallItem(item); err != nil {
+			slog.Warn("补齐安装应用失败", "appName", appName, "error", err)
+		}
+
+		i.mu.Lock()
+		delete(i.reconcileStatus, item.ID)
+		if appName != "" {
+			delete(i.reconcileStatus, appName)
+		}
+		i.mu.Unlock()
+	}
+	slog.Info("桌面应用状态对齐检查与恢复完成，未对已安装应用产生任何扰动")
 }
 
 // UninstallItem unregisters a DesktopItem from fnOS.

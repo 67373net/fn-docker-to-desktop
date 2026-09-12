@@ -2589,6 +2589,57 @@ INFO
 - **输出 Token (Completion Tokens)**：约 9,000
 - **总消耗 Token (Total Tokens)**：**约 199,000**
 
+---
+
+## Turn 29 - 设置界面精简归位、快捷方式专属默认图标解耦、重装逐个恢复状态实时展现与投喂新图更新 (v1.1.15)
+
+### 用户需求梳理 (User Requirements)
+1. **移除设置界面修改名称功能**：既然设置界面修改名称无法改变飞牛系统桌面上的主应用名称，彻底去掉此功能输入框。
+2. **规范设置界面卡片标题**：将「把 Docker 放到桌面 v1.1.14 - 系统与管理面板设置」改为「v1.1.15 - 系统设置」。
+3. **技术解答**：提问：请问 app 本身的图标的可见权限设置会生效吗？
+4. **管理面板图标文案微调**：将「管理面板图标 (Logo)」的「(Logo)」去掉。
+5. **添加桌面图标默认图标解耦**：添加桌面图标时，默认图标不再采用主程序的 Docker 蓝鲸图标，改用独立的快捷方式立体图标。
+6. **重装恢复状态实时展示与原理解答**：重新安装 app 后，桌面图标恢复很慢且是逐个恢复的，解答是否正常；并在此时桌面图标列表的「运行状态」中实时展示对应的恢复状态。
+7. **投喂界面去悬停放大并更新新图**：投喂界面的鼠标悬停放大功能去掉，接入用户在原文件夹中替换的两张最新收款码图片。
+
+---
+
+### 技术方案与核心改动 (Technical Implementation)
+
+1. **设置界面精简与标题统一 (`web/index.html`, `web/app.js`)**：
+   - 彻底移除 `setting-portal-name` 输入框及其提示文案；
+   - 卡片标题规范化为 `v${state.settings.version || '1.1.15'} - 系统设置`；
+   - 移除未保存检测中对主应用名称的判断；
+   - 「管理面板图标 (Logo)」改为「管理面板图标」。
+2. **专属快捷方式默认图标解耦 (`web/default_item_icon.png`, `web/embed.go`, `web/app.js`)**：
+   - 将 `internal/desktop/assets/ICON_256.PNG` 复制为 `web/default_item_icon.png` 并纳入 `embed.FS`；
+   - `getIconUrl` 函数优化：快捷方式项默认回退至 `default_item_icon.png`，与主程序 Docker 鲸鱼图标（`icon.png`）彻底解耦；
+   - 添加与编辑弹窗重置、网络图标载入失败等 fallback 图标全面对齐专属默认图标。
+3. **重装恢复状态实时反馈与自动轮询 (`internal/desktop/installer.go`, `internal/api/handler.go`, `web/app.js`)**：
+   - `Installer` 内部增加 `reconcileStatus map[string]string` 状态注册表；
+   - `ReconcileInstalledItems` 在后台补齐安装时，识别缺失项并统一标记为「排队恢复中...」，逐个执行安装时动态更新为「恢复中 (x/n)...」，安装完成后自动解除；
+   - `GET /api/desktop/items` 接口动态注入 `reconciling: true` 与 `status_text`；
+   - 前端桌面列表「运行状态」在恢复期间展示带转圈动效的「恢复中 (x/n)...」蓝色微章，同时禁用编辑按钮与操作开关；
+   - 前端增加响应式轮询机制，只要有任一应用处于恢复/更新中，每 3 秒自动轮询后端刷新状态，全部就绪后自动停用轮询。
+4. **投喂界面优化 (`web/style.css`, `web/donate_*.jpg`, `web/index.html`)**：
+   - 同步用户替换在 `docs/` 目录下的最新收款码图片至 `web/`；
+   - 移除 `.donate-qr-frame` 的 `scale(1.22)` 悬停放大与 `cursor: zoom-in`；
+   - 收款码图片 URL 增加 `?v=1.1.15` 查询参数破坏浏览器缓存。
+5. **版本升级至 `v1.1.15`**：
+   - 全局同步升级版本号至 `1.1.15`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker `golang:1.22-alpine` 容器内运行 `go test ./...` 全部通过（PASS，覆盖导出、公网拦截、Session 鉴权与开机对齐）。
+2. **零 .fpk 文件残留**：
+   - 杜绝生成或遗留任何本地 `.fpk` 文件。
+3. **Git Tag 与发布**：
+   - 提交代码并打上 Git Tag `v1.1.15`，推送到 GitHub 远程仓库触发 CI/CD 自动构建。
+
+
 
 
 
