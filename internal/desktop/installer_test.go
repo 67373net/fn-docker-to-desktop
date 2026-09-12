@@ -138,3 +138,31 @@ func TestBuildPackageRedirectMode(t *testing.T) {
 		t.Errorf("index.cgi does not contain target URL fallback: %s", string(cgiContent))
 	}
 }
+
+func TestReconcileInstalledItems(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test-reconcile-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	installer := NewInstaller(tmpDir, "icon.png")
+	items := []DesktopItem{
+		{
+			ID:      "item-1",
+			AppName: "fndocker.app-one",
+			Name:    "App 1",
+			Enabled: false,
+		},
+		{
+			ID:      "item-2",
+			AppName: "fndocker.app-two",
+			Name:    "App 2",
+			Enabled: true,
+		},
+	}
+
+	// Should run cleanly without panic or error
+	installer.ReconcileInstalledItems(items)
+}
+

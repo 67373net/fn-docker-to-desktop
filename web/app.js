@@ -292,7 +292,7 @@ async function fetchDesktopItems() {
 function handleExportDesktopItems() {
   const items = state.desktopItems || [];
   const exportData = {
-    version: state.settings?.version || '1.1.13',
+    version: state.settings?.version || '1.1.14',
     exported_at: new Date().toISOString(),
     total: items.length,
     items: items.map(item => {
@@ -384,13 +384,15 @@ async function fetchSettings() {
 }
 
 function updateSettingsForm() {
+  const portalName = state.originalSettings?.portal_name || '把 Docker 放到桌面';
   const elName = document.getElementById('setting-portal-name');
-  if (elName) elName.value = state.originalSettings?.portal_name || '把 Docker 放到桌面';
+  if (elName) elName.value = portalName;
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl && state.settings && state.settings.version) {
-    titleEl.textContent = `把 Docker 放到桌面 v${state.settings.version} - 自身桌面图标设置`;
+    titleEl.textContent = `${portalName} v${state.settings.version} - 系统与管理面板设置`;
   }
+  document.title = `${portalName} - 容器与端口管理`;
 
   const allUsers = state.originalSettings?.portal_all_users ? 'true' : 'false';
   const rAll = document.querySelector(`input[name="setting-portal-all-users"][value="${allUsers}"]`);
@@ -3118,6 +3120,12 @@ async function handleSaveSettingsManual() {
         portal_icon_bg_color: payload.portal_icon_bg_color,
       };
       state.isSettingsDirty = false;
+      const savedName = payload.portal_name || '把 Docker 放到桌面';
+      document.title = `${savedName} - 容器与端口管理`;
+      const titleEl = document.getElementById('settings-card-title');
+      if (titleEl && state.settings && state.settings.version) {
+        titleEl.textContent = `${savedName} v${state.settings.version} - 系统与管理面板设置`;
+      }
       document.getElementById('setting-portal-password').value = '';
       document.getElementById('setting-portal-password-confirm').value = '';
       if (matchTip) matchTip.textContent = '';

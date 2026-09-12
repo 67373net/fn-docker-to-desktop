@@ -25,7 +25,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.13"
+const appVersion = "1.1.14"
 
 func main() {
 	modeFlag := flag.String("mode", "server", "Run mode: server or cgi")
@@ -308,13 +308,12 @@ func main() {
 	}
 
 	// Background startup reconciliation:
-	// Automatically refresh all existing desktop items (covers overwrite installation),
-	// install any missing enabled apps, and prune old orphan shortcuts.
+	// Gently ensure all enabled items are installed in fnOS without restarting or modifying already installed apps.
 	if installer.HasCLI() {
 		go func() {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 			items := storage.GetAllItems()
-			installer.RefreshAllInstalledItems(items)
+			installer.ReconcileInstalledItems(items)
 		}()
 	}
 

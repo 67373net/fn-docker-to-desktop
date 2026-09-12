@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.13">
+  <link rel="stylesheet" href="style.css?v=1.1.14">
 </head>
 <body>
   <!-- Header Bar -->
@@ -228,12 +228,15 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="info-section">
-          <h3 class="section-title" id="settings-card-title">把 Docker 放到桌面 v1.1.13 - 自身桌面图标设置</h3>
+          <h3 class="section-title" id="settings-card-title">系统与管理面板设置</h3>
           <div class="settings-card">
             
             <div class="form-group">
-              <label class="form-label">飞牛桌面显示名称</label>
+              <label class="form-label">管理面板显示名称 (Web 标题)</label>
               <input type="text" id="setting-portal-name" class="form-input" value="把 Docker 放到桌面">
+              <div class="form-hint" style="margin-top: 6px; font-size: 0.82rem; color: var(--text-muted, #94a3b8); line-height: 1.45;">
+                💡 <b>系统说明</b>：飞牛 OS 桌面上的主应用快捷方式由系统应用中心在安装应用包时注册，受系统底层机制限制无法在运行时动态重命名；此处的名称将即时生效于本管理面板的网页标题与顶栏。如需在飞牛桌面上放置自定义名称与图标的快捷方式，推荐在「桌面图标」中一键添加「本机端口」或「网页链接」。
+              </div>
             </div>
 
             <div class="form-group">
@@ -251,7 +254,7 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">自身桌面图标</label>
+              <label class="form-label">管理面板图标 (Logo)</label>
               <input type="hidden" id="setting-portal-icon">
               <div class="icon-editor-layout">
                 <div class="icon-editor-main">
@@ -871,6 +874,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.13"></script>
+  <script src="app.js?v=1.1.14"></script>
 </body>
 </html>

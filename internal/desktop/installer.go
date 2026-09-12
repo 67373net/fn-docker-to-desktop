@@ -628,237 +628,31 @@ func isManagedApp(appName string) bool {
 	return strings.HasPrefix(appName, "fndocker.") || strings.HasPrefix(appName, "put-port.")
 }
 
-// findInstalledAppDir returns the directory where the installed app resides.
-func (i *Installer) findInstalledAppDir(appName string) string {
-	if !isManagedApp(appName) {
-		return ""
-	}
-	candidates := []string{
-		filepath.Join("/var/apps", appName, "target"),
-		filepath.Join("/var/apps", appName),
-		filepath.Join("/usr/local/apps/@appcenter", appName),
-		filepath.Join("/host/root/var/apps", appName, "target"),
-		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
-	}
-	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			return c
-		}
-	}
-	return ""
-}
-
-// RefreshInstalledApp updates an already installed fnOS shortcut's ui/config, index.cgi, and icon files in place on disk.
-func (i *Installer) RefreshInstalledApp(item DesktopItem) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	appName := item.AppName
-	if appName == "" {
-		appName = i.DeriveAppName(item)
-	}
-
-	if !isManagedApp(appName) {
-		slog.Warn("拒绝刷新非本程序管理的外部第三方应用目录", "appName", appName)
-		return fmt.Errorf("拒绝操作非本程序创建的应用: %s", appName)
-	}
-
-	appDirs := []string{
-		filepath.Join("/var/apps", appName, "target"),
-		filepath.Join("/var/apps", appName),
-		filepath.Join("/usr/local/apps/@appcenter", appName),
-		filepath.Join("/host/root/var/apps", appName, "target"),
-		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
-	}
-
-	var foundDirs []string
-	for _, d := range appDirs {
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			foundDirs = append(foundDirs, d)
-		}
-	}
-
-	if len(foundDirs) == 0 {
-		return fmt.Errorf("未找到应用安装目录: %s", appName)
-	}
-
-	slog.Info("正在原地快速更新桌面应用配置与图标...", "appName", appName, "title", item.Name)
-
-	title := item.Name
-	if title == "" {
-		title = "桌面应用"
-	}
-	uiType := item.UIType
-	if uiType == "" {
-		uiType = "url"
-	}
-
-	isExternal := item.Mode == ModeShortcut || (item.Port == 0 && (strings.HasPrefix(item.TargetURL, "http://") || strings.HasPrefix(item.TargetURL, "https://")))
-	targetURL := strings.TrimSpace(item.TargetURL)
-	if isExternal && !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
-		targetURL = "https://" + targetURL
-	}
-
-	entryMap := map[string]interface{}{
-		"title":     title,
-		"icon":      "images/icon-{0}.png",
-		"type":      uiType,
-		"allUsers":  item.AllUsers,
-		"noDisplay": false,
-	}
-
-	if isExternal {
-		entryMap["type"] = "url"
-		entryMap["protocol"] = "http"
-		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", appName, appName)
-	} else {
-		proto := item.Protocol
-		if proto == "" {
-			proto = "http"
-		}
-		entryMap["protocol"] = proto
-		if item.Port > 0 {
-			entryMap["port"] = strconv.Itoa(item.Port)
-		}
-		p := item.Path
-		if p == "" {
-			p = "/"
-		}
-		entryMap["url"] = p
-	}
-
-	uiConfigMap := map[string]interface{}{
-		".url": map[string]interface{}{
-			appName: entryMap,
-		},
-	}
-	uiJson, err := json.MarshalIndent(uiConfigMap, "", "    ")
-	if err != nil {
-		return err
-	}
-
-	for _, dir := range foundDirs {
-		// Update ui/config and app/ui/config
-		_ = os.MkdirAll(filepath.Join(dir, "ui"), 0755)
-		_ = os.WriteFile(filepath.Join(dir, "ui", "config"), uiJson, 0644)
-		if fi, err := os.Stat(filepath.Join(dir, "app", "ui")); err == nil && fi.IsDir() {
-			_ = os.WriteFile(filepath.Join(dir, "app", "ui", "config"), uiJson, 0644)
-		}
-
-		// Update index.cgi if external
-		if isExternal {
-			cgiScript := fmt.Sprintf(`#!/bin/bash
-# CGI redirect for fn-docker-to-desktop
-MAIN_BIN=""
-for candidate in \
-    "${TRIM_APPDEST}/../fn-docker-to-desktop/app/fn-docker-to-desktop" \
-    "/var/apps/fn-docker-to-desktop/target/app/fn-docker-to-desktop" \
-    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app/fn-docker-to-desktop" \
-    "/var/apps/fn-docker-to-desktop/target/fn-docker-to-desktop" \
-    "/usr/local/apps/@appcenter/fn-docker-to-desktop/fn-docker-to-desktop"; do
-    if [ -x "${candidate}" ]; then
-        MAIN_BIN="${candidate}"
-        break
-    fi
-done
-
-SOCKET=""
-for s in \
-    "${TRIM_PKGVAR}/../fn-docker-to-desktop/app.sock" \
-    "/tmp/fn-docker-to-desktop.sock" \
-    "/var/apps/fn-docker-to-desktop/target/app.sock" \
-    "/usr/local/apps/@appcenter/fn-docker-to-desktop/app.sock"; do
-    if [ -S "${s}" ]; then
-        SOCKET="${s}"
-        break
-    fi
-done
-
-if [ -n "${MAIN_BIN}" ] && [ -n "${SOCKET}" ]; then
-    exec "${MAIN_BIN}" --mode cgi --socket "${SOCKET}"
-fi
-
-echo "Content-Type: text/html; charset=utf-8"
-echo ""
-cat << 'EOFCGIHTML'
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=%s">
-<title>正在跳转...</title>
-<script>
-window.location.replace("%s");
-</script>
-</head>
-<body>
-<p>正在跳转至 <a href="%s">%s</a>...</p>
-</body>
-</html>
-EOFCGIHTML
-exit 0
-`, targetURL, targetURL, targetURL, targetURL)
-
-			_ = os.WriteFile(filepath.Join(dir, "ui", "index.cgi"), []byte(cgiScript), 0755)
-			if fi, err := os.Stat(filepath.Join(dir, "app", "ui")); err == nil && fi.IsDir() {
-				_ = os.WriteFile(filepath.Join(dir, "app", "ui", "index.cgi"), []byte(cgiScript), 0755)
-			}
-		}
-
-		// Update icons
-		_ = WritePackageIcons(dir, item.Icon, i.iconsDir, item.Image, item.ContainerName, item.Name)
-	}
-
-	// Trigger quick restart via appcenter-cli to reload ui/config into fnOS desktop cache
-	if i.hasAppcenterCLI {
-		go func(cli, name string) {
-			_ = exec.Command(cli, "restart", name).Run()
-		}(i.cliPath, appName)
-	}
-
-	slog.Info("桌面应用原地更新完成", "appName", appName, "title", item.Name)
-	return nil
-}
-
-// RefreshAllInstalledItems refreshes all items upon startup or overwrite installation.
-func (i *Installer) RefreshAllInstalledItems(items []DesktopItem) {
+// ReconcileInstalledItems checks if any enabled desktop item is not yet installed in fnOS.
+// It installs missing items without restarting or modifying already installed items,
+// ensuring zero desktop icon disruption or reordering on server startup.
+func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 	if !i.HasCLI() {
 		return
 	}
 
-	slog.Info("开始自动刷新全量桌面应用配置与图标...", "total", len(items))
-	activeApps := make(map[string]bool)
-
+	slog.Info("开始启动桌面应用状态对齐检查...", "total", len(items))
 	for _, item := range items {
+		if !item.Enabled {
+			continue
+		}
 		appName := item.AppName
 		if appName == "" {
 			appName = i.DeriveAppName(item)
 		}
-		if appName != "" {
-			activeApps[appName] = true
-		}
-
-		if !item.Enabled {
-			continue
-		}
-
-		// Try fast in-place refresh if already installed
-		if err := i.RefreshInstalledApp(item); err == nil {
-			slog.Info("已原地快速刷新已安装应用", "appName", appName, "title", item.Name)
-		} else if !i.IsAppInstalled(appName) {
-			// Not installed yet, perform full install
-			slog.Info("检测到未安装应用，正在执行初始安装...", "appName", appName, "title", item.Name)
+		if !i.IsAppInstalled(appName) {
+			slog.Info("检测到未安装的已启用桌面应用，执行补齐安装...", "appName", appName, "title", item.Name)
 			if err := i.InstallItem(item); err != nil {
-				slog.Warn("初始安装应用失败", "appName", appName, "error", err)
+				slog.Warn("开机补齐安装应用失败", "appName", appName, "error", err)
 			}
 		}
 	}
-
-	// Prune any leftovers
-	if err := i.PruneOrphanApps(activeApps); err != nil {
-		slog.Debug("清理历史孤立图标完成或无孤立应用", "error", err)
-	}
-	slog.Info("全量桌面应用检查与刷新完毕")
+	slog.Info("启动桌面应用状态对齐检查完成，未对已安装应用产生任何扰动")
 }
 
 // UninstallItem unregisters a DesktopItem from fnOS.
@@ -1069,17 +863,8 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 		}
 	}
 
-	// Trigger restart via appcenter-cli so fnOS desktop cache reloads manifest & ui/config
-	if i.hasAppcenterCLI {
-		go func(cli, name string) {
-			time.Sleep(800 * time.Millisecond)
-			slog.Info("正在通过 appcenter-cli 重载自身服务以应用桌面图标和显示名称...", "appName", name)
-			_ = exec.Command(cli, "restart", name).Run()
-		}(i.cliPath, appName)
-	}
-
 	if updatedNative {
-		slog.Info("产品自身桌面图标配置更新完成 (原生模式)")
+		slog.Info("产品自身桌面配置文件同步更新完成 (原生模式)")
 		return nil
 	}
 

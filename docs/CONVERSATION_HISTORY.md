@@ -2514,6 +2514,82 @@ INFO
 - **输出 Token (Completion Tokens)**：约 8,500
 - **总消耗 Token (Total Tokens)**：**约 188,500**
 
+---
+
+## Turn 28 - 飞牛桌面图标随机刷新与乱序根因彻底根除、主程序名称设置机制深度排查与归位、对比 WatchCow 全量代码瘦身与稳定性重构 (v1.1.14)
+
+### 用户核心诉求 (User Prompt)
+1. “把 Docker 放到桌面”修改之后在飞牛桌面上还是不能设置名称；
+2. 飞牛桌面上的大量图标偶尔会整个重新刷新一下，有时候顺序也会变，排查根本原因；
+3. 仔细排查这些不稳定的 Bug，深入对比原版 WatchCow 代码排查不足与差距；
+4. 重新审查全量代码，审查不合理、过于繁杂累赘的地方，全面精简重构。
+
+---
+
+### 问题定位与根因诊断 (Root Cause Analysis)
+
+#### 1. 飞牛桌面图标偶尔全量刷新且顺序错乱的“惊天根因”
+- **自杀式自重启死循环**：在 v1.1.13 中，为了让修改自身配置即刻生效，在 `installer.SyncSelfApp` 中加入了 `go func() { time.Sleep(800ms); exec.Command(cli, "restart", "fn-docker-to-desktop").Run() }`。致命的是，服务主入口 `cmd/server/main.go:186` 在每次开机启动时均无条件调用了 `SyncSelfApp(settings)`！这导致主程序刚启动 800 毫秒就命令飞牛底层 AppCenter 重启自身，进程被 kill 后重新拉起，拉起后又再度触发 `restart`，形成间歇性周期重启风暴。
+- **启动时全量并发轰炸**：`cmd/server/main.go:317` 原先在启动后触发 `RefreshAllInstalledItems`，对每一个现有应用并发启动 Goroutine 调用 `appcenter-cli restart <appName>`，随后又调用 `PruneOrphanApps` 扫描 `list` 并执行 `uninstall`。
+- **飞牛系统广播机制**：飞牛桌面进程监听 AppCenter 的 D-Bus / WebSocket 状态事件。一旦频繁接收到底层服务 `restart` 或 `uninstall` 广播，桌面就会强制全量重新拉取图标并重排网格，导致用户桌面上所有应用图标频繁闪烁、刷新并打乱原本位置。
+
+#### 2. “把 Docker 放到桌面”应用无法设置自身桌面名称的技术真相
+- **飞牛 AppCenter 数据库固化**：主程序是作为标准第三方包（`.fpk`）安装进系统的，其包名 `fn-docker-to-desktop` 与桌面展示名称 `把 Docker 放到桌面` 在安装阶段已被飞牛 AppCenter 写入系统 SQLite 数据库中。
+- **磁盘文件原地修改无效**：飞牛桌面渲染应用图标时，直接读取系统 AppCenter 数据库元数据，绝不动态扫描 `/var/apps/.../manifest` 文件。因此，在磁盘上修改 `manifest` 并不会更新系统数据库，调用 `restart` 也仅仅是重启后台服务，无法更新应用名称。
+- **无法自杀式重装**：子快捷方式可以通过 `appcenter-cli install-local` 重建，但主程序自身如果调用重装，系统第一步就会 `stop` 杀掉本进程，直接导致自杀中断。原版 WatchCow 从未提供修改自身名称的功能（永久固定为 `WatchCow`），正是遵循了这一 NAS 包管理底层的客观铁律。
+
+#### 3. 与原版 WatchCow 的全方位对比 (Architecture Comparison)
+| 核心维度 | 原版 WatchCow (`watchcow`) | 本项目重构前 (`fn-docker-to-desktop`) | 本次重构后 (`v1.1.14`) |
+| :--- | :--- | :--- | :--- |
+| **`appcenter-cli restart`** | **全局 0 处调用，绝对不碰** | 启动与原地刷新时滥用 `restart`，导致桌面刷新与重启死循环 | **全局彻底清除所有 `restart` 调用，0 处调用** |
+| **开机对齐策略** | 仅同步内存注册表，不碰任何已安装应用的系统状态 | 启动后并发对所有应用执行 `RefreshInstalledApp` 并调用 `restart` | **`ReconcileInstalledItems`：仅检查并补齐缺失应用，对已安装应用绝对不打扰、不重启** |
+| **应用更新机制** | `processDashboardReinstall`：先 `uninstall` 旧包，再 `install-local` 新包原子替换 | 磁盘文件覆盖 + 异步 `restart`，导致 `manifest` 显示名称无法更新 | **对齐 WatchCow：先注销旧版本，再通过 `InstallItem` 重新注册，元数据 100% 完整生效** |
+| **自身应用边界** | 专注作为容器调度管理器，自身名称与图标保持固定，不进行无效热修改 | 试图修改自身 `manifest` 并重启自身，导致系统震荡 | **清晰定位管理面板，显示名称即时同步 Web 标题与 Tab，明确标注系统限制** |
+
+---
+
+### 实施与重构清单 (Implementation Details)
+
+1. **彻底根除 `restart` 带来的桌面闪烁与重启死循环 (`internal/desktop/installer.go`)**：
+   - 彻底移除 `SyncSelfApp` 中调用 `appcenter-cli restart fn-docker-to-desktop` 的代码，改为静默同步磁盘配置与图标文件，绝不触发服务重启；
+   - 彻底删除冗余脆弱的 `RefreshInstalledApp`（200+ 行原地文件搜寻覆写与并发 `restart` 的冗余逻辑）；
+   - 用全新轻量的 `ReconcileInstalledItems` 替代 `RefreshAllInstalledItems`：仅对 `Enabled: true` 且在系统中未安装（`!IsAppInstalled`）的项目进行补齐安装，对已正常安装的项零操作、零调用，保障开机飞牛桌面绝对静止稳定。
+
+2. **启动流程与更新流平稳重构 (`cmd/server/main.go` & `internal/api/handler.go`)**：
+   - [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)：启动时改为调用 `installer.ReconcileInstalledItems(items)`，移除开机自动孤立清理与并发重启；
+   - [`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go)：在 `handleUpdateDesktopItem` 中，严格对齐 WatchCow 经过验证的 `processDashboardReinstall` 范式，若应用已存在则先执行 `installer.UninstallSingleApp(oldAppName)`，再执行 `installer.InstallItem(item)`，使新的显示名称、新图标与新端口原生注册进飞牛系统数据库。
+
+3. **设置界面功能说明与 Web 标题即时联动 (`web/index.html` & `web/app.js`)**：
+   - 将“自身桌面图标设置”重命名为“系统与管理面板设置”；
+   - 将“飞牛桌面显示名称”规范为“管理面板显示名称 (Web 标题)”，并增加醒目、专业的系统机制说明：
+     > 💡 **系统说明**：飞牛 OS 桌面上的主应用快捷方式由系统应用中心在安装应用包时注册，受系统底层机制限制无法在运行时动态重命名；此处的名称将即时生效于本管理面板的网页标题与顶栏。如需在飞牛桌面上放置自定义名称与图标的快捷方式，推荐在「桌面图标」中一键添加「本机端口」或「网页链接」。
+   - 在前端 `updateSettingsForm` 与 `handleSaveSettingsManual` 中，用户修改或保存名称时，浏览器标签页标题（`document.title`）与管理卡片标题即时刷新生效。
+
+4. **单测覆盖与版本升级 (`v1.1.14`)**：
+   - 在 [`internal/desktop/installer_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer_test.go) 中新增 `TestReconcileInstalledItems` 单元测试，确保开机平稳对齐逻辑安全；
+   - 全局同步升级版本号至 `1.1.14`（`cmd/server/main.go`, `fnos-app/manifest`, `web/index.html`, `web/app.js`, `internal/api/handler_test.go`）。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - 在 Docker `golang:1.22-alpine` 容器内运行 `go test ./...`，全套测试（包括新增加的 `TestReconcileInstalledItems`、导出测试与公网鉴权测试）100% 通过（PASS）。
+2. **零 .fpk 文件残留**：
+   - 检查工作区，杜绝任何 `.fpk` 文件提交至 Git 仓库。
+3. **版本发布与 Git Tag 推送**：
+   - 代码提交至 `master` 分支，创建 Git Tag `v1.1.14` 并推送到 GitHub 远程仓库，触发 GitHub Actions 自动化构建与发布。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 162,000
+- **思维链 Token (Thinking Tokens)**：约 28,000
+- **输出 Token (Completion Tokens)**：约 9,000
+- **总消耗 Token (Total Tokens)**：**约 199,000**
+
+
 
 
 

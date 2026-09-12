@@ -728,27 +728,18 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Clean up old app on fnOS before reinstalling/updating if appName changed
-	if hasExisting && oldAppName != "" && oldAppName != item.AppName {
-		slog.Info("[API] 检测到应用包名变更，注销旧版本应用以确保注销旧图标...", "oldAppName", oldAppName, "newAppName", item.AppName)
+	// Clean up old app on fnOS before installing/updating (aligned with WatchCow processDashboardReinstall)
+	if hasExisting && oldAppName != "" && h.installer.IsAppInstalled(oldAppName) {
+		slog.Info("[API] 正在更新桌面应用，先注销旧版本以确保元数据完整更新...", "oldAppName", oldAppName, "newAppName", item.AppName)
 		_ = h.installer.UninstallSingleApp(oldAppName)
 	}
 
 	if item.Enabled {
-		slog.Info("[API] 正在更新飞牛桌面应用...", "appName", item.AppName, "name", item.Name)
-		refreshed := false
-		if oldAppName == item.AppName && h.installer.IsAppInstalled(item.AppName) {
-			if err := h.installer.RefreshInstalledApp(item); err == nil {
-				refreshed = true
-				slog.Info("[API] 原地快速更新飞牛桌面应用成功", "appName", item.AppName)
-			}
-		}
-		if !refreshed {
-			if err := h.installer.InstallItem(item); err != nil {
-				slog.Error("[API] 更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
-				h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
-				return
-			}
+		slog.Info("[API] 正在安装更新后的飞牛桌面应用...", "appName", item.AppName, "name", item.Name)
+		if err := h.installer.InstallItem(item); err != nil {
+			slog.Error("[API] 更新飞牛桌面应用失败", "appName", item.AppName, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "更新飞牛桌面应用失败: " + err.Error()}, http.StatusInternalServerError)
+			return
 		}
 		item.Installed = true
 	} else {
