@@ -1,0 +1,91 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"fn-docker-to-desktop/internal/auth"
+	"fn-docker-to-desktop/internal/desktop"
+)
+
+func TestHandleExportDesktopItems(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-api-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+
+	authMgr := auth.NewManager("")
+
+	// Add a sample desktop item
+	testItem := desktop.DesktopItem{
+		ID:        "item-test-1",
+		AppName:   "fndocker.testapp",
+		Name:      "Test App",
+		Port:      8080,
+		Protocol:  "http",
+		TargetURL: "http://127.0.0.1:8080",
+		Mode:      desktop.ModeLocalPort,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := storage.SaveItem(testItem); err != nil {
+		t.Fatalf("Failed to save test item: %v", err)
+	}
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    authMgr,
+		DataDir:    tempDir,
+		AppVersion: "1.1.8",
+	})
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/api/desktop/export", nil)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	disposition := rec.Header().Get("Content-Disposition")
+	if disposition == "" || !strings.Contains(disposition, "fn-desktop-icons-") {
+		t.Errorf("Expected Content-Disposition to contain 'fn-desktop-icons-', got %q", disposition)
+	}
+
+	var exportResult struct {
+		Version    string                `json:"version"`
+		ExportedAt string                `json:"exported_at"`
+		Total      int                   `json:"total"`
+		Items      []desktop.DesktopItem `json:"items"`
+	}
+
+	if err := json.NewDecoder(rec.Body).Decode(&exportResult); err != nil {
+		t.Fatalf("Failed to decode export response: %v", err)
+	}
+
+	if exportResult.Version != "1.1.8" {
+		t.Errorf("Expected version 1.1.8, got %s", exportResult.Version)
+	}
+	if exportResult.Total != 1 {
+		t.Errorf("Expected total 1, got %d", exportResult.Total)
+	}
+	if len(exportResult.Items) != 1 || exportResult.Items[0].ID != "item-test-1" {
+		t.Errorf("Expected 1 item with ID item-test-1, got %+v", exportResult.Items)
+	}
+}

@@ -91,7 +91,8 @@ let state = {
   processes: [],
   system: null,
   host: null,
-  portFilters: new Set(['docker']), // 默认筛选 Docker 容器
+  portFilterSource: 'docker', // 'all' | 'docker' | 'host' (默认: Docker 容器)
+  portFilterProto: 'tcp',     // 'all' | 'tcp' | 'udp' (默认: TCP)
   portSearch: '',
   desktopSearch: '',
   procSearch: '',
@@ -174,13 +175,11 @@ function switchTab(tab) {
     fetchDesktopItems();
   } else if (tab === 'processes') {
     fetchProcesses();
-  } else if (tab === 'system') {
-    fetchSystem();
-    fetchHost();
   } else if (tab === 'logs') {
     fetchLogs();
   } else if (tab === 'settings') {
     fetchSettings();
+    fetchHost();
   }
 }
 
@@ -259,6 +258,38 @@ async function fetchDesktopItems() {
   } catch (err) {
     console.error('Fetch desktop items error:', err);
   }
+}
+
+function handleExportDesktopItems() {
+  const items = state.desktopItems || [];
+  const exportData = {
+    version: state.settings?.version || '1.1.8',
+    exported_at: new Date().toISOString(),
+    total: items.length,
+    items: items.map(item => {
+      const { _updating, _error, _statusText, ...cleanItem } = item;
+      return cleanItem;
+    }),
+  };
+  const jsonStr = JSON.stringify(exportData, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const d = new Date();
+  const dateStr = d.getFullYear() +
+    String(d.getMonth() + 1).padStart(2, '0') +
+    String(d.getDate()).padStart(2, '0') + '-' +
+    String(d.getHours()).padStart(2, '0') +
+    String(d.getMinutes()).padStart(2, '0') +
+    String(d.getSeconds()).padStart(2, '0');
+  a.href = url;
+  a.download = `fn-desktop-icons-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`已成功导出 ${items.length} 个桌面图标配置`, 'success');
+  reportClientLog('action', '用户导出桌面图标配置', `导出数量: ${items.length}`);
 }
 
 async function fetchProcesses() {
@@ -502,33 +533,17 @@ function renderPortsTable() {
       if (!matchPort && !matchProc && !matchDocker && !matchExe) return false;
     }
 
-    // Multi-select Filter chip matching
-    const filters = state.portFilters;
-    if (filters.has('all')) {
-      return true;
-    }
-
-    const hasDocker = filters.has('docker');
-    const hasHost = filters.has('host');
+    // Dropdown 1: Source filter ('all' | 'docker' | 'host')
     const isDocker = !!(p.docker && p.docker.is_docker);
+    if (state.portFilterSource === 'docker' && !isDocker) return false;
+    if (state.portFilterSource === 'host' && isDocker) return false;
 
-    if (hasDocker && !hasHost) {
-      if (!isDocker) return false;
-    } else if (hasHost && !hasDocker) {
-      if (isDocker) return false;
-    }
-
-    const hasTcp = filters.has('tcp');
-    const hasUdp = filters.has('udp');
+    // Dropdown 2: Protocol filter ('all' | 'tcp' | 'udp')
     const protoStr = (p.protocol || '').toLowerCase();
     const isTcp = (p.protocols || []).some(x => x.toLowerCase().includes('tcp')) || protoStr.includes('tcp');
     const isUdp = (p.protocols || []).some(x => x.toLowerCase().includes('udp')) || protoStr.includes('udp');
-
-    if (hasTcp && !hasUdp) {
-      if (!isTcp) return false;
-    } else if (hasUdp && !hasTcp) {
-      if (!isUdp) return false;
-    }
+    if (state.portFilterProto === 'tcp' && !isTcp) return false;
+    if (state.portFilterProto === 'udp' && !isUdp) return false;
 
     return true;
   });
@@ -667,17 +682,22 @@ function renderDesktopTable() {
   let html = '';
   for (const item of filtered) {
     let modeText = '本机端口';
+    let modeClass = 'text-type-local';
     let targetText = `:${item.port}`;
     if (item.mode === 'proxy') {
       modeText = '代理服务';
+      modeClass = 'text-type-proxy';
       targetText = `${item.target_url} ➔ :${item.port}`;
     } else if (item.mode === 'shortcut') {
       modeText = '网页快捷';
+      modeClass = 'text-type-shortcut';
       targetText = item.target_url;
     }
 
-    const openModeText = item.ui_type === 'iframe' ? '飞牛内部弹窗' : '浏览器新标签';
+    const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+    const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
     const permText = item.all_users ? '所有用户' : '仅管理员';
+    const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
     const toggleHtml = `
       <div class="status-toggle-wrapper">
         <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
@@ -713,10 +733,10 @@ function renderDesktopTable() {
         <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标">
       </td>
       <td><strong>${escapeHtml(item.name)}</strong></td>
-      <td><span class="protocol-tag">${modeText}</span></td>
+      <td><span class="${modeClass}">${modeText}</span></td>
       <td><code>${escapeHtml(targetText)}</code></td>
-      <td>${openModeText}</td>
-      <td>${permText}</td>
+      <td><span class="${openModeClass}">${openModeText}</span></td>
+      <td><span class="${permClass}">${permText}</span></td>
       <td>${statusColHtml}</td>
       <td>
         <div class="table-actions">
@@ -1262,6 +1282,45 @@ async function uploadTextIconBlob() {
   });
 }
 
+function updateTextColorUI(val) {
+  if (!val) return;
+  const hex = normalizeHexColor(val) || val;
+  const picker = document.getElementById('icon-text-color');
+  const input = document.getElementById('icon-text-color-hex');
+  const preview = document.getElementById('preview-text-color-block');
+  const display = document.getElementById('display-text-color-hex');
+  if (picker) picker.value = hex;
+  if (input) input.value = hex;
+  if (preview) preview.style.backgroundColor = hex;
+  if (display) display.textContent = hex;
+  document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
+  });
+}
+
+function updateBgColorUI(val) {
+  if (!val) return;
+  const hex = normalizeHexColor(val) || val;
+  const picker = document.getElementById('icon-bg-color');
+  const input = document.getElementById('icon-bg-color-hex');
+  const preview = document.getElementById('preview-bg-color-block');
+  const display = document.getElementById('display-bg-color-hex');
+  if (picker) picker.value = hex;
+  if (input) input.value = hex;
+  if (preview) preview.style.backgroundColor = hex;
+  if (display) display.textContent = hex;
+  document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
+  });
+}
+
+function closeColorPopovers() {
+  const popText = document.getElementById('popover-text-color');
+  const popBg = document.getElementById('popover-bg-color');
+  if (popText) popText.style.display = 'none';
+  if (popBg) popBg.style.display = 'none';
+}
+
 function initIconEditor() {
   document.querySelectorAll('.icon-tab').forEach(tab => {
     tab.addEventListener('click', () => setIconModalTab(tab.dataset.iconTab));
@@ -1272,15 +1331,44 @@ function initIconEditor() {
     textInput.addEventListener('input', renderTextIconCanvas);
   }
 
+  // Popover toggle buttons
+  const btnTextTrigger = document.getElementById('btn-text-color-trigger');
+  const popoverText = document.getElementById('popover-text-color');
+  if (btnTextTrigger && popoverText) {
+    btnTextTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = popoverText.style.display === 'block';
+      closeColorPopovers();
+      if (!isVisible) {
+        popoverText.style.display = 'block';
+      }
+    });
+    popoverText.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  const btnBgTrigger = document.getElementById('btn-bg-color-trigger');
+  const popoverBg = document.getElementById('popover-bg-color');
+  if (btnBgTrigger && popoverBg) {
+    btnBgTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = popoverBg.style.display === 'block';
+      closeColorPopovers();
+      if (!isVisible) {
+        popoverBg.style.display = 'block';
+      }
+    });
+    popoverBg.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  document.addEventListener('click', () => {
+    closeColorPopovers();
+  });
+
   const textColorInput = document.getElementById('icon-text-color');
   const textColorHex = document.getElementById('icon-text-color-hex');
   if (textColorInput) {
     textColorInput.addEventListener('input', () => {
-      const val = textColorInput.value.toLowerCase();
-      if (textColorHex) textColorHex.value = val;
-      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === val);
-      });
+      updateTextColorUI(textColorInput.value);
       renderTextIconCanvas();
     });
   }
@@ -1288,20 +1376,13 @@ function initIconEditor() {
     textColorHex.addEventListener('input', () => {
       const hex = normalizeHexColor(textColorHex.value);
       if (hex) {
-        if (textColorInput) textColorInput.value = hex;
-        document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-          s.classList.toggle('active', s.dataset.color.toLowerCase() === hex);
-        });
+        updateTextColorUI(hex);
         renderTextIconCanvas();
       }
     });
     textColorHex.addEventListener('blur', () => {
       const hex = normalizeHexColor(textColorHex.value);
-      if (hex) {
-        textColorHex.value = hex;
-      } else {
-        textColorHex.value = textColorInput ? textColorInput.value : '#ffffff';
-      }
+      updateTextColorUI(hex || '#ffffff');
     });
   }
 
@@ -1309,11 +1390,7 @@ function initIconEditor() {
   const bgColorHex = document.getElementById('icon-bg-color-hex');
   if (bgColorInput) {
     bgColorInput.addEventListener('input', () => {
-      const val = bgColorInput.value.toLowerCase();
-      if (bgColorHex) bgColorHex.value = val;
-      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === val);
-      });
+      updateBgColorUI(bgColorInput.value);
       renderTextIconCanvas();
     });
   }
@@ -1321,41 +1398,26 @@ function initIconEditor() {
     bgColorHex.addEventListener('input', () => {
       const hex = normalizeHexColor(bgColorHex.value);
       if (hex) {
-        if (bgColorInput) bgColorInput.value = hex;
-        document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-          s.classList.toggle('active', s.dataset.color.toLowerCase() === hex);
-        });
+        updateBgColorUI(hex);
         renderTextIconCanvas();
       }
     });
     bgColorHex.addEventListener('blur', () => {
       const hex = normalizeHexColor(bgColorHex.value);
-      if (hex) {
-        bgColorHex.value = hex;
-      } else {
-        bgColorHex.value = bgColorInput ? bgColorInput.value : '#1e293b';
-      }
+      updateBgColorUI(hex || '#1e293b');
     });
   }
 
   document.querySelectorAll('#text-color-swatches .color-swatch').forEach(swatch => {
     swatch.addEventListener('click', () => {
-      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
-      swatch.classList.add('active');
-      const val = swatch.dataset.color.toLowerCase();
-      if (textColorInput) textColorInput.value = val;
-      if (textColorHex) textColorHex.value = val;
+      updateTextColorUI(swatch.dataset.color);
       renderTextIconCanvas();
     });
   });
 
   document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(swatch => {
     swatch.addEventListener('click', () => {
-      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => s.classList.remove('active'));
-      swatch.classList.add('active');
-      const val = swatch.dataset.color.toLowerCase();
-      if (bgColorInput) bgColorInput.value = val;
-      if (bgColorHex) bgColorHex.value = val;
+      updateBgColorUI(swatch.dataset.color);
       renderTextIconCanvas();
     });
   });
@@ -1388,16 +1450,9 @@ function initIconEditor() {
       document.getElementById('item-icon').value = '';
       if (textInput) textInput.value = '';
       if (urlInput) urlInput.value = '';
-      if (textColorInput) textColorInput.value = '#ffffff';
-      if (textColorHex) textColorHex.value = '#ffffff';
-      document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === '#ffffff');
-      });
-      if (bgColorInput) bgColorInput.value = '#1e293b';
-      if (bgColorHex) bgColorHex.value = '#1e293b';
-      document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-        s.classList.toggle('active', s.dataset.color.toLowerCase() === '#1e293b');
-      });
+      updateTextColorUI('#ffffff');
+      updateBgColorUI('#1e293b');
+      closeColorPopovers();
       state.currentTextIconDataUrl = null;
       const previewImg = document.getElementById('icon-preview-img');
       const previewName = document.getElementById('icon-preview-name');
@@ -1441,21 +1496,9 @@ function resetDesktopForm() {
 
   const textInput = document.getElementById('icon-text-input');
   if (textInput) textInput.value = '';
-  const textColorInput = document.getElementById('icon-text-color');
-  const textColorHex = document.getElementById('icon-text-color-hex');
-  if (textColorInput) textColorInput.value = '#ffffff';
-  if (textColorHex) textColorHex.value = '#ffffff';
-  document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-    s.classList.toggle('active', s.dataset.color.toLowerCase() === '#ffffff');
-  });
-
-  const bgColorInput = document.getElementById('icon-bg-color');
-  const bgColorHex = document.getElementById('icon-bg-color-hex');
-  if (bgColorInput) bgColorInput.value = '#1e293b';
-  if (bgColorHex) bgColorHex.value = '#1e293b';
-  document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-    s.classList.toggle('active', s.dataset.color.toLowerCase() === '#1e293b');
-  });
+  updateTextColorUI('#ffffff');
+  updateBgColorUI('#1e293b');
+  closeColorPopovers();
 
   const urlInput = document.getElementById('icon-url-input');
   if (urlInput) urlInput.value = '';
@@ -1654,16 +1697,9 @@ function openEditDesktopModal(id) {
     if (textInput) textInput.value = item.icon_text || '';
     const textColor = item.icon_text_color || '#ffffff';
     const bgColor = item.icon_bg_color || '#1e293b';
-    if (textColorInput) textColorInput.value = textColor;
-    if (textColorHex) textColorHex.value = textColor;
-    if (bgColorInput) bgColorInput.value = bgColor;
-    if (bgColorHex) bgColorHex.value = bgColor;
-    document.querySelectorAll('#text-color-swatches .color-swatch').forEach(s => {
-      s.classList.toggle('active', s.dataset.color.toLowerCase() === textColor.toLowerCase());
-    });
-    document.querySelectorAll('#bg-color-swatches .color-swatch').forEach(s => {
-      s.classList.toggle('active', s.dataset.color.toLowerCase() === bgColor.toLowerCase());
-    });
+    updateTextColorUI(textColor);
+    updateBgColorUI(bgColor);
+    closeColorPopovers();
 
     if (item.icon_text) {
       renderTextIconCanvas();
@@ -1710,14 +1746,15 @@ function openPortDesktopListModal(port, procName, items) {
   let html = '';
   for (const item of items) {
     const iconSrc = getIconUrl(item.icon);
-    const openModeText = item.ui_type === 'iframe' ? '飞牛内部弹窗' : '浏览器新标签';
+    const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+    const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
     const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
 
     html += `<tr>
       <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/icon.png')}'" alt="图标"></td>
       <td><strong>${escapeHtml(item.name)}</strong></td>
       <td><code>${escapeHtml(item.path || '/')}</code></td>
-      <td>${openModeText}</td>
+      <td><span class="${openModeClass}">${openModeText}</span></td>
       <td>${statusText}</td>
       <td>
         <div class="table-actions">
@@ -2273,37 +2310,32 @@ function initApp() {
   initNavigation();
   initModals();
 
-  // Filter chips in Ports tab (multi-select with special 'all' handling)
-  const portFilterChips = document.querySelectorAll('#port-filter-chips .chip[data-filter]');
-  portFilterChips.forEach(chip => {
-    chip.addEventListener('click', () => {
-      const filter = chip.dataset.filter;
-      if (filter === 'all') {
-        state.portFilters.clear();
-        state.portFilters.add('all');
-        portFilterChips.forEach(c => c.classList.toggle('active', c.dataset.filter === 'all'));
-      } else {
-        state.portFilters.delete('all');
-        const allChip = document.querySelector('#port-filter-chips .chip[data-filter="all"]');
-        if (allChip) allChip.classList.remove('active');
-
-        if (state.portFilters.has(filter)) {
-          state.portFilters.delete(filter);
-          chip.classList.remove('active');
-        } else {
-          state.portFilters.add(filter);
-          chip.classList.add('active');
-        }
-
-        // If no filter selected, revert back to 'all'
-        if (state.portFilters.size === 0) {
-          state.portFilters.add('all');
-          if (allChip) allChip.classList.add('active');
-        }
-      }
+  // Dropdown filters in Ports tab (Docker 容器/系统原生, TCP/UDP)
+  const portFilterSource = document.getElementById('port-filter-source');
+  if (portFilterSource) {
+    portFilterSource.value = state.portFilterSource;
+    portFilterSource.addEventListener('change', (e) => {
+      state.portFilterSource = e.target.value;
       renderPortsTable();
     });
-  });
+  }
+
+  const portFilterProto = document.getElementById('port-filter-proto');
+  if (portFilterProto) {
+    portFilterProto.value = state.portFilterProto;
+    portFilterProto.addEventListener('change', (e) => {
+      state.portFilterProto = e.target.value;
+      renderPortsTable();
+    });
+  }
+
+  // Export desktop items button
+  const btnExportDesktop = document.getElementById('btn-export-desktop');
+  if (btnExportDesktop) {
+    btnExportDesktop.addEventListener('click', () => {
+      handleExportDesktopItems();
+    });
+  }
 
   // Search input in Ports tab
   const portSearch = document.getElementById('port-search');
@@ -2360,15 +2392,6 @@ function initApp() {
     });
   }
 
-  const btnRefreshSystem = document.getElementById('btn-refresh-system');
-  if (btnRefreshSystem) {
-    btnRefreshSystem.addEventListener('click', () => {
-      fetchSystem();
-      fetchHost();
-      showToast('系统概览已刷新', 'info');
-    });
-  }
-
   // Unsaved settings page exit confirmation
   window.addEventListener('beforeunload', (e) => {
     if (state.isSettingsDirty) {
@@ -2396,6 +2419,7 @@ function initApp() {
 
   fetchPorts();
   fetchDesktopItems();
+  fetchHost();
   initEventSource();
   initLogViewer();
 }

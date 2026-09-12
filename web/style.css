@@ -1491,3 +1491,158 @@ tr.row-updating {
   white-space: nowrap;
 }
 
+/* ==================== Desktop Table Column Text Styles ==================== */
+.text-type-local {
+  color: #0284c7;
+  font-weight: 500;
+  display: inline-block;
+}
+.text-type-proxy {
+  color: #8b5cf6;
+  font-weight: 500;
+  display: inline-block;
+}
+.text-type-shortcut {
+  color: #10b981;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.text-open-tab {
+  color: #3b82f6;
+  font-weight: 500;
+  display: inline-block;
+}
+.text-open-modal {
+  color: #6366f1;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.text-perm-admin {
+  color: #f59e0b;
+  font-weight: 500;
+  display: inline-block;
+}
+.text-perm-all {
+  color: #10b981;
+  font-weight: 500;
+  display: inline-block;
+}
+
+/* ==================== Toolbar Select ==================== */
+.toolbar-select {
+  height: 36px;
+  padding: 0 2rem 0 0.75rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  outline: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.15s;
+}
+.toolbar-select:focus {
+  border-color: var(--primary);
+}
+
+/* ==================== Color Popover Component ==================== */
+.color-picker-trigger-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.color-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  height: 34px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-main);
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+
+.color-picker-trigger:hover {
+  border-color: var(--primary);
+  background-color: var(--bg-hover);
+}
+
+.color-preview-block {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.color-hex-display {
+  font-size: 12px;
+  text-transform: lowercase;
+}
+
+.color-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1050;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+  width: 250px;
+}
+
+.color-popover-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.color-popover-title {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.color-popover .color-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.color-popover .color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: transform 0.15s, border-color 0.15s;
+}
+
+.color-popover .color-swatch:hover {
+  transform: scale(1.08);
+}
+
+.color-popover .color-swatch.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--bg-surface);
+}
+

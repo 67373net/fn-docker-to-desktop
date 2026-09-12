@@ -95,6 +95,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/desktop/items/{id}", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/delete", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/toggle", h.handleToggleDesktopItem)
+	mux.HandleFunc("GET /api/desktop/export", h.handleExportDesktopItems)
 
 	mux.HandleFunc("POST /api/logs/client", h.handleClientLog)
 
@@ -411,6 +412,24 @@ func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) 
 	}
 	items := h.storage.GetAllItems()
 	h.jsonResponse(w, r, items, http.StatusOK)
+}
+
+func (h *Handler) handleExportDesktopItems(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+	items := h.storage.GetAllItems()
+	exportData := map[string]any{
+		"version":     h.appVersion,
+		"exported_at": time.Now().UTC().Format(time.RFC3339),
+		"total":       len(items),
+		"items":       items,
+	}
+	filename := fmt.Sprintf("fn-desktop-icons-%s.json", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	_ = json.NewEncoder(w).Encode(exportData)
 }
 
 func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request) {

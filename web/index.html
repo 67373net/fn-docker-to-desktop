@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.7">
+  <link rel="stylesheet" href="style.css?v=1.1.8">
 </head>
 <body>
   <!-- Header Bar -->
@@ -33,9 +33,6 @@
       <button class="nav-tab" data-tab="processes">
         <span>系统进程</span>
       </button>
-      <button class="nav-tab" data-tab="system">
-        <span>系统概览</span>
-      </button>
       <button class="nav-tab" data-tab="logs">
         <span>日志</span>
       </button>
@@ -55,13 +52,16 @@
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" id="port-search" placeholder="搜索端口号、进程、Docker 容器...">
         </div>
-        <div class="filter-chips" id="port-filter-chips">
-          <button class="chip" data-filter="all">全部</button>
-          <button class="chip active" data-filter="docker">Docker 容器</button>
-          <button class="chip" data-filter="host">宿主原生</button>
-          <button class="chip" data-filter="tcp">TCP</button>
-          <button class="chip" data-filter="udp">UDP</button>
-        </div>
+        <select id="port-filter-source" class="toolbar-select" title="来源筛选">
+          <option value="all">全部</option>
+          <option value="docker" selected>Docker 容器</option>
+          <option value="host">系统原生</option>
+        </select>
+        <select id="port-filter-proto" class="toolbar-select" title="协议筛选">
+          <option value="all">全部</option>
+          <option value="tcp" selected>TCP</option>
+          <option value="udp">UDP</option>
+        </select>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
         <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
@@ -104,6 +104,7 @@
           <input type="text" id="desktop-search" placeholder="搜索已创建的桌面图标...">
         </div>
         <div class="toolbar-spacer"></div>
+        <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置为 JSON 文件">导出设置</button>
         <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
         <button class="btn btn-primary" id="btn-open-create-modal">
           <span>添加桌面图标</span>
@@ -166,97 +167,7 @@
       </div>
     </section>
 
-    <!-- ==================== TAB 4: 系统概览 ==================== -->
-    <section class="tab-pane" id="pane-system">
-      <div class="toolbar">
-        <div class="toolbar-spacer"></div>
-        <button class="btn btn-secondary" id="btn-refresh-system" title="刷新系统概览">刷新</button>
-      </div>
-
-      <div class="system-grid">
-        <div class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">CPU 使用率</span>
-            <span class="metric-value" id="card-cpu">0%</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" id="fill-cpu" style="width: 0%;"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">物理内存</span>
-            <span class="metric-value" id="card-mem">0 / 0 GB (0%)</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" id="fill-mem" style="width: 0%;"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">磁盘空间</span>
-            <span class="metric-value" id="card-disk">0 / 0 GB (0%)</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" id="fill-disk" style="width: 0%;"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">网络吞吐</span>
-            <span class="metric-value" id="card-net">↓ 0 KB/s  ↑ 0 KB/s</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" id="fill-net" style="width: 15%;"></div></div>
-        </div>
-      </div>
-
-      <div class="info-section">
-        <h3 class="section-title">宿主机信息</h3>
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width: 180px;">主机名称</th>
-                <th style="width: 180px;">操作系统</th>
-                <th style="width: 180px;">内核版本</th>
-                <th style="width: 120px;">架构</th>
-                <th style="width: 160px;">主 IPv4 地址</th>
-                <th style="width: 160px;">运行时间</th>
-                <th class="filler-col"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td id="host-name">-</td>
-                <td id="host-os">-</td>
-                <td id="host-kernel">-</td>
-                <td id="host-arch">-</td>
-                <td id="host-ip">-</td>
-                <td id="host-uptime">-</td>
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="info-section">
-        <h3 class="section-title">网络接口</h3>
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width: 140px;">网卡名称</th>
-                <th style="width: 140px;">类型</th>
-                <th style="width: 180px;">MAC 地址</th>
-                <th style="width: 220px;">IPv4 地址</th>
-                <th style="width: 120px;">状态</th>
-                <th class="filler-col"></th>
-              </tr>
-            </thead>
-            <tbody id="iface-tbody">
-              <tr><td colspan="6" class="empty-state">正在获取网络接口...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== TAB 5: 系统日志 ==================== -->
+    <!-- ==================== TAB 4: 日志 ==================== -->
     <section class="tab-pane" id="pane-logs">
       <!-- Logs Toolbar -->
       <div class="toolbar">
@@ -312,11 +223,11 @@
       </div>
     </section>
 
-    <!-- ==================== TAB 6: 设置 ==================== -->
+    <!-- ==================== TAB 5: 设置 ==================== -->
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <div class="settings-card">
-          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.7 - 自身桌面图标设置</h3>
+          <h3 class="settings-card-title" id="settings-card-title">把 Docker 放到桌面 v1.1.8 - 自身桌面图标设置</h3>
           
           <div class="form-group">
             <label class="form-label">飞牛桌面显示名称</label>
@@ -354,6 +265,59 @@
               <button type="button" class="btn btn-secondary" id="btn-cancel-settings">取消</button>
               <button type="button" class="btn btn-primary" id="btn-save-settings">保存</button>
             </div>
+          </div>
+        </div>
+
+        <!-- 宿主机信息 -->
+        <div class="info-section" style="margin-top: 1.5rem;">
+          <h3 class="section-title">宿主机信息</h3>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 180px;">主机名称</th>
+                  <th style="width: 180px;">操作系统</th>
+                  <th style="width: 180px;">内核版本</th>
+                  <th style="width: 120px;">架构</th>
+                  <th style="width: 160px;">主 IPv4 地址</th>
+                  <th style="width: 160px;">运行时间</th>
+                  <th class="filler-col"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td id="host-name">-</td>
+                  <td id="host-os">-</td>
+                  <td id="host-kernel">-</td>
+                  <td id="host-arch">-</td>
+                  <td id="host-ip">-</td>
+                  <td id="host-uptime">-</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 网络接口 -->
+        <div class="info-section" style="margin-top: 1.5rem;">
+          <h3 class="section-title">网络接口</h3>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">网卡名称</th>
+                  <th style="width: 140px;">类型</th>
+                  <th style="width: 180px;">MAC 地址</th>
+                  <th style="width: 220px;">IPv4 地址</th>
+                  <th style="width: 120px;">状态</th>
+                  <th class="filler-col"></th>
+                </tr>
+              </thead>
+              <tbody id="iface-tbody">
+                <tr><td colspan="6" class="empty-state">正在获取网络接口...</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -457,14 +421,14 @@
 
           <div class="form-row" id="row-open-options">
             <div class="form-group flex-1" id="group-ui-type">
-              <label class="form-label">飞牛打开方式</label>
+              <label class="form-label">打开方式</label>
               <select id="item-ui-type" class="form-select">
-                <option value="url" selected>浏览器新标签页</option>
-                <option value="iframe">飞牛内部弹窗</option>
+                <option value="url" selected>新标签页</option>
+                <option value="iframe">内部弹窗</option>
               </select>
             </div>
             <div class="form-group flex-1" id="group-all-users">
-              <label class="form-label">访问可见权限</label>
+              <label class="form-label">可见权限</label>
               <select id="item-all-users" class="form-select">
                 <option value="false" selected>仅管理员可见</option>
                 <option value="true">所有用户可见</option>
@@ -490,31 +454,63 @@
                   </div>
                   <div class="color-picker-row">
                     <span class="color-picker-label">文字颜色:</span>
-                    <input type="color" id="icon-text-color" class="color-input" value="#ffffff">
-                    <input type="text" id="icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
-                    <div class="color-swatches" id="text-color-swatches">
-                      <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
-                      <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
-                      <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
-                      <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
-                      <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
-                      <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
+                    <div class="color-picker-trigger-wrapper">
+                      <button type="button" class="color-picker-trigger" id="btn-text-color-trigger" title="点击选择文字颜色">
+                        <span class="color-preview-block" id="preview-text-color-block" style="background-color: #ffffff;"></span>
+                        <span class="color-hex-display" id="display-text-color-hex">#ffffff</span>
+                      </button>
+                      <div class="color-popover" id="popover-text-color">
+                        <div class="color-popover-top">
+                          <input type="color" id="icon-text-color" class="color-input" value="#ffffff">
+                          <input type="text" id="icon-text-color-hex" class="color-hex-input" value="#ffffff" maxlength="7" placeholder="#ffffff">
+                        </div>
+                        <div class="color-popover-title">预设文字颜色</div>
+                        <div class="color-swatches" id="text-color-swatches">
+                          <span class="color-swatch active" data-color="#ffffff" style="background-color: #ffffff;" title="纯白"></span>
+                          <span class="color-swatch" data-color="#000000" style="background-color: #000000;" title="曜石黑"></span>
+                          <span class="color-swatch" data-color="#f1f5f9" style="background-color: #f1f5f9;" title="冷灰白"></span>
+                          <span class="color-swatch" data-color="#94a3b8" style="background-color: #94a3b8;" title="石板灰"></span>
+                          <span class="color-swatch" data-color="#fef08a" style="background-color: #fef08a;" title="淡柠檬黄"></span>
+                          <span class="color-swatch" data-color="#fed7aa" style="background-color: #fed7aa;" title="落日杏"></span>
+                          <span class="color-swatch" data-color="#a5f3fc" style="background-color: #a5f3fc;" title="冰川青"></span>
+                          <span class="color-swatch" data-color="#86efac" style="background-color: #86efac;" title="薄荷绿"></span>
+                          <span class="color-swatch" data-color="#c4b5fd" style="background-color: #c4b5fd;" title="淡丁香紫"></span>
+                          <span class="color-swatch" data-color="#f472b6" style="background-color: #f472b6;" title="樱花粉"></span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div class="color-picker-row">
                     <span class="color-picker-label">背景颜色:</span>
-                    <input type="color" id="icon-bg-color" class="color-input" value="#1e293b">
-                    <input type="text" id="icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
-                    <div class="color-swatches" id="bg-color-swatches">
-                      <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
-                      <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
-                      <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
-                      <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
-                      <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
-                      <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
-                      <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
-                      <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
-                      <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
+                    <div class="color-picker-trigger-wrapper">
+                      <button type="button" class="color-picker-trigger" id="btn-bg-color-trigger" title="点击选择背景颜色">
+                        <span class="color-preview-block" id="preview-bg-color-block" style="background-color: #1e293b;"></span>
+                        <span class="color-hex-display" id="display-bg-color-hex">#1e293b</span>
+                      </button>
+                      <div class="color-popover" id="popover-bg-color">
+                        <div class="color-popover-top">
+                          <input type="color" id="icon-bg-color" class="color-input" value="#1e293b">
+                          <input type="text" id="icon-bg-color-hex" class="color-hex-input" value="#1e293b" maxlength="7" placeholder="#1e293b">
+                        </div>
+                        <div class="color-popover-title">预设背景颜色</div>
+                        <div class="color-swatches" id="bg-color-swatches">
+                          <span class="color-swatch active" data-color="#1e293b" style="background-color: #1e293b;" title="石板灰 (Slate)"></span>
+                          <span class="color-swatch" data-color="#0f172a" style="background-color: #0f172a;" title="深邃黑 (Navy Night)"></span>
+                          <span class="color-swatch" data-color="#4f46e5" style="background-color: #4f46e5;" title="极光靛 (Indigo)"></span>
+                          <span class="color-swatch" data-color="#2563eb" style="background-color: #2563eb;" title="皇家蓝 (Royal Blue)"></span>
+                          <span class="color-swatch" data-color="#0284c7" style="background-color: #0284c7;" title="天青蓝 (Sky)"></span>
+                          <span class="color-swatch" data-color="#0f766e" style="background-color: #0f766e;" title="远山青 (Teal)"></span>
+                          <span class="color-swatch" data-color="#059669" style="background-color: #059669;" title="祖母绿 (Emerald)"></span>
+                          <span class="color-swatch" data-color="#16a34a" style="background-color: #16a34a;" title="青草绿 (Forest)"></span>
+                          <span class="color-swatch" data-color="#7c3aed" style="background-color: #7c3aed;" title="幻影紫 (Violet)"></span>
+                          <span class="color-swatch" data-color="#c026d3" style="background-color: #c026d3;" title="洋红 (Fuchsia)"></span>
+                          <span class="color-swatch" data-color="#ea580c" style="background-color: #ea580c;" title="赤阳橙 (Amber)"></span>
+                          <span class="color-swatch" data-color="#d97706" style="background-color: #d97706;" title="焦糖暖金 (Gold)"></span>
+                          <span class="color-swatch" data-color="#e11d48" style="background-color: #e11d48;" title="蔷薇红 (Rose)"></span>
+                          <span class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="中国红 (Crimson)"></span>
+                          <span class="color-swatch" data-color="#09090b" style="background-color: #09090b;" title="暗夜黑 (Onyx)"></span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -637,6 +633,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.7"></script>
+  <script src="app.js?v=1.1.8"></script>
 </body>
 </html>
