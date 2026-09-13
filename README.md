@@ -2,6 +2,8 @@
 
 本项目灵感及代码参考了项目 [watchcow](https://github.com/tf4fun/watchcow)。
 
+本项目还处于 beta 测试版，可能会有一些 bug 和功能调整。
+
 ---
 
 ### 三大核心功能
