@@ -148,6 +148,10 @@ let state = {
   logs: [],
   appNameDirty: false,
   appShortId: '',
+  iconLibrary: [],
+  iconLibraryLoaded: false,
+  initialModalIcon: null,
+  initialSettingIcon: null,
 };
 
 // --- Utilities ---
@@ -238,7 +242,10 @@ async function fetchPorts() {
 
 async function fetchWatchcowItems() {
   try {
-    const res = await fetch(apiUrl('/api/desktop/docklabel'));
+    let res = await fetch(apiUrl('/api/desktop/docklabel'));
+    if (!res.ok && res.status !== 401) {
+      res = await fetch(apiUrl('/api/desktop/watchcow'));
+    }
     if (res.status === 401) return;
     if (res.ok) {
       const serverItems = await res.json();
@@ -268,7 +275,7 @@ async function fetchWatchcowItems() {
 }
 
 async function fetchDesktopItems() {
-  fetchWatchcowItems();
+  const watchcowPromise = fetchWatchcowItems();
   try {
     const res = await fetch(apiUrl('/api/desktop/items'));
     if (res.status === 401) return showAuthModal();
@@ -322,6 +329,7 @@ async function fetchDesktopItems() {
       });
 
       state.desktopItems = merged;
+      await watchcowPromise.catch(() => {});
       renderDesktopTable();
       updateDesktopCountBadge();
 
@@ -451,7 +459,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.18';
+    const ver = state.settings?.version || '1.1.23';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -471,12 +479,8 @@ function updateSettingsForm() {
 
   // Update setting icon editor form fields and preview
   let iconType = state.originalSettings?.portal_icon_type;
-  if (!iconType) {
-    if (state.originalSettings?.portal_icon_text) {
-      iconType = 'text';
-    } else {
-      iconType = 'upload';
-    }
+  if (!iconType || iconType === 'upload') {
+    iconType = 'lib';
   }
   const icon = state.originalSettings?.portal_icon || 'icon.png';
   const iconText = state.originalSettings?.portal_icon_text || '';
@@ -497,14 +501,20 @@ function updateSettingsForm() {
     elSettingUrlInput.value = (iconType === 'url') ? icon : '';
   }
 
-  const previewName = document.getElementById('setting-icon-preview-name');
-  if (previewName) previewName.textContent = '把 Docker 放到桌面';
-
-  setSettingIconTab(iconType);
-  if (iconType === 'text') {
+  const previewImg = document.getElementById('setting-icon-preview-img');
+  if (iconType === 'text' && iconText) {
+    setSettingIconTab('text');
     renderSettingTextIconCanvas();
+  } else if (iconType === 'url' && icon) {
+    setSettingIconTab('url');
+    if (previewImg) previewImg.src = icon;
+  } else {
+    setSettingIconTab('lib');
+    if (previewImg) previewImg.src = getIconUrl(icon);
   }
 
+  collapseIconPicker('setting');
+  saveIconSnapshot('setting');
   state.isSettingsDirty = false;
 }
 
@@ -517,29 +527,7 @@ function checkSettingsDirty() {
 
   const allUsersChanged = curAll !== state.originalSettings.portal_all_users;
   const pwdChanged = curPwd !== '' || curPwdConfirm !== '';
-
-  const curIconType = state.activeSettingIconTab || 'upload';
-  let iconChanged = curIconType !== (state.originalSettings.portal_icon_type || 'upload');
-  if (curIconType === 'text') {
-    const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
-    const curTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || '#ffffff').trim();
-    const curBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || '#1e293b').trim();
-    if (curText !== (state.originalSettings.portal_icon_text || '') ||
-        curTextColor.toLowerCase() !== (state.originalSettings.portal_icon_text_color || '#ffffff').toLowerCase() ||
-        curBgColor.toLowerCase() !== (state.originalSettings.portal_icon_bg_color || '#1e293b').toLowerCase()) {
-      iconChanged = true;
-    }
-  } else if (curIconType === 'url') {
-    const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
-    if (curUrl !== (state.originalSettings.portal_icon || '')) {
-      iconChanged = true;
-    }
-  } else if (curIconType === 'upload') {
-    const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
-    if (curIcon !== (state.originalSettings.portal_icon || '')) {
-      iconChanged = true;
-    }
-  }
+  const iconChanged = isIconModified('setting');
 
   state.isSettingsDirty = allUsersChanged || pwdChanged || iconChanged;
 
@@ -552,6 +540,11 @@ function checkSettingsDirty() {
       statusEl.textContent = '';
     }
   }
+
+  const btnSave = document.getElementById('btn-save-settings');
+  const btnCancel = document.getElementById('btn-cancel-settings');
+  if (btnSave) btnSave.disabled = !state.isSettingsDirty;
+  if (btnCancel) btnCancel.disabled = !state.isSettingsDirty;
 }
 
 // --- SSE Real-time Updates ---
@@ -981,7 +974,7 @@ function renderDesktopTable() {
       const typeColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
         </div>`;
 
       const hasIcon = !item.no_display;
@@ -1000,7 +993,7 @@ function renderDesktopTable() {
       const entryColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
         </div>`;
 
       const toggleHtml = `
@@ -1060,7 +1053,7 @@ function renderDesktopTable() {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
         <td colspan="8" class="table-sink-divider-cell">
-          <span class="table-sink-title">以下内容读取自 Docker 容器标签</span>
+          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签</span>
         </td>
       </tr>`;
 
@@ -1080,7 +1073,7 @@ function renderDesktopTable() {
       const typeColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
         </div>`;
 
       const hasIcon = !item.no_display;
@@ -1099,7 +1092,7 @@ function renderDesktopTable() {
       const entryColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
         </div>`;
 
       const containerHint = item.container_name
@@ -1405,12 +1398,6 @@ function getDesktopItemFormSnapshot() {
     path: document.getElementById('item-path')?.value || '/',
     uiType: document.getElementById('item-ui-type')?.value || 'url',
     allUsers: document.getElementById('item-all-users')?.value || 'false',
-    iconTab: state.activeIconTab || 'text',
-    iconText: document.getElementById('icon-text-input')?.value || '',
-    iconTextColor: (document.getElementById('icon-text-color')?.value || '#ffffff').toLowerCase(),
-    iconBgColor: (document.getElementById('icon-bg-color')?.value || '#1e293b').toLowerCase(),
-    iconUrl: document.getElementById('icon-url-input')?.value || '',
-    iconHidden: document.getElementById('item-icon')?.value || '',
     noticeContent: document.getElementById('item-notice-content')?.value || '',
     fileTypes: document.getElementById('item-file-types')?.value || '',
     noDisplay: !!document.getElementById('item-no-display')?.checked
@@ -1424,6 +1411,7 @@ function saveDesktopItemFormSnapshot() {
 function isDesktopItemFormDirty() {
   const modal = document.getElementById('modal-desktop-item');
   if (!modal || !modal.classList.contains('active')) return false;
+  if (isIconModified('modal')) return true;
   if (!state.desktopItemFormSnapshot) return false;
   return getDesktopItemFormSnapshot() !== state.desktopItemFormSnapshot;
 }
@@ -1435,6 +1423,8 @@ function tryCloseDesktopItemModal() {
     }
   }
   state.desktopItemFormSnapshot = null;
+  state.initialModalIcon = null;
+  collapseIconPicker('modal');
   closeModal('modal-desktop-item');
 }
 
@@ -1549,12 +1539,6 @@ function initModals() {
   const btnRec = document.getElementById('btn-recommend-port');
   if (btnRec) {
     btnRec.addEventListener('click', handleRecommendPort);
-  }
-
-  // Icon upload
-  const fileInput = document.getElementById('icon-file-input');
-  if (fileInput) {
-    fileInput.addEventListener('change', handleIconUpload);
   }
 
   // Dynamic package name synchronization with item name
@@ -1682,7 +1666,7 @@ function setDesktopModalMode(mode) {
 // --- Icon 3-Tab Editor ---
 function setIconModalTab(tabName) {
   state.activeIconTab = tabName;
-  document.querySelectorAll('#modal-desktop-item .icon-tab').forEach(b => {
+  document.querySelectorAll('#modal-icon-tabs .icon-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.iconTab === tabName);
   });
   document.querySelectorAll('#modal-desktop-item .icon-tab-pane').forEach(p => {
@@ -1690,7 +1674,6 @@ function setIconModalTab(tabName) {
   });
 
   const previewImg = document.getElementById('icon-preview-img');
-  const previewName = document.getElementById('icon-preview-name');
 
   if (tabName === 'text') {
     const text = document.getElementById('icon-text-input')?.value || '';
@@ -1698,7 +1681,6 @@ function setIconModalTab(tabName) {
       renderTextIconCanvas();
     } else {
       if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-      if (previewName) previewName.textContent = '默认图标';
     }
   } else if (tabName === 'url') {
     const url = document.getElementById('icon-url-input')?.value.trim() || '';
@@ -1707,20 +1689,19 @@ function setIconModalTab(tabName) {
         previewImg.src = url;
         previewImg.onerror = () => {
           previewImg.src = apiUrl('/default_item_icon.png');
-          if (previewName) previewName.textContent = '图片载入失败';
         };
       }
-      if (previewName) previewName.textContent = '网络图标';
     } else {
       if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-      if (previewName) previewName.textContent = '默认图标';
     }
-  } else if (tabName === 'upload') {
+  } else if (tabName === 'lib' || tabName === 'upload') {
     const val = document.getElementById('item-icon')?.value.trim() || '';
     if (val) {
       if (previewImg) previewImg.src = getIconUrl(val);
-      if (previewName) previewName.textContent = val.split('/').pop();
+    } else {
+      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
     }
+    renderIconLibraryGrid('modal');
   }
 }
 
@@ -1730,11 +1711,9 @@ function renderTextIconCanvas() {
   const textColor = document.getElementById('icon-text-color')?.value || '#ffffff';
   const bgColor = document.getElementById('icon-bg-color')?.value || '#1e293b';
   const previewImg = document.getElementById('icon-preview-img');
-  const previewName = document.getElementById('icon-preview-name');
 
   if (!text) {
     if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-    if (previewName) previewName.textContent = '默认图标';
     state.currentTextIconDataUrl = null;
     return;
   }
@@ -1815,7 +1794,6 @@ function renderTextIconCanvas() {
   const dataUrl = canvas.toDataURL('image/png');
   state.currentTextIconDataUrl = dataUrl;
   if (previewImg) previewImg.src = dataUrl;
-  if (previewName) previewName.textContent = `文字: ${lines[0]}`;
 }
 
 async function uploadTextIconBlob() {
@@ -2094,10 +2072,361 @@ function closeColorPopovers() {
   if (popBg) popBg.style.display = 'none';
 }
 
+// --- Unified Icon Picker Core Helpers ---
+
+async function fetchIconLibrary(force = false) {
+  if (state.iconLibraryLoaded && !force && state.iconLibrary.length > 0) {
+    return state.iconLibrary;
+  }
+  try {
+    const res = await fetch(apiUrl('/api/icons'));
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        state.iconLibrary = data;
+        state.iconLibraryLoaded = true;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch icon library:', err);
+  }
+  return state.iconLibrary;
+}
+
+async function renderIconLibraryGrid(scope) {
+  const gridId = scope === 'setting' ? 'setting-icon-library-grid' : 'modal-icon-library-grid';
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
+
+  await fetchIconLibrary();
+
+  // Keep only the first child (the upload card)
+  const uploadCard = grid.querySelector('.icon-lib-upload-card');
+  grid.querySelectorAll('.icon-lib-card:not(.icon-lib-upload-card)').forEach(el => el.remove());
+
+  const curVal = (scope === 'setting'
+    ? (document.getElementById('setting-portal-icon')?.value || '')
+    : (document.getElementById('item-icon')?.value || '')
+  ).trim();
+
+  state.iconLibrary.forEach(icon => {
+    const card = document.createElement('div');
+    card.className = 'icon-lib-card';
+    card.dataset.url = icon.url;
+    card.title = icon.name;
+
+    const isSelected = curVal && (curVal === icon.url || curVal === icon.name || curVal === `/icons/${icon.name}` || icon.url === `/icons/${curVal}`);
+    if (isSelected) {
+      card.classList.add('selected');
+    }
+
+    const img = document.createElement('img');
+    img.src = apiUrl(icon.url);
+    img.alt = icon.name;
+    img.loading = 'lazy';
+    card.appendChild(img);
+
+    card.addEventListener('click', () => {
+      selectLibraryIcon(scope, icon.url, card);
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+function selectLibraryIcon(scope, url, cardEl) {
+  const gridId = scope === 'setting' ? 'setting-icon-library-grid' : 'modal-icon-library-grid';
+  const grid = document.getElementById(gridId);
+  if (grid) {
+    grid.querySelectorAll('.icon-lib-card').forEach(c => c.classList.remove('selected'));
+  }
+  if (cardEl) {
+    cardEl.classList.add('selected');
+  }
+
+  if (scope === 'setting') {
+    const elIcon = document.getElementById('setting-portal-icon');
+    if (elIcon) elIcon.value = url;
+    const imgEl = document.getElementById('setting-icon-preview-img');
+    if (imgEl) imgEl.src = apiUrl(url);
+    checkSettingsDirty();
+  } else {
+    const elIcon = document.getElementById('item-icon');
+    if (elIcon) elIcon.value = url;
+    const imgEl = document.getElementById('icon-preview-img');
+    if (imgEl) imgEl.src = apiUrl(url);
+  }
+}
+
+async function handleUploadLibraryIcon(scope, fileInput) {
+  const originalFile = fileInput.files[0];
+  if (!originalFile) return;
+
+  if (originalFile.size > 10 * 1024 * 1024) {
+    showToast('上传图标文件不能超过 10MB', 'error');
+    fileInput.value = '';
+    return;
+  }
+
+  let file = originalFile;
+  try {
+    file = await compressIconFile(originalFile, 256);
+  } catch (err) {
+    showToast(err.message || '图标压缩失败', 'error');
+    fileInput.value = '';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('icon', file);
+
+  try {
+    const res = await fetch(apiUrl('/api/icons/upload'), {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (res.ok && data.url) {
+      const newIcon = {
+        name: file.name,
+        url: data.url,
+        last_used: Math.floor(Date.now() / 1000),
+      };
+      state.iconLibrary = [newIcon, ...state.iconLibrary.filter(i => i.url !== data.url)];
+
+      const gridId = scope === 'setting' ? 'setting-icon-library-grid' : 'modal-icon-library-grid';
+      const grid = document.getElementById(gridId);
+      if (grid) {
+        grid.querySelectorAll('.icon-lib-card').forEach(c => c.classList.remove('selected'));
+        const uploadCard = grid.querySelector('.icon-lib-upload-card');
+
+        grid.querySelectorAll(`.icon-lib-card[data-url="${data.url}"]`).forEach(c => c.remove());
+
+        const newCard = document.createElement('div');
+        newCard.className = 'icon-lib-card selected';
+        newCard.dataset.url = data.url;
+        newCard.title = file.name;
+
+        const img = document.createElement('img');
+        img.src = apiUrl(data.url);
+        img.alt = file.name;
+        newCard.appendChild(img);
+
+        newCard.addEventListener('click', () => {
+          selectLibraryIcon(scope, data.url, newCard);
+        });
+
+        if (uploadCard && uploadCard.nextSibling) {
+          uploadCard.after(newCard);
+        } else if (uploadCard) {
+          grid.appendChild(newCard);
+        }
+      }
+
+      if (scope === 'setting') {
+        const elIcon = document.getElementById('setting-portal-icon');
+        if (elIcon) elIcon.value = data.url;
+        const imgEl = document.getElementById('setting-icon-preview-img');
+        if (imgEl) imgEl.src = apiUrl(data.url);
+        checkSettingsDirty();
+      } else {
+        const elIcon = document.getElementById('item-icon');
+        if (elIcon) elIcon.value = data.url;
+        const imgEl = document.getElementById('icon-preview-img');
+        if (imgEl) imgEl.src = apiUrl(data.url);
+      }
+
+      showToast(`图标「${file.name}」上传成功并已选择`, 'success');
+    } else {
+      showToast(data.error || '上传图标失败', 'error');
+    }
+  } catch (err) {
+    showToast('上传图标网络异常: ' + err.message, 'error');
+  } finally {
+    fileInput.value = '';
+  }
+}
+
+function expandIconPicker(scope) {
+  const prefix = scope === 'setting' ? 'setting-' : 'modal-';
+  const collapsed = document.getElementById(`${prefix}icon-picker-collapsed`);
+  const expanded = document.getElementById(`${prefix}icon-picker-expanded`);
+  if (collapsed) collapsed.style.display = 'none';
+  if (expanded) expanded.style.display = 'block';
+
+  renderIconLibraryGrid(scope);
+
+  if (scope === 'setting') {
+    if (spectrumPickers['setting-text']) drawColorSpectrum(document.getElementById('spectrum-canvas-setting-text'), spectrumPickers['setting-text'].hue);
+    if (spectrumPickers['setting-bg']) drawColorSpectrum(document.getElementById('spectrum-canvas-setting-bg'), spectrumPickers['setting-bg'].hue);
+  } else {
+    if (spectrumPickers['text']) drawColorSpectrum(document.getElementById('spectrum-canvas-text'), spectrumPickers['text'].hue);
+    if (spectrumPickers['bg']) drawColorSpectrum(document.getElementById('spectrum-canvas-bg'), spectrumPickers['bg'].hue);
+  }
+}
+
+function collapseIconPicker(scope) {
+  const prefix = scope === 'setting' ? 'setting-' : 'modal-';
+  const collapsed = document.getElementById(`${prefix}icon-picker-collapsed`);
+  const expanded = document.getElementById(`${prefix}icon-picker-expanded`);
+  if (expanded) expanded.style.display = 'none';
+  if (collapsed) collapsed.style.display = 'flex';
+}
+
+function handleCollapseClick(scope) {
+  if (isIconModified(scope)) {
+    if (!confirm('已修改图标，确定要放弃本次修改并收起吗？')) {
+      return;
+    }
+    revertIcon(scope);
+  }
+  collapseIconPicker(scope);
+}
+
+function saveIconSnapshot(scope) {
+  if (scope === 'setting') {
+    const tab = state.activeSettingIconTab || 'lib';
+    const text = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+    const textColor = (document.getElementById('setting-icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
+    const bgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
+    const url = (document.getElementById('setting-icon-url-input')?.value || '').trim();
+    const iconVal = (document.getElementById('setting-portal-icon')?.value || '').trim();
+    const previewImg = document.getElementById('setting-icon-preview-img');
+    const previewSrc = previewImg ? previewImg.src : '';
+    state.initialSettingIcon = { tab, text, textColor, bgColor, url, iconVal, previewSrc };
+  } else {
+    const tab = state.activeIconTab || 'text';
+    const text = (document.getElementById('icon-text-input')?.value || '').trim();
+    const textColor = (document.getElementById('icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
+    const bgColor = (document.getElementById('icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
+    const url = (document.getElementById('icon-url-input')?.value || '').trim();
+    const iconVal = (document.getElementById('item-icon')?.value || '').trim();
+    const previewImg = document.getElementById('icon-preview-img');
+    const previewSrc = previewImg ? previewImg.src : '';
+    state.initialModalIcon = { tab, text, textColor, bgColor, url, iconVal, previewSrc };
+  }
+}
+
+function isIconModified(scope) {
+  const snap = scope === 'setting' ? state.initialSettingIcon : state.initialModalIcon;
+  if (!snap) return false;
+
+  if (scope === 'setting') {
+    const curTab = state.activeSettingIconTab || 'lib';
+    if (curTab !== snap.tab) {
+      const previewImg = document.getElementById('setting-icon-preview-img');
+      if (previewImg && previewImg.src !== snap.previewSrc) return true;
+      if (curTab === 'text') {
+        const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+        if (curText !== snap.text) return true;
+      } else if (curTab === 'url') {
+        const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
+        if (curUrl !== snap.url) return true;
+      } else if (curTab === 'lib') {
+        const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
+        if (curIcon !== snap.iconVal) return true;
+      }
+    } else {
+      if (curTab === 'text') {
+        const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+        const curTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
+        const curBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
+        if (curText !== snap.text || curTextColor !== snap.textColor || curBgColor !== snap.bgColor) return true;
+      } else if (curTab === 'url') {
+        const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
+        if (curUrl !== snap.url) return true;
+      } else if (curTab === 'lib') {
+        const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
+        if (curIcon !== snap.iconVal) return true;
+      }
+    }
+    return false;
+  } else {
+    const curTab = state.activeIconTab || 'text';
+    if (curTab !== snap.tab) {
+      const previewImg = document.getElementById('icon-preview-img');
+      if (previewImg && previewImg.src !== snap.previewSrc) return true;
+      if (curTab === 'text') {
+        const curText = (document.getElementById('icon-text-input')?.value || '').trim();
+        if (curText !== snap.text) return true;
+      } else if (curTab === 'url') {
+        const curUrl = (document.getElementById('icon-url-input')?.value || '').trim();
+        if (curUrl !== snap.url) return true;
+      } else if (curTab === 'lib') {
+        const curIcon = (document.getElementById('item-icon')?.value || '').trim();
+        if (curIcon !== snap.iconVal) return true;
+      }
+    } else {
+      if (curTab === 'text') {
+        const curText = (document.getElementById('icon-text-input')?.value || '').trim();
+        const curTextColor = (document.getElementById('icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
+        const curBgColor = (document.getElementById('icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
+        if (curText !== snap.text || curTextColor !== snap.textColor || curBgColor !== snap.bgColor) return true;
+      } else if (curTab === 'url') {
+        const curUrl = (document.getElementById('icon-url-input')?.value || '').trim();
+        if (curUrl !== snap.url) return true;
+      } else if (curTab === 'lib') {
+        const curIcon = (document.getElementById('item-icon')?.value || '').trim();
+        if (curIcon !== snap.iconVal) return true;
+      }
+    }
+    return false;
+  }
+}
+
+function revertIcon(scope) {
+  const snap = scope === 'setting' ? state.initialSettingIcon : state.initialModalIcon;
+  if (!snap) return;
+
+  if (scope === 'setting') {
+    const textInput = document.getElementById('setting-icon-text-input');
+    if (textInput) textInput.value = snap.text;
+    updateSettingTextColorUI(snap.textColor);
+    updateSettingBgColorUI(snap.bgColor);
+    const urlInput = document.getElementById('setting-icon-url-input');
+    if (urlInput) urlInput.value = snap.url;
+    const elIcon = document.getElementById('setting-portal-icon');
+    if (elIcon) elIcon.value = snap.iconVal;
+    setSettingIconTab(snap.tab);
+    const previewImg = document.getElementById('setting-icon-preview-img');
+    if (previewImg && snap.previewSrc) previewImg.src = snap.previewSrc;
+    renderIconLibraryGrid('setting');
+    checkSettingsDirty();
+  } else {
+    const textInput = document.getElementById('icon-text-input');
+    if (textInput) textInput.value = snap.text;
+    updateTextColorUI(snap.textColor);
+    updateBgColorUI(snap.bgColor);
+    const urlInput = document.getElementById('icon-url-input');
+    if (urlInput) urlInput.value = snap.url;
+    const elIcon = document.getElementById('item-icon');
+    if (elIcon) elIcon.value = snap.iconVal;
+    setIconModalTab(snap.tab);
+    const previewImg = document.getElementById('icon-preview-img');
+    if (previewImg && snap.previewSrc) previewImg.src = snap.previewSrc;
+    renderIconLibraryGrid('modal');
+  }
+}
+
 function initIconEditor() {
-  document.querySelectorAll('.icon-tab').forEach(tab => {
+  document.querySelectorAll('#modal-icon-tabs .icon-tab').forEach(tab => {
     tab.addEventListener('click', () => setIconModalTab(tab.dataset.iconTab));
   });
+
+  const btnToggle = document.getElementById('modal-btn-toggle-icon-edit');
+  if (btnToggle) {
+    btnToggle.addEventListener('click', () => expandIconPicker('modal'));
+  }
+
+  const btnCollapse = document.getElementById('modal-btn-collapse-icon');
+  if (btnCollapse) {
+    btnCollapse.addEventListener('click', () => handleCollapseClick('modal'));
+  }
+
+  const fileInput = document.getElementById('icon-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', () => handleUploadLibraryIcon('modal', fileInput));
+  }
 
   const textInput = document.getElementById('icon-text-input');
   if (textInput) {
@@ -2208,38 +2537,16 @@ function initIconEditor() {
     urlInput.addEventListener('input', () => {
       const val = urlInput.value.trim();
       const previewImg = document.getElementById('icon-preview-img');
-      const previewName = document.getElementById('icon-preview-name');
       if (!val) {
         if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-        if (previewName) previewName.textContent = '默认图标';
       } else {
         if (previewImg) {
           previewImg.src = val;
           previewImg.onerror = () => {
             previewImg.src = apiUrl('/default_item_icon.png');
-            if (previewName) previewName.textContent = '图片载入失败';
           };
         }
-        if (previewName) previewName.textContent = '网络图标';
       }
-    });
-  }
-
-  const btnReset = document.getElementById('btn-reset-icon');
-  if (btnReset) {
-    btnReset.addEventListener('click', () => {
-      document.getElementById('item-icon').value = '';
-      if (textInput) textInput.value = '';
-      if (urlInput) urlInput.value = '';
-      updateTextColorUI('#ffffff');
-      updateBgColorUI('#1e293b');
-      closeColorPopovers();
-      state.currentTextIconDataUrl = null;
-      const previewImg = document.getElementById('icon-preview-img');
-      const previewName = document.getElementById('icon-preview-name');
-      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-      if (previewName) previewName.textContent = '默认图标';
-      showToast('已恢复为默认图标', 'info');
     });
   }
 }
@@ -2255,8 +2562,6 @@ function setSettingIconTab(tabName) {
   });
 
   const previewImg = document.getElementById('setting-icon-preview-img');
-  const previewName = document.getElementById('setting-icon-preview-name');
-  const displayName = '把 Docker 放到桌面';
 
   if (tabName === 'text') {
     const text = document.getElementById('setting-icon-text-input')?.value || '';
@@ -2264,7 +2569,6 @@ function setSettingIconTab(tabName) {
       renderSettingTextIconCanvas();
     } else {
       if (previewImg) previewImg.src = apiUrl('/icon.png');
-      if (previewName) previewName.textContent = displayName;
     }
   } else if (tabName === 'url') {
     const url = document.getElementById('setting-icon-url-input')?.value.trim() || '';
@@ -2273,23 +2577,19 @@ function setSettingIconTab(tabName) {
         previewImg.src = url;
         previewImg.onerror = () => {
           previewImg.src = apiUrl('/icon.png');
-          if (previewName) previewName.textContent = '图片载入失败';
         };
       }
-      if (previewName) previewName.textContent = displayName;
     } else {
       if (previewImg) previewImg.src = apiUrl('/icon.png');
-      if (previewName) previewName.textContent = displayName;
     }
-  } else if (tabName === 'upload') {
+  } else if (tabName === 'lib' || tabName === 'upload') {
     const val = document.getElementById('setting-portal-icon')?.value.trim() || '';
     if (val && val !== 'icon.png') {
       if (previewImg) previewImg.src = getIconUrl(val);
-      if (previewName) previewName.textContent = displayName;
     } else {
       if (previewImg) previewImg.src = apiUrl('/icon.png');
-      if (previewName) previewName.textContent = displayName;
     }
+    renderIconLibraryGrid('setting');
   }
 }
 
@@ -2299,12 +2599,9 @@ function renderSettingTextIconCanvas() {
   const textColor = document.getElementById('setting-icon-text-color')?.value || '#ffffff';
   const bgColor = document.getElementById('setting-icon-bg-color')?.value || '#1e293b';
   const previewImg = document.getElementById('setting-icon-preview-img');
-  const previewName = document.getElementById('setting-icon-preview-name');
-  const displayName = '把 Docker 放到桌面';
 
   if (!text) {
     if (previewImg) previewImg.src = apiUrl('/icon.png');
-    if (previewName) previewName.textContent = displayName;
     state.currentSettingTextIconDataUrl = null;
     return;
   }
@@ -2385,7 +2682,6 @@ function renderSettingTextIconCanvas() {
   const dataUrl = canvas.toDataURL('image/png');
   state.currentSettingTextIconDataUrl = dataUrl;
   if (previewImg) previewImg.src = dataUrl;
-  if (previewName) previewName.textContent = displayName;
 }
 
 async function uploadSettingTextIconBlob() {
@@ -2498,6 +2794,21 @@ function initSettingIconEditor() {
     });
   });
 
+  const btnToggle = document.getElementById('setting-btn-toggle-icon-edit');
+  if (btnToggle) {
+    btnToggle.addEventListener('click', () => expandIconPicker('setting'));
+  }
+
+  const btnCollapse = document.getElementById('setting-btn-collapse-icon');
+  if (btnCollapse) {
+    btnCollapse.addEventListener('click', () => handleCollapseClick('setting'));
+  }
+
+  const fileInput = document.getElementById('setting-icon-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', () => handleUploadLibraryIcon('setting', fileInput));
+  }
+
   const textInput = document.getElementById('setting-icon-text-input');
   if (textInput) {
     textInput.addEventListener('input', () => {
@@ -2506,12 +2817,10 @@ function initSettingIconEditor() {
     });
   }
 
-  // Live update preview name when portal name input changes
+  // Live update portal name
   const nameInput = document.getElementById('setting-portal-name');
   if (nameInput) {
     nameInput.addEventListener('input', () => {
-      const previewName = document.getElementById('setting-icon-preview-name');
-      if (previewName) previewName.textContent = nameInput.value.trim() || '把 Docker 放到桌面';
       checkSettingsDirty();
     });
   }
@@ -2628,101 +2937,17 @@ function initSettingIconEditor() {
     urlInput.addEventListener('input', () => {
       const val = urlInput.value.trim();
       const previewImg = document.getElementById('setting-icon-preview-img');
-      const previewName = document.getElementById('setting-icon-preview-name');
-      const displayName = '把 Docker 放到桌面';
       if (!val) {
         if (previewImg) previewImg.src = apiUrl('/icon.png');
-        if (previewName) previewName.textContent = displayName;
       } else {
         if (previewImg) {
           previewImg.src = val;
           previewImg.onerror = () => {
             previewImg.src = apiUrl('/icon.png');
-            if (previewName) previewName.textContent = '图片载入失败';
           };
         }
-        if (previewName) previewName.textContent = displayName;
       }
       checkSettingsDirty();
-    });
-  }
-
-  const fileInput = document.getElementById('setting-icon-file-input');
-  if (fileInput) {
-    fileInput.addEventListener('change', async (e) => {
-      const originalFile = e.target.files[0];
-      if (!originalFile) return;
-
-      if (originalFile.size > 10 * 1024 * 1024) {
-        showToast('上传图标文件不能超过 10MB', 'error');
-        e.target.value = '';
-        return;
-      }
-
-      const elIcon = document.getElementById('setting-portal-icon');
-      const imgEl = document.getElementById('setting-icon-preview-img');
-      const statusEl = document.getElementById('setting-icon-upload-status');
-
-      if (statusEl) statusEl.textContent = '正在处理并上传图标...';
-
-      let file = originalFile;
-      try {
-        file = await compressIconFile(originalFile, 256);
-      } catch (err) {
-        showToast(err.message, 'error');
-        if (statusEl) statusEl.textContent = '上传失败';
-        e.target.value = '';
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('icon', file);
-
-      try {
-        const res = await fetch(apiUrl('/api/icons/upload'), {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await res.json();
-        if (res.ok && data.url) {
-          if (elIcon) elIcon.value = data.url;
-          if (imgEl) imgEl.src = apiUrl(data.url);
-          if (statusEl) statusEl.textContent = `已选择: ${file.name}`;
-          checkSettingsDirty();
-          showToast(`自身桌面图标「${file.name}」上传成功`, 'success');
-        } else {
-          if (statusEl) statusEl.textContent = '上传失败';
-          showToast(data.error || '上传图标失败', 'error');
-        }
-      } catch (err) {
-        if (statusEl) statusEl.textContent = '网络异常';
-        showToast('上传图标网络异常: ' + err.message, 'error');
-      }
-    });
-  }
-
-  const btnReset = document.getElementById('setting-btn-reset-icon');
-  if (btnReset) {
-    btnReset.addEventListener('click', () => {
-      const elSettingIcon = document.getElementById('setting-portal-icon');
-      if (elSettingIcon) elSettingIcon.value = 'icon.png';
-      if (textInput) textInput.value = '';
-      if (urlInput) urlInput.value = '';
-      const statusEl = document.getElementById('setting-icon-upload-status');
-      if (statusEl) statusEl.textContent = '支持 PNG、JPG、SVG、ICO 格式（限 10MB 内，位图自动压缩）';
-      const fileInp = document.getElementById('setting-icon-file-input');
-      if (fileInp) fileInp.value = '';
-      updateSettingTextColorUI('#ffffff');
-      updateSettingBgColorUI('#1e293b');
-      closeSettingColorPopovers();
-      state.currentSettingTextIconDataUrl = null;
-      const previewImg = document.getElementById('setting-icon-preview-img');
-      const previewName = document.getElementById('setting-icon-preview-name');
-      if (previewImg) previewImg.src = apiUrl('/icon.png?t=' + Date.now());
-      if (previewName) previewName.textContent = '把 Docker 放到桌面';
-      setSettingIconTab('upload');
-      checkSettingsDirty();
-      showToast('已恢复为默认图标，请点击下方「保存」生效', 'info');
     });
   }
 }
@@ -2766,13 +2991,11 @@ function resetDesktopForm() {
 
   const urlInput = document.getElementById('icon-url-input');
   if (urlInput) urlInput.value = '';
-  const uploadStatus = document.getElementById('icon-upload-status');
-  if (uploadStatus) uploadStatus.textContent = '支持 PNG、JPG、SVG、ICO 格式（限 10MB 内，位图自动压缩）';
   state.currentTextIconDataUrl = null;
   setIconModalTab('text');
 
-  document.getElementById('icon-preview-img').src = apiUrl('/default_item_icon.png');
-  document.getElementById('icon-preview-name').textContent = '默认图标';
+  const previewImg = document.getElementById('icon-preview-img');
+  if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
   document.getElementById('desktop-modal-title').textContent = '添加桌面图标';
   const btnSaveAsNew = document.getElementById('btn-save-as-new');
   if (btnSaveAsNew) btnSaveAsNew.style.display = 'none';
@@ -2794,6 +3017,8 @@ function resetDesktopForm() {
   if (chkNoDisplay) chkNoDisplay.checked = false;
 
   setDesktopModalMode('local');
+  collapseIconPicker('modal');
+  saveIconSnapshot('modal');
 }
 
 function openCreateDesktopModalWithPort(port, name, containerName, image) {
@@ -2841,13 +3066,13 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
         imgEl.src = apiUrl('/default_item_icon.png');
         if (urlInput) urlInput.value = '';
         if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
-        document.getElementById('icon-preview-name').textContent = '默认快捷方式图标';
       };
-      document.getElementById('icon-preview-name').textContent = `${cleanName}.png (官方推荐)`;
     }
   }
 
   setDesktopModalMode('local');
+  collapseIconPicker('modal');
+  saveIconSnapshot('modal');
   openModal('modal-desktop-item');
   saveDesktopItemFormSnapshot();
 }
@@ -2901,6 +3126,7 @@ function openEditDesktopModal(id) {
     btnDel.onclick = async () => {
       if (!confirm(`确定从飞牛桌面移出图标「${item.name}」吗？`)) return;
       state.desktopItemFormSnapshot = null;
+      state.initialModalIcon = null;
       closeModal('modal-desktop-item');
 
       reportClientLog('action', '用户确认移出桌面图标', `移出图标: ${item.name} (ID: ${id}, 包名: ${item.app_name})`, { id, name: item.name, app_name: item.app_name });
@@ -2965,17 +3191,11 @@ function openEditDesktopModal(id) {
   }
 
   // Restore icon settings based on stored icon_type and metadata
-  const itemIconType = item.icon_type || (item.icon && (item.icon.includes('text-icon-') ? 'text' : (item.icon.startsWith('http://') || item.icon.startsWith('https://') ? 'url' : 'upload'))) || 'text';
+  const itemIconType = item.icon_type || (item.icon && (item.icon.includes('text-icon-') ? 'text' : (item.icon.startsWith('http://') || item.icon.startsWith('https://') ? 'url' : 'lib'))) || 'text';
 
   const textInput = document.getElementById('icon-text-input');
   const urlInput = document.getElementById('icon-url-input');
-  const textColorInput = document.getElementById('icon-text-color');
-  const textColorHex = document.getElementById('icon-text-color-hex');
-  const bgColorInput = document.getElementById('icon-bg-color');
-  const bgColorHex = document.getElementById('icon-bg-color-hex');
-  const uploadStatus = document.getElementById('icon-upload-status');
   const previewImg = document.getElementById('icon-preview-img');
-  const previewName = document.getElementById('icon-preview-name');
 
   if (itemIconType === 'text') {
     setIconModalTab('text');
@@ -2990,7 +3210,6 @@ function openEditDesktopModal(id) {
       renderTextIconCanvas();
     } else if (item.icon) {
       if (previewImg) previewImg.src = getIconUrl(item.icon);
-      if (previewName) previewName.textContent = item.icon.split('/').pop();
     } else {
       renderTextIconCanvas();
     }
@@ -3001,24 +3220,21 @@ function openEditDesktopModal(id) {
       previewImg.src = getIconUrl(item.icon);
       previewImg.onerror = () => {
         previewImg.src = apiUrl('/default_item_icon.png');
-        if (previewName) previewName.textContent = '图片载入失败';
       };
     }
-    if (previewName) previewName.textContent = item.icon ? '网络图标' : '默认图标';
-  } else if (itemIconType === 'upload') {
-    setIconModalTab('upload');
+  } else {
+    setIconModalTab('lib');
     document.getElementById('item-icon').value = item.icon || '';
-    if (uploadStatus) uploadStatus.textContent = item.icon ? `已使用: ${item.icon}` : '支持 PNG、JPG、SVG、ICO 格式';
     if (previewImg) {
       previewImg.src = getIconUrl(item.icon);
       previewImg.onerror = () => {
         previewImg.src = apiUrl('/default_item_icon.png');
-        if (previewName) previewName.textContent = '图片载入失败';
       };
     }
-    if (previewName) previewName.textContent = item.icon ? item.icon.split('/').pop() : '默认图标';
   }
 
+  collapseIconPicker('modal');
+  saveIconSnapshot('modal');
   openModal('modal-desktop-item');
   saveDesktopItemFormSnapshot();
 }
@@ -3131,9 +3347,13 @@ async function handleSaveDesktopItem(e) {
     } else if (state.activeIconTab === 'url') {
       iconType = 'url';
       icon = (document.getElementById('icon-url-input')?.value || '').trim();
-    } else if (state.activeIconTab === 'upload') {
+    } else if (state.activeIconTab === 'lib' || state.activeIconTab === 'upload') {
       iconType = 'upload';
       icon = (document.getElementById('item-icon')?.value || '').trim();
+    }
+
+    if (!icon && !iconText && state.initialModalIcon) {
+      icon = state.initialModalIcon.iconVal || '';
     }
     const appNameInput = document.getElementById('item-app-name');
     const appName = appNameInput ? appNameInput.value.trim() : '';
@@ -3240,6 +3460,8 @@ async function handleSaveDesktopItem(e) {
 
     // Close modal immediately and clear snapshot so closing won't prompt
     state.desktopItemFormSnapshot = null;
+    state.initialModalIcon = null;
+    collapseIconPicker('modal');
     closeModal('modal-desktop-item');
 
     // Update in-memory state FIRST so table and badges have it before any tab switch or fetch
@@ -3460,64 +3682,14 @@ async function compressIconFile(file, maxSize = 256) {
   });
 }
 
-async function handleIconUpload(e) {
-  const originalFile = e.target.files[0];
-  if (!originalFile) return;
-
-  if (originalFile.size > 10 * 1024 * 1024) {
-    showToast('上传图标文件不能超过 10MB', 'error');
-    e.target.value = '';
-    return;
-  }
-
-  const elIcon = document.getElementById('item-icon');
-  const imgEl = document.getElementById('icon-preview-img');
-  const nameEl = document.getElementById('icon-preview-name');
-
-  if (nameEl) nameEl.textContent = '正在处理并上传图标...';
-
-  let file = originalFile;
-  try {
-    file = await compressIconFile(originalFile, 256);
-  } catch (err) {
-    showToast(err.message, 'error');
-    if (nameEl) nameEl.textContent = '上传失败';
-    e.target.value = '';
-    return;
-  }
-
-  reportClientLog('action', '用户上传本地图标文件', `文件名: ${file.name}, 大小: ${file.size}字节`, { name: file.name, size: file.size, type: file.type });
-
-  const formData = new FormData();
-  formData.append('icon', file);
-
-  try {
-    const res = await fetch(apiUrl('/api/icons/upload'), {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-    if (res.ok && data.url) {
-      if (elIcon) elIcon.value = data.url;
-      if (imgEl) imgEl.src = apiUrl(data.url);
-      if (nameEl) nameEl.textContent = file.name;
-      showToast(`本地图标「${file.name}」已成功保存`, 'success');
-    } else {
-      if (nameEl) nameEl.textContent = '上传失败';
-      showToast(data.error || '上传图标失败', 'error');
-    }
-  } catch (err) {
-    if (nameEl) nameEl.textContent = '网络异常';
-    showToast('上传图标网络异常: ' + err.message, 'error');
-  }
-}
-
 function handleCancelSettings() {
   if (state.isSettingsDirty) {
     if (!confirm('当前设置有未保存的修改，确定要放弃修改并恢复吗？')) {
       return;
     }
   }
+  revertIcon('setting');
+  collapseIconPicker('setting');
   updateSettingsForm();
 }
 
@@ -3535,7 +3707,7 @@ async function handleSaveSettingsManual() {
 
   let icon = '';
   const activeTabEl = document.querySelector('#setting-icon-tabs .icon-tab.active');
-  let iconType = activeTabEl?.dataset.settingIconTab || state.activeSettingIconTab || 'upload';
+  let iconType = activeTabEl?.dataset.settingIconTab || state.activeSettingIconTab || 'lib';
   let iconText = '';
   let iconTextColor = '';
   let iconBgColor = '';
@@ -3555,7 +3727,7 @@ async function handleSaveSettingsManual() {
     }
   } else if (iconType === 'url') {
     icon = (document.getElementById('setting-icon-url-input')?.value || '').trim();
-  } else if (iconType === 'upload') {
+  } else if (iconType === 'lib' || iconType === 'upload') {
     icon = (document.getElementById('setting-portal-icon')?.value || '').trim() || 'icon.png';
   }
 
@@ -3605,12 +3777,14 @@ async function handleSaveSettingsManual() {
         portal_icon_text_color: payload.portal_icon_text_color,
         portal_icon_bg_color: payload.portal_icon_bg_color,
       };
+      collapseIconPicker('setting');
+      saveIconSnapshot('setting');
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.18';
+        const ver = state.settings?.version || '1.1.23';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -71,77 +73,136 @@ type dockerContainerJSON struct {
 	Mounts []dockerContainerMount `json:"Mounts"`
 }
 
-func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
-	if !strings.HasPrefix(iconVal, "file://") {
-		return ""
-	}
-	clean := strings.TrimPrefix(iconVal, "file://")
-	clean = strings.TrimPrefix(clean, "./")
-	clean = strings.TrimPrefix(clean, "/")
+// ResolveWatchcowIconPath resolves a file:// or remote URL icon into a local filesystem path if available.
+func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
+	if strings.HasPrefix(iconVal, "file://") {
+		clean := strings.TrimPrefix(iconVal, "file://")
+		clean = strings.TrimPrefix(clean, "./")
+		clean = strings.TrimPrefix(clean, "/")
 
-	// 1. Host absolute path
-	if strings.HasPrefix(iconVal, "file:///") {
-		absPath := strings.TrimPrefix(iconVal, "file://")
-		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
-			return absPath
-		}
-	}
-
-	// 2. Compose workingDir
-	if workingDir != "" {
-		cand := filepath.Join(workingDir, clean)
-		if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-			return cand
-		}
-	}
-
-	baseName := filepath.Base(clean)
-
-	// 3. Mount sources and common variations
-	for _, m := range mounts {
-		if m.Source == "" {
-			continue
-		}
-		sources := []string{
-			m.Source,
-			m.Source + "-proxy",
-			m.Source + "-portal",
-		}
-		for _, s := range sources {
-			candidates := []string{
-				filepath.Join(s, clean),
-				filepath.Join(s, "icons", baseName),
-				filepath.Join(s, baseName),
+		// 1. Host absolute path
+		if strings.HasPrefix(iconVal, "file:///") {
+			absPath := strings.TrimPrefix(iconVal, "file://")
+			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+				return absPath
 			}
-			for _, cand := range candidates {
-				if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-					return cand
+		}
+
+		// 2. Compose workingDir
+		if workingDir != "" {
+			cand := filepath.Join(workingDir, clean)
+			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+				return cand
+			}
+		}
+
+		baseName := filepath.Base(clean)
+
+		// 3. Mount sources, variations, and sibling directories
+		for _, m := range mounts {
+			if m.Source == "" {
+				continue
+			}
+			sources := []string{
+				m.Source,
+				m.Source + "-proxy",
+				m.Source + "-portal",
+			}
+			for _, s := range sources {
+				candidates := []string{
+					filepath.Join(s, clean),
+					filepath.Join(s, "icons", baseName),
+					filepath.Join(s, baseName),
+				}
+				for _, cand := range candidates {
+					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+						return cand
+					}
+				}
+			}
+
+			// Sibling directories of mount source
+			parent := filepath.Dir(m.Source)
+			if parent != "" && parent != "/" && parent != "." {
+				globPatterns := []string{
+					filepath.Join(parent, "*", "icons", baseName),
+					filepath.Join(parent, "*", clean),
+					filepath.Join(parent, "*", baseName),
+					filepath.Join(parent, "*", "README.assets", baseName),
+				}
+				for _, pat := range globPatterns {
+					matches, _ := filepath.Glob(pat)
+					for _, match := range matches {
+						if info, err := os.Stat(match); err == nil && !info.IsDir() {
+							return match
+						}
+					}
+				}
+			}
+		}
+
+		// 4. Common host storage locations
+		commonBases := []string{
+			"/home",
+			"/home/net67373",
+			"/vol1",
+			"/vol1/1000/docker",
+			"/var/apps",
+		}
+		for _, b := range commonBases {
+			globPatterns := []string{
+				filepath.Join(b, "*", "icons", baseName),
+				filepath.Join(b, "*", clean),
+				filepath.Join(b, "*", "README.assets", baseName),
+				filepath.Join(b, "*", "*", "icons", baseName),
+			}
+			for _, pat := range globPatterns {
+				matches, _ := filepath.Glob(pat)
+				for _, match := range matches {
+					if info, err := os.Stat(match); err == nil && !info.IsDir() {
+						return match
+					}
+				}
+			}
+		}
+	} else if strings.HasPrefix(iconVal, "http://") || strings.HasPrefix(iconVal, "https://") {
+		// Even for HTTP/HTTPS URLs (like raw.githubusercontent.com/.../icon_circle.png),
+		// check if the file is cloned or stored locally on the host
+		u, err := url.Parse(iconVal)
+		if err == nil {
+			baseName := filepath.Base(u.Path)
+			if baseName != "" && baseName != "/" && baseName != "." {
+				commonBases := []string{
+					"/home",
+					"/home/net67373",
+					"/vol1",
+					"/var/apps",
+				}
+				for _, b := range commonBases {
+					globPatterns := []string{
+						filepath.Join(b, "*", "README.assets", baseName),
+						filepath.Join(b, "*", "icons", baseName),
+						filepath.Join(b, "*", "*", "icons", baseName),
+						filepath.Join(b, "*", baseName),
+					}
+					for _, pat := range globPatterns {
+						matches, _ := filepath.Glob(pat)
+						for _, match := range matches {
+							if info, err := os.Stat(match); err == nil && !info.IsDir() {
+								return match
+							}
+						}
+					}
 				}
 			}
 		}
 	}
 
-	// 4. Common host storage locations
-	commonBases := []string{
-		"/home/net67373",
-		"/vol1/1000/docker",
-		"/var/apps",
-	}
-	for _, b := range commonBases {
-		candidates := []string{
-			filepath.Join(b, "watchcow-proxy", "icons", baseName),
-			filepath.Join(b, "watchcow", "icons", baseName),
-			filepath.Join(b, "watchcow", "README.assets", baseName),
-			filepath.Join(b, "wild-live-bgm", "icons", baseName),
-		}
-		for _, cand := range candidates {
-			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-				return cand
-			}
-		}
-	}
-
 	return ""
+}
+
+func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
+	return ResolveWatchcowIconPath(iconVal, workingDir, mounts)
 }
 
 // DeriveDockLabelAppName generates an isolated fnOS package name within our app's namespace (fndocker.dock-*)
@@ -183,6 +244,24 @@ var (
 	dockLabelClient     *http.Client
 )
 
+func getDockerSocketPathLocked() string {
+	if _, err := os.Stat(dockLabelDockerSock); err == nil {
+		return dockLabelDockerSock
+	}
+	for _, cand := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
+		if _, err := os.Stat(cand); err == nil {
+			return cand
+		}
+	}
+	return dockLabelDockerSock
+}
+
+func getDockerSocketPath() string {
+	dockLabelMu.RLock()
+	defer dockLabelMu.RUnlock()
+	return getDockerSocketPathLocked()
+}
+
 // SetDockLabelDockerSocketPath allows overriding the docker socket path for testing.
 func SetDockLabelDockerSocketPath(path string) {
 	dockLabelMu.Lock()
@@ -200,7 +279,7 @@ func getDockLabelDockerClient() *http.Client {
 	dockLabelMu.Lock()
 	defer dockLabelMu.Unlock()
 	if dockLabelClient == nil {
-		sock := dockLabelDockerSock
+		sock := getDockerSocketPathLocked()
 		dockLabelClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -219,30 +298,37 @@ func getDockLabelDockerClient() *http.Client {
 
 // ScanDockLabelItems queries docker containers and parses any configured container labels (e.g. watchcow.* labels).
 func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool) ([]DockLabelItem, error) {
-	if _, err := os.Stat(dockLabelDockerSock); err != nil {
+	sock := getDockerSocketPath()
+	if _, err := os.Stat(sock); err != nil {
+		slog.Warn("[DOCKLABEL] Docker unix socket 不存在，跳过容器标签扫描", "sock", sock)
 		return nil, nil
 	}
 
 	client := getDockLabelDockerClient()
 	resp, err := client.Get("http://localhost/containers/json")
 	if err != nil {
+		slog.Warn("[DOCKLABEL] 调用 Docker API GET /containers/json 失败", "sock", sock, "error", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		slog.Warn("[DOCKLABEL] Docker API 返回非 200 状态码", "status", resp.StatusCode)
 		return nil, fmt.Errorf("docker API returned status %d", resp.StatusCode)
 	}
 
 	var rawContainers []dockerContainerJSON
 	if err := json.NewDecoder(resp.Body).Decode(&rawContainers); err != nil {
+		slog.Warn("[DOCKLABEL] 解码 Docker 容器列表 JSON 失败", "error", err)
 		return nil, err
 	}
 
 	var results []DockLabelItem
 
 	for _, c := range rawContainers {
-		if c.State != "" && c.State != "running" {
+		st := strings.ToLower(strings.TrimSpace(c.State))
+		status := strings.ToLower(strings.TrimSpace(c.Status))
+		if st != "" && st != "running" && !strings.HasPrefix(status, "up") {
 			continue
 		}
 		labels := c.Labels
@@ -530,7 +616,7 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 			})
 		}
 	}
-
+	slog.Info("[DOCKLABEL] 容器标签扫描完成", "containersCount", len(rawContainers), "matchedCount", len(results))
 	return results, nil
 }
 

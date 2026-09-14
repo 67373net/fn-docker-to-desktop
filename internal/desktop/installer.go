@@ -793,9 +793,9 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		}
 		if !i.isAppInstalled(appName) {
 			missing = append(missing, item)
-			i.reconcileStatus[item.ID] = "排队恢复中..."
+			i.reconcileStatus[item.ID] = "排队中..."
 			if appName != "" {
-				i.reconcileStatus[appName] = "排队恢复中..."
+				i.reconcileStatus[appName] = "排队中..."
 			}
 		}
 	}
@@ -813,7 +813,7 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 			appName = i.DeriveAppName(item)
 		}
 
-		progressText := fmt.Sprintf("恢复中 (%d/%d)...", idx+1, total)
+		progressText := "恢复中..."
 		i.mu.Lock()
 		i.reconcileStatus[item.ID] = progressText
 		if appName != "" {

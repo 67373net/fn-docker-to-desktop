@@ -16,12 +16,29 @@ mkdir -p "${FNOS_APP_DIR}/config"
 mkdir -p "${FNOS_APP_DIR}/wizard"
 
 if [ -f "${ROOT_DIR}/icon.png" ]; then
-  echo "--> 正在同步根目录权威高清产品图标至 web/ 与 fnos-app/ ..."
-  cp "${ROOT_DIR}/icon.png" "${ROOT_DIR}/web/icon.png"
-  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON.PNG"
-  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON_256.PNG"
-  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-64.png"
-  cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-256.png"
+  echo "--> 正在同步并生成各尺寸官方规范图标至 web/ 与 fnos-app/ (64x64, 256x256)..."
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import PIL" 2>/dev/null; then
+    python3 -c "from PIL import Image
+src = Image.open('${ROOT_DIR}/icon.png').convert('RGBA')
+img64 = src.resize((64, 64), Image.Resampling.LANCZOS)
+img256 = src.resize((256, 256), Image.Resampling.LANCZOS)
+img64.save('${FNOS_APP_DIR}/ICON.PNG', 'PNG')
+img256.save('${FNOS_APP_DIR}/ICON_256.PNG', 'PNG')
+img64.save('${FNOS_APP_DIR}/app/ui/images/icon-64.png', 'PNG')
+img256.save('${FNOS_APP_DIR}/app/ui/images/icon-256.png', 'PNG')
+img256.save('${FNOS_APP_DIR}/app/ui/images/icon-{0}.png', 'PNG')
+img256.save('${FNOS_APP_DIR}/app/ui/images/icon.png', 'PNG')
+img256.save('${ROOT_DIR}/web/icon.png', 'PNG')
+"
+  else
+    cp "${ROOT_DIR}/icon.png" "${ROOT_DIR}/web/icon.png"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON.PNG"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/ICON_256.PNG"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-64.png"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-256.png"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon-{0}.png"
+    cp "${ROOT_DIR}/icon.png" "${FNOS_APP_DIR}/app/ui/images/icon.png"
+  fi
 fi
 
 # 2. 编译 Linux 原生二进制

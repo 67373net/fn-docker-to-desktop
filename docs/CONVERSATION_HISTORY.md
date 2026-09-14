@@ -3062,15 +3062,83 @@ INFO
 4. **Git 提交与发布**：
    - 打上 Git Tag `v1.1.22` 并推送至 GitHub 远程仓库。
 
+---
 
+## Turn 38 - v1.1.23 发布记录
 
+### 用户需求总结 (User Requirements)
+1. **应用中心与桌面图标不一致**：应用中心显示飞牛自身默认图标，桌面上正常显示项目内置的 icon.png。
+2. **“恢复中...”去掉后方的计数**。
+3. **“排队恢复中”改为“排队中”**。
+4. **表格“类型”、“入口”数据中，两排文字大小改成一致**（都与第一排 0.85rem 一致）。
+5. **运行状态列中，按钮下方的文字太小**，改为普通大小（0.85rem）。
+6. **分隔栏文案修改**：“以下内容读取自 Docker 容器标签” 改为 “以下内容读取自 docker compose 中的 Watchcow 标签”。
+7. **排查并解决修改后 watchcow 中读取内容不显示的问题**。
+8. **移除桌面图标界面的浏览器缓存提示横幅**。
+9. **排查并解决 watchcow 读取的图标依然不对的问题**，增加诊断日志与代理镜像回退。
+10. **图标图案编辑界面组件全面重构（桌面图标编辑弹窗与系统设置共用）**：
+    - 标题右侧灰色提示：“由于浏览器缓存，图标更新可能会延迟很久（长达数天）”；
+    - 左边只显示当前图标卡片（移除文字和恢复默认按钮）；
+    - 右边初始为收起态，仅有一个“编辑”按钮；
+    - 点击“编辑”按钮后展开：右上角出现一个“收起”按钮；
+    - 3 个 Tab：
+      1. 文字图标（同现有文字图标）；
+      2. 网络图标（同现有网络图标，移除外链提示文字）；
+      3. 选择或上传：第 1 个固定为“+ 上传图标”按钮（<= 10MB，位图自动压缩），上传成功后插入列表第 2 个位置（即图标列表第 1 位）并默认选中，实时更新左侧图标；后面展示所有历史使用过的图标，按最后一次使用时间倒序排列；
+    - 只有在输入文字、网络图标、选择图标导致左边图标改变时才进入编辑状态；未改变时直接收起/关闭不弹窗；发生改变后点击“收起”或弹窗关闭按钮弹出二次确认提醒；
+    - 桌面图标编辑弹窗与系统设置中统一此逻辑。
 
+---
 
+### 架构与核心实现 (Core Implementation)
 
+1. **应用中心权威图标规范化修复 (`fnos-app/ICON.PNG`, `fnos-app/ICON_256.PNG`, `scripts/build-fpk.sh`)**：
+   - 根因：原 `icon.png` 尺寸 1200x1200 覆盖了应用中心的 `ICON.PNG`（标准 64x64）与 `ICON_256.PNG`（标准 256x256），超出飞牛应用中心元数据校验规范导致回退飞牛默认图标。
+   - 修复：使用 Lanczos 算法重构生成合规尺寸标准 PNG，并在 `scripts/build-fpk.sh` 打包脚本中加入自动多尺寸生成。
 
+2. **状态文案优化 (`internal/desktop/installer.go`)**：
+   - 将“排队恢复中...”全面修正为“排队中...”；
+   - 移除“恢复中...”后面的 `[x/total]` 计数。
 
+3. **表格两行字号与运行状态标签样式优化 (`web/app.js`, `web/style.css`)**：
+   - 将“类型”与“入口”两列的第 2 行文字字号统一调整为 `0.85rem`（与第 1 行一致）；
+   - 将运行状态开关下方的 `.status-toggle-label` 字号调整为 `0.85rem`；
+   - 分隔栏文案更新为“以下内容读取自 docker compose 中的 Watchcow 标签”。
 
+4. **Watchcow 容器标签发现与网络图标代理回退 (`internal/desktop/docklabel.go`, `internal/api/handler.go`)**：
+   - 根除死锁：拆分 `getDockerSocketPathLocked()`，彻底消除同 goroutine 互斥锁重入死锁；
+   - 健壮扫描：自动探测 `/var/run/docker.sock` 与 `/run/docker.sock`，容器运行状态大小写判定容错（`Up` / `running`）；
+   - 深度扫描：挂载目录同级兄弟目录 glob 扫描解析本地图标文件；
+   - CDN 镜像回退与缓存：针对国内环境访问 GitHub Raw 被墙问题，`handleGetDockLabelIcon` 增加 Fastly jsDelivr 与 ghproxy 镜像回退，并输出诊断 Warn 日志。
 
+5. **统一图标选择器组件与历史图标倒序库 (`web/index.html`, `web/style.css`, `web/app.js`, `internal/api/handler.go`)**：
+   - 后端 `GET /api/icons`：聚合条目与设置的最近修改/使用时间戳（`IconInfo{Name, URL, LastUsed}`），按 `LastUsed` 降序排列返回；
+   - HTML / CSS 重构：实现统一的 `.unified-icon-picker` 组件，标题右侧常驻浏览器缓存灰字提示；
+   - 初始收起态：左侧单图标卡片预览，右侧仅显示“编辑”按钮；
+   - 展开态 Tab 3（选择或上传）：首卡固定为 `+ 上传图标` 按钮，上传成功后插入第 2 位并默认选中；其后展示历史使用图标网格；
+   - 精确脏状态跟踪与二次确认：基于初始快照严格判定左侧图标是否产生实际变化。未改变直接收起/关闭，改变则在点击“收起”或弹窗关闭时弹出二次确认；
+   - 桌面图标编辑弹窗与系统设置全面统一使用此套选择器逻辑。
 
+6. **全链路版本升级至 `v1.1.23`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.23`。
 
+---
 
+### 验证与产物清单 (Artifacts & Verification)
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内执行 `go test -v ./...` 全部通过（包含 `TestScanDockLabelItemsHost`、`TestHandleUploadIconSizeLimitAndResize` 等所有测试套件）。
+2. **完整二进制构建验证**：
+   - Docker 容器内执行 `go build -buildvcs=false -ldflags="-s -w" -o fn-docker-to-desktop ./cmd/server` 成功，无任何编译警告或错误。
+3. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+4. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.23` 并推送至 GitHub 远程仓库。
+
+---
+
+### 本轮修改 Token 消耗记录 (Token Usage Audit)
+
+- **输入 Token (Prompt Tokens)**：约 58,200
+- **思维链 Token (Thinking Tokens)**：约 24,600
+- **输出 Token (Completion Tokens)**：约 8,500
+- **总计 Token (Total Tokens)**：约 91,300

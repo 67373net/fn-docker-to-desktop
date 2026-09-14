@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1149,16 +1150,80 @@ func (h *Handler) handleGetAvailablePort(w http.ResponseWriter, r *http.Request)
 	h.jsonResponse(w, r, map[string]int{"recommended_port": recommended}, http.StatusOK)
 }
 
+// IconInfo represents icon metadata in the icon library.
+type IconInfo struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	LastUsed int64  `json:"last_used"`
+}
+
 // /api/icons
 func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 	files, err := os.ReadDir(h.iconsDir)
-	var list []string
-	if err == nil {
-		for _, f := range files {
-			if !f.IsDir() {
-				list = append(list, f.Name())
+	if err != nil {
+		h.jsonResponse(w, r, []IconInfo{}, http.StatusOK)
+		return
+	}
+
+	usageMap := make(map[string]int64)
+	if h.storage != nil {
+		items := h.storage.GetAllItems()
+		for _, it := range items {
+			clean := strings.TrimPrefix(it.Icon, "/icons/")
+			clean = strings.TrimPrefix(clean, "icons/")
+			ts := it.UpdatedAt.Unix()
+			if ts <= 0 {
+				ts = it.CreatedAt.Unix()
+			}
+			if ts > usageMap[clean] {
+				usageMap[clean] = ts
 			}
 		}
+		sett := h.storage.GetSettings()
+		cleanSett := strings.TrimPrefix(sett.PortalIcon, "/icons/")
+		cleanSett = strings.TrimPrefix(cleanSett, "icons/")
+		if usageMap[cleanSett] == 0 {
+			usageMap[cleanSett] = time.Now().Unix()
+		}
+	}
+
+	var list []IconInfo
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		name := f.Name()
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "dock_cache_") || strings.HasPrefix(name, "wc_cache_") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".svg" && ext != ".ico" {
+			continue
+		}
+
+		var lastUsed int64
+		if ts, ok := usageMap[name]; ok && ts > 0 {
+			lastUsed = ts
+		} else if info, err := f.Info(); err == nil {
+			lastUsed = info.ModTime().Unix()
+		}
+
+		list = append(list, IconInfo{
+			Name:     name,
+			URL:      "/icons/" + name,
+			LastUsed: lastUsed,
+		})
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].LastUsed != list[j].LastUsed {
+			return list[i].LastUsed > list[j].LastUsed
+		}
+		return list[i].Name < list[j].Name
+	})
+
+	if list == nil {
+		list = []IconInfo{}
 	}
 	h.jsonResponse(w, r, list, http.StatusOK)
 }
@@ -2034,7 +2099,19 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 2. If Icon is a local icons directory reference
+	// 2. Try dynamic resolution on host if LocalIconPath was empty or moved
+	if found.Icon != "" {
+		resolved := desktop.ResolveWatchcowIconPath(found.Icon, "", nil)
+		if resolved != "" {
+			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				http.ServeFile(w, r, resolved)
+				return
+			}
+		}
+	}
+
+	// 3. If Icon is a local icons directory reference
 	if found.Icon != "" {
 		if strings.HasPrefix(found.Icon, "/icons/") || strings.HasPrefix(found.Icon, "icons/") {
 			rel := strings.TrimPrefix(strings.TrimPrefix(found.Icon, "/icons/"), "icons/")
@@ -2047,7 +2124,7 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 3. If Icon is an HTTP/HTTPS URL, proxy and cache
+	// 4. If Icon is an HTTP/HTTPS URL, proxy and cache
 	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
 		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.Icon)))
 		ext := filepath.Ext(found.Icon)
@@ -2066,9 +2143,25 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, found.Icon, nil)
-		if err == nil {
+		// Build URL candidates (prefer CDN mirrors for raw.githubusercontent.com)
+		urlCandidates := []string{}
+		if strings.HasPrefix(found.Icon, "https://raw.githubusercontent.com/") {
+			cleanRaw := strings.TrimPrefix(found.Icon, "https://raw.githubusercontent.com/")
+			parts := strings.SplitN(cleanRaw, "/", 4)
+			if len(parts) == 4 {
+				jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+				urlCandidates = append(urlCandidates, jsDelivrURL)
+			}
+			urlCandidates = append(urlCandidates, "https://ghproxy.net/"+found.Icon)
+		}
+		urlCandidates = append(urlCandidates, found.Icon)
+
+		client := &http.Client{Timeout: 6 * time.Second}
+		for _, targetURL := range urlCandidates {
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+			if err != nil {
+				continue
+			}
 			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; fn-docker-to-desktop)")
 			resp, err := client.Do(req)
 			if err == nil && resp.StatusCode == http.StatusOK {
@@ -2084,12 +2177,19 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 					w.Header().Set("Cache-Control", "public, max-age=86400")
 					w.WriteHeader(http.StatusOK)
 					w.Write(data)
+					slog.Info("[DOCKLABEL-ICON] 远端图标下载并缓存成功", "id", id, "from", targetURL, "size", len(data))
 					return
 				}
 			}
 		}
 	}
 
-	// 4. Fallback to default icon
+	// 5. Fallback to default icon with clear diagnostic logging
+	slog.Warn("[DOCKLABEL-ICON] 无法加载 Docker 容器标签图标，回退至系统默认图标",
+		"id", id,
+		"name", found.Name,
+		"iconVal", found.Icon,
+		"localIconPath", found.LocalIconPath,
+	)
 	h.serveDefaultItemIcon(w, r)
 }

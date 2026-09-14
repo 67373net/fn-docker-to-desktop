@@ -483,7 +483,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.22",
+		AppVersion: "1.1.23",
 	})
 
 	mux := http.NewServeMux()

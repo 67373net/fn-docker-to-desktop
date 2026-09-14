@@ -719,7 +719,7 @@ table.data-table td.filler-col {
 }
 
 .status-toggle-label {
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 500;
   line-height: 1;
 }
@@ -1498,7 +1498,174 @@ tr.row-updating {
   margin-right: auto;
 }
 
-/* ==================== Icon Editor 3-Tabs Layout ==================== */
+/* ==================== Unified Icon Picker Component ==================== */
+.icon-form-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.icon-cache-hint {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--text-muted);
+}
+.unified-icon-picker {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+.icon-picker-left {
+  width: 80px;
+  flex-shrink: 0;
+}
+.current-icon-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px;
+}
+.current-icon-card img,
+.current-icon-img {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+}
+.icon-picker-right {
+  flex: 1;
+  min-width: 0;
+}
+.icon-picker-collapsed {
+  display: flex;
+  align-items: center;
+  height: 82px;
+}
+.btn-icon-edit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.icon-picker-expanded {
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  animation: fadeIn 0.15s ease;
+}
+.icon-picker-expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.btn-icon-collapse {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  text-decoration: none;
+}
+.btn-icon-collapse:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+/* ==================== Icon Library (Tab 3) ==================== */
+.icon-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.icon-lib-card {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  border: 2px solid var(--border-color);
+  background-color: var(--bg-surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.icon-lib-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+.icon-lib-card.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.3);
+}
+.icon-lib-card.selected::after {
+  content: '✓';
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  background-color: var(--primary);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: bold;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.icon-lib-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.icon-lib-upload-card {
+  border: 2px dashed var(--border-color);
+  background-color: transparent;
+  cursor: pointer;
+  flex-direction: column;
+  color: var(--text-muted);
+}
+.icon-lib-upload-card:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(2, 132, 199, 0.05);
+}
+.icon-lib-upload-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.icon-lib-upload-plus {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+}
+.icon-lib-upload-text {
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+}
+
+/* Legacy Icon Editor Layout fallback */
 .icon-editor-layout {
   display: flex;
   gap: 16px;
@@ -1536,15 +1703,6 @@ tr.row-updating {
   box-shadow: var(--shadow-sm);
   background-color: var(--bg-surface);
   border: 1px solid var(--border-color);
-}
-.icon-preview-text {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 6px;
-  max-width: 94px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ==================== Desktop Table Column Text Styles ==================== */
