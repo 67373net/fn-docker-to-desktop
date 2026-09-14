@@ -6,20 +6,23 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Storage manages persistent storage for desktop items and app settings.
 type Storage struct {
-	mu           sync.RWMutex
-	dataDir      string
-	itemsFile          string
-	settingsFile       string
-	watchcowStatesFile string
-	items              map[string]DesktopItem
-	settings           Settings
-	watchcowStates     map[string]bool
+	mu                  sync.RWMutex
+	dataDir             string
+	itemsFile           string
+	settingsFile        string
+	items               map[string]DesktopItem
+	settings            Settings
+	dockLabelStatesFile string
+	dockLabelStates     map[string]bool
+	watchcowStatesFile  string
+	watchcowStates      map[string]bool
 }
 
 // NewStorage initializes storage using dataDir.
@@ -32,18 +35,20 @@ func NewStorage(dataDir string) (*Storage, error) {
 	}
 
 	s := &Storage{
-		dataDir:            dataDir,
-		itemsFile:          filepath.Join(dataDir, "desktop_items.json"),
-		settingsFile:       filepath.Join(dataDir, "settings.json"),
-		watchcowStatesFile: filepath.Join(dataDir, "watchcow_states.json"),
-		items:              make(map[string]DesktopItem),
-		settings:           DefaultSettings(),
-		watchcowStates:     make(map[string]bool),
+		dataDir:             dataDir,
+		itemsFile:           filepath.Join(dataDir, "desktop_items.json"),
+		settingsFile:        filepath.Join(dataDir, "settings.json"),
+		dockLabelStatesFile: filepath.Join(dataDir, "docklabel_states.json"),
+		watchcowStatesFile:  filepath.Join(dataDir, "watchcow_states.json"),
+		items:               make(map[string]DesktopItem),
+		settings:            DefaultSettings(),
+		dockLabelStates:     make(map[string]bool),
+		watchcowStates:      make(map[string]bool),
 	}
 
 	s.loadSettings()
 	s.loadItems()
-	s.loadWatchcowStates()
+	s.loadDockLabelStates()
 	return s, nil
 }
 
@@ -194,40 +199,82 @@ func (s *Storage) DeleteItem(id string) error {
 	return s.saveItemsLocked()
 }
 
-func (s *Storage) loadWatchcowStates() {
+func (s *Storage) loadDockLabelStates() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.watchcowStatesFile)
+
+	// 1. Try loading docklabel_states.json
+	data, err := os.ReadFile(s.dockLabelStatesFile)
 	if err == nil {
 		var loaded map[string]bool
 		if err := json.Unmarshal(data, &loaded); err == nil && loaded != nil {
-			s.watchcowStates = loaded
+			s.dockLabelStates = loaded
+			return
+		}
+	}
+
+	// 2. Backward compatibility: load watchcow_states.json if docklabel_states.json doesn't exist
+	wcData, wcErr := os.ReadFile(s.watchcowStatesFile)
+	if wcErr == nil {
+		var loaded map[string]bool
+		if err := json.Unmarshal(wcData, &loaded); err == nil && loaded != nil {
+			s.dockLabelStates = loaded
+			// Auto migrate
+			_ = s.saveDockLabelStatesLocked()
 		}
 	}
 }
 
-func (s *Storage) saveWatchcowStatesLocked() error {
-	data, err := json.MarshalIndent(s.watchcowStates, "", "  ")
+func (s *Storage) saveDockLabelStatesLocked() error {
+	data, err := json.MarshalIndent(s.dockLabelStates, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.watchcowStatesFile, data, 0644)
+	return os.WriteFile(s.dockLabelStatesFile, data, 0644)
 }
 
-// GetWatchcowState retrieves saved state or returns defaultVal if not set.
-func (s *Storage) GetWatchcowState(id string, defaultVal bool) bool {
+// GetDockLabelState retrieves saved state for a container label item (with backward-compatible ID lookup).
+func (s *Storage) GetDockLabelState(id string, defaultVal bool) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if val, ok := s.watchcowStates[id]; ok {
+	if val, ok := s.dockLabelStates[id]; ok {
 		return val
+	}
+	// Check legacy aliases
+	if strings.HasPrefix(id, "docklabel-") {
+		legacyID := strings.Replace(id, "docklabel-", "watchcow-", 1)
+		if val, ok := s.dockLabelStates[legacyID]; ok {
+			return val
+		}
+	} else if strings.HasPrefix(id, "watchcow-") {
+		newID := strings.Replace(id, "watchcow-", "docklabel-", 1)
+		if val, ok := s.dockLabelStates[newID]; ok {
+			return val
+		}
 	}
 	return defaultVal
 }
 
-// SetWatchcowState updates and persists a Watchcow item's enabled state.
-func (s *Storage) SetWatchcowState(id string, enabled bool) error {
+// SetDockLabelState updates and persists a container label item's enabled state.
+func (s *Storage) SetDockLabelState(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.watchcowStates[id] = enabled
-	return s.saveWatchcowStatesLocked()
+	s.dockLabelStates[id] = enabled
+	// Also sync legacy key for consistency
+	if strings.HasPrefix(id, "docklabel-") {
+		s.dockLabelStates[strings.Replace(id, "docklabel-", "watchcow-", 1)] = enabled
+	} else if strings.HasPrefix(id, "watchcow-") {
+		s.dockLabelStates[strings.Replace(id, "watchcow-", "docklabel-", 1)] = enabled
+	}
+	return s.saveDockLabelStatesLocked()
+}
+
+// GetWatchcowState is an alias for backward compatibility.
+func (s *Storage) GetWatchcowState(id string, defaultVal bool) bool {
+	return s.GetDockLabelState(id, defaultVal)
+}
+
+// SetWatchcowState is an alias for backward compatibility.
+func (s *Storage) SetWatchcowState(id string, enabled bool) error {
+	return s.SetDockLabelState(id, enabled)
 }

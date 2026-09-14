@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.21"
+const appVersion = "1.1.22"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -38,8 +38,8 @@ const startupHTML = `<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #0f172a;
-      color: #f8fafc;
+      background: #f8fafc;
+      color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       display: flex;
       align-items: center;
@@ -50,20 +50,19 @@ const startupHTML = `<!DOCTYPE html>
     .card {
       text-align: center;
       padding: 2.5rem 2rem;
-      max-width: 400px;
+      max-width: 380px;
       width: 90%;
-      background: rgba(30, 41, 59, 0.85);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 18px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(12px);
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
     }
     .spinner {
-      width: 50px;
-      height: 50px;
+      width: 46px;
+      height: 46px;
       margin: 0 auto 1.5rem;
-      border: 3px solid rgba(59, 130, 246, 0.2);
-      border-top-color: #3b82f6;
+      border: 3px solid #e2e8f0;
+      border-top-color: #2563eb;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
@@ -71,22 +70,22 @@ const startupHTML = `<!DOCTYPE html>
       to { transform: rotate(360deg); }
     }
     h1 {
-      font-size: 1.25rem;
+      font-size: 1.18rem;
       font-weight: 600;
-      margin-bottom: 0.6rem;
-      color: #ffffff;
+      margin-bottom: 0.5rem;
+      color: #0f172a;
       letter-spacing: -0.01em;
     }
     p {
-      font-size: 0.9rem;
-      color: #94a3b8;
+      font-size: 0.88rem;
+      color: #64748b;
       line-height: 1.6;
     }
     .sub {
       display: block;
-      margin-top: 0.4rem;
-      font-size: 0.8rem;
-      color: #64748b;
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+      color: #94a3b8;
     }
   </style>
 </head>
@@ -191,7 +190,7 @@ func main() {
 	srv := &http.Server{
 		Handler:      dispatcher,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		WriteTimeout: 0, // Disable global WriteTimeout so SSE event streams stay open without ERR_INCOMPLETE_CHUNKED_ENCODING
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -418,11 +417,37 @@ func main() {
 	slog.Info("把 Docker 放到桌面服务已完全就绪")
 
 	// Background startup reconciliation:
-	// Gently ensure all enabled items are installed in fnOS without restarting or modifying already installed apps.
+	// Gently ensure all enabled items (custom desktop items and enabled docklabel items) are installed in fnOS.
 	if installer.HasCLI() {
 		go func() {
 			time.Sleep(1 * time.Second)
 			items := storage.GetAllItems()
+			labelItems, err := desktop.ScanDockLabelItems(storage.GetDockLabelState)
+			if err == nil {
+				for _, li := range labelItems {
+					if li.Enabled {
+						dItem := desktop.DesktopItem{
+							ID:            li.ID,
+							Name:          li.Name,
+							AppName:       li.AppName,
+							ContainerName: li.ContainerName,
+							Image:         li.Image,
+							Port:          li.Port,
+							Protocol:      li.Protocol,
+							Path:          li.Path,
+							TargetURL:     li.TargetURL,
+							UIType:        li.UIType,
+							AllUsers:      li.AllUsers,
+							Icon:          li.Icon,
+							FileTypes:     li.FileTypes,
+							NoDisplay:     li.NoDisplay,
+							Enabled:       true,
+							Mode:          desktop.ItemMode(li.Mode),
+						}
+						items = append(items, dItem)
+					}
+				}
+			}
 			installer.ReconcileInstalledItems(items)
 		}()
 	}

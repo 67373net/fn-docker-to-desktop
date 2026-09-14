@@ -49,6 +49,13 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
             apps=$(grep -oE '"app_name"\s*:\s*"[^"]+"' "${json_file}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
             RAW_APPS="${RAW_APPS} ${apps}"
         fi
+        dock_file="${d}/docklabel_states.json"
+        if [ -f "${dock_file}" ]; then
+            dock_apps=$(grep -E '":\s*true' "${dock_file}" 2>/dev/null | grep -oE '"docklabel-[^"]+"' | tr -d '"' | sed 's/^docklabel-/fndocker.dock-/' || true)
+            RAW_APPS="${RAW_APPS} ${dock_apps}"
+            legacy_dock=$(grep -E '":\s*true' "${dock_file}" 2>/dev/null | grep -oE '"watchcow-[^"]+"' | tr -d '"' | sed 's/^watchcow-/fndocker.dock-/' || true)
+            RAW_APPS="${RAW_APPS} ${legacy_dock}"
+        fi
         wc_file="${d}/watchcow_states.json"
         if [ -f "${wc_file}" ]; then
             # 扫描此前版本中可能被用户在本产品中开启过的旧版 watchcow 兼容包名 (watchcow.xxx)

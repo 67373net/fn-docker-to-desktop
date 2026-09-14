@@ -483,44 +483,44 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.21",
+		AppVersion: "1.1.22",
 	})
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	// 1. GET /api/desktop/watchcow
-	req := httptest.NewRequest("GET", "/api/desktop/watchcow", nil)
+	// 1. GET /api/desktop/docklabel
+	req := httptest.NewRequest("GET", "/api/desktop/docklabel", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200 for GET /api/desktop/watchcow, got %d", rec.Code)
+		t.Fatalf("Expected status 200 for GET /api/desktop/docklabel, got %d", rec.Code)
 	}
 
-	var items []desktop.WatchcowItem
+	var items []desktop.DockLabelItem
 	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
-		t.Fatalf("Failed to decode watchcow items response: %v", err)
+		t.Fatalf("Failed to decode docklabel items response: %v", err)
 	}
 	if len(items) != 1 {
-		t.Fatalf("Expected 1 watchcow item, got %d", len(items))
+		t.Fatalf("Expected 1 docklabel item, got %d", len(items))
 	}
-	if items[0].ID != "watchcow-watchcow-test-container" {
-		t.Errorf("Expected item ID 'watchcow-watchcow-test-container', got %s", items[0].ID)
+	if items[0].ID != "docklabel-watchcow-test-container" {
+		t.Errorf("Expected item ID 'docklabel-watchcow-test-container', got %s", items[0].ID)
 	}
-	if !strings.HasPrefix(items[0].AppName, "fndocker.wc-") {
-		t.Errorf("Expected item AppName to start with 'fndocker.wc-', got %s", items[0].AppName)
+	if !strings.HasPrefix(items[0].AppName, "fndocker.dock-") {
+		t.Errorf("Expected item AppName to start with 'fndocker.dock-', got %s", items[0].AppName)
 	}
 
-	// 2. Toggle a watchcow item state
+	// 2. Toggle a docklabel item state
 	testID := items[0].ID
-	storage.SetWatchcowState(testID, false)
-	if storage.GetWatchcowState(testID, true) != false {
+	storage.SetDockLabelState(testID, false)
+	if storage.GetDockLabelState(testID, true) != false {
 		t.Errorf("Expected initial state for %s to be false", testID)
 	}
 
-	reqToggle := httptest.NewRequest("POST", "/api/desktop/watchcow/"+testID+"/toggle", nil)
+	reqToggle := httptest.NewRequest("POST", "/api/desktop/docklabel/"+testID+"/toggle", nil)
 	reqToggle.RemoteAddr = "127.0.0.1:1234"
 	recToggle := httptest.NewRecorder()
 	mux.ServeHTTP(recToggle, reqToggle)
@@ -540,7 +540,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 	if !toggleResp.Enabled {
 		t.Errorf("Expected toggle to switch from false to true, got false")
 	}
-	if storage.GetWatchcowState(testID, false) != true {
+	if storage.GetDockLabelState(testID, false) != true {
 		t.Errorf("Expected storage state to be persisted as true")
 	}
 }

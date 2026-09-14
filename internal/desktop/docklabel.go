@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// WatchcowItem represents a desktop application parsed from Docker container watchcow.* labels.
-type WatchcowItem struct {
+// DockLabelItem represents a desktop application parsed from Docker container labels.
+type DockLabelItem struct {
 	ID            string   `json:"id"`
 	ContainerID   string   `json:"container_id"`
 	ContainerName string   `json:"container_name"`
@@ -40,8 +40,14 @@ type WatchcowItem struct {
 	FileTypes     []string `json:"file_types,omitempty"`
 	NoDisplay     bool     `json:"no_display,omitempty"`
 	Enabled       bool     `json:"enabled"`
+	IsDockLabel   bool     `json:"is_docklabel"`
 	IsWatchcow    bool     `json:"is_watchcow"`
+	Reconciling   bool     `json:"reconciling,omitempty"`
+	StatusText    string   `json:"status_text,omitempty"`
 }
+
+// WatchcowItem is an alias for backward compatibility.
+type WatchcowItem = DockLabelItem
 
 type dockerContainerMount struct {
 	Type        string `json:"Type"`
@@ -138,8 +144,8 @@ func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 	return ""
 }
 
-// DeriveWatchcowAppName generates an isolated fnOS package name within our app's namespace (fndocker.wc-*)
-func DeriveWatchcowAppName(containerName, entryName, customName string) string {
+// DeriveDockLabelAppName generates an isolated fnOS package name within our app's namespace (fndocker.dock-*)
+func DeriveDockLabelAppName(containerName, entryName, customName string) string {
 	base := ""
 	if customName != "" {
 		base = SanitizeAppNamePart(customName)
@@ -155,37 +161,47 @@ func DeriveWatchcowAppName(containerName, entryName, customName string) string {
 		base = "app"
 	}
 
-	prefix := "fndocker.wc-"
+	prefix := "fndocker.dock-"
 	// Max allowed length for fnOS app name is 32 chars.
-	// prefix is 12 chars. Remaining space is 20 chars.
-	if len(base) > 20 {
+	// prefix is 13 chars. Remaining space is 19 chars.
+	if len(base) > 19 {
 		h := sha256.Sum256([]byte(containerName + "/" + entryName + "/" + customName))
 		suffix := hex.EncodeToString(h[:])[:4]
-		base = strings.TrimRight(base[:15], "-") + "-" + suffix
+		base = strings.TrimRight(base[:14], "-") + "-" + suffix
 	}
 	return prefix + base
 }
 
-var (
-	watchcowMu         sync.RWMutex
-	watchcowDockerSock = "/var/run/docker.sock"
-	watchcowClient     *http.Client
-)
-
-// SetWatchcowDockerSocketPath allows overriding the docker socket path for testing.
-func SetWatchcowDockerSocketPath(path string) {
-	watchcowMu.Lock()
-	defer watchcowMu.Unlock()
-	watchcowDockerSock = path
-	watchcowClient = nil
+// DeriveWatchcowAppName is an alias for backward compatibility.
+func DeriveWatchcowAppName(containerName, entryName, customName string) string {
+	return DeriveDockLabelAppName(containerName, entryName, customName)
 }
 
-func getWatchcowDockerClient() *http.Client {
-	watchcowMu.Lock()
-	defer watchcowMu.Unlock()
-	if watchcowClient == nil {
-		sock := watchcowDockerSock
-		watchcowClient = &http.Client{
+var (
+	dockLabelMu         sync.RWMutex
+	dockLabelDockerSock = "/var/run/docker.sock"
+	dockLabelClient     *http.Client
+)
+
+// SetDockLabelDockerSocketPath allows overriding the docker socket path for testing.
+func SetDockLabelDockerSocketPath(path string) {
+	dockLabelMu.Lock()
+	defer dockLabelMu.Unlock()
+	dockLabelDockerSock = path
+	dockLabelClient = nil
+}
+
+// SetWatchcowDockerSocketPath is an alias for backward compatibility.
+func SetWatchcowDockerSocketPath(path string) {
+	SetDockLabelDockerSocketPath(path)
+}
+
+func getDockLabelDockerClient() *http.Client {
+	dockLabelMu.Lock()
+	defer dockLabelMu.Unlock()
+	if dockLabelClient == nil {
+		sock := dockLabelDockerSock
+		dockLabelClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 					var d net.Dialer
@@ -198,16 +214,16 @@ func getWatchcowDockerClient() *http.Client {
 			Timeout: 3 * time.Second,
 		}
 	}
-	return watchcowClient
+	return dockLabelClient
 }
 
-// ScanWatchcowItems queries docker containers and parses any configured watchcow.* labels.
-func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) ([]WatchcowItem, error) {
-	if _, err := os.Stat(watchcowDockerSock); err != nil {
+// ScanDockLabelItems queries docker containers and parses any configured container labels (e.g. watchcow.* labels).
+func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool) ([]DockLabelItem, error) {
+	if _, err := os.Stat(dockLabelDockerSock); err != nil {
 		return nil, nil
 	}
 
-	client := getWatchcowDockerClient()
+	client := getDockLabelDockerClient()
 	resp, err := client.Get("http://localhost/containers/json")
 	if err != nil {
 		return nil, err
@@ -223,7 +239,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 		return nil, err
 	}
 
-	var results []WatchcowItem
+	var results []DockLabelItem
 
 	for _, c := range rawContainers {
 		if c.State != "" && c.State != "running" {
@@ -245,7 +261,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 			continue
 		}
 
-		containerName := ""
+		containerName := c.ID
 		if len(c.Names) > 0 {
 			containerName = strings.TrimPrefix(c.Names[0], "/")
 		}
@@ -308,9 +324,9 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				displayName = containerName
 			}
 
-			appName := DeriveWatchcowAppName(containerName, "default", defaultEntry["appname"])
-
-			itemID := fmt.Sprintf("watchcow-%s", containerName)
+			appName := DeriveDockLabelAppName(containerName, "default", defaultEntry["appname"])
+			itemID := fmt.Sprintf("docklabel-%s", containerName)
+			legacyID := fmt.Sprintf("watchcow-%s", containerName)
 
 			redirectVal := defaultEntry["redirect"]
 			forceExternal := defaultEntry["redirect_force_external"] == "true"
@@ -334,7 +350,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 
 			iconVal := defaultEntry["icon"]
 			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
-			displayIcon := fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
+			displayIcon := fmt.Sprintf("/api/desktop/docklabel/icon?id=%s", itemID)
 
 			var fileTypes []string
 			if ft := defaultEntry["file_types"]; ft != "" {
@@ -365,9 +381,12 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 			enabled := defaultEnabled
 			if stateResolver != nil {
 				enabled = stateResolver(itemID, defaultEnabled)
+				if !enabled && stateResolver(legacyID, defaultEnabled) {
+					enabled = true
+				}
 			}
 
-			results = append(results, WatchcowItem{
+			results = append(results, DockLabelItem{
 				ID:            itemID,
 				ContainerID:   shortCID,
 				ContainerName: containerName,
@@ -389,6 +408,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				FileTypes:     fileTypes,
 				NoDisplay:     defaultEntry["no_display"] == "true",
 				Enabled:       enabled,
+				IsDockLabel:   true,
 				IsWatchcow:    true,
 			})
 		}
@@ -421,9 +441,9 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				title = fmt.Sprintf("%s (%s)", containerName, en)
 			}
 
-			appName := DeriveWatchcowAppName(containerName, en, eData["appname"])
-
-			itemID := fmt.Sprintf("watchcow-%s-%s", containerName, en)
+			appName := DeriveDockLabelAppName(containerName, en, eData["appname"])
+			itemID := fmt.Sprintf("docklabel-%s-%s", containerName, en)
+			legacyID := fmt.Sprintf("watchcow-%s-%s", containerName, en)
 
 			redirectVal := eData["redirect"]
 			forceExternal := eData["redirect_force_external"] == "true"
@@ -447,7 +467,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 
 			iconVal := eData["icon"]
 			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
-			displayIcon := fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
+			displayIcon := fmt.Sprintf("/api/desktop/docklabel/icon?id=%s", itemID)
 
 			var fileTypes []string
 			if ft := eData["file_types"]; ft != "" {
@@ -478,9 +498,12 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 			enabled := defaultEnabled
 			if stateResolver != nil {
 				enabled = stateResolver(itemID, defaultEnabled)
+				if !enabled && stateResolver(legacyID, defaultEnabled) {
+					enabled = true
+				}
 			}
 
-			results = append(results, WatchcowItem{
+			results = append(results, DockLabelItem{
 				ID:            itemID,
 				ContainerID:   shortCID,
 				ContainerName: containerName,
@@ -502,10 +525,16 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				FileTypes:     fileTypes,
 				NoDisplay:     eData["no_display"] == "true",
 				Enabled:       enabled,
+				IsDockLabel:   true,
 				IsWatchcow:    true,
 			})
 		}
 	}
 
 	return results, nil
+}
+
+// ScanWatchcowItems is an alias for ScanDockLabelItems for backward compatibility.
+func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) ([]DockLabelItem, error) {
+	return ScanDockLabelItems(stateResolver)
 }

@@ -238,15 +238,32 @@ async function fetchPorts() {
 
 async function fetchWatchcowItems() {
   try {
-    const res = await fetch(apiUrl('/api/desktop/watchcow'));
+    const res = await fetch(apiUrl('/api/desktop/docklabel'));
     if (res.status === 401) return;
     if (res.ok) {
-      state.watchcowItems = await res.json();
+      const serverItems = await res.json();
+      const pendingMap = new Map();
+      (state.watchcowItems || []).forEach(item => {
+        if (item && (item._updating || item._error)) {
+          pendingMap.set(item.id, item);
+        }
+      });
+      state.watchcowItems = serverItems.map(item => {
+        const pending = pendingMap.get(item.id);
+        if (pending && pending._updating) {
+          return {
+            ...item,
+            _updating: true,
+            _statusText: pending._statusText || '更新中...'
+          };
+        }
+        return item;
+      });
       renderDesktopTable();
       updateDesktopCountBadge();
     }
   } catch (err) {
-    console.error('Fetch watchcow items error:', err);
+    console.error('Fetch docklabel items error:', err);
   }
 }
 
@@ -940,34 +957,38 @@ function renderDesktopTable() {
   });
 
   if (filtered.length === 0 && filteredWatchcow.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
     return;
   }
 
   let html = '';
 
   if (filtered.length === 0 && filteredWatchcow.length > 0) {
-    html += '<tr><td colspan="10" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
+    html += '<tr><td colspan="8" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
   } else {
     for (const item of filtered) {
       let modeText = '本机端口';
-      let modeClass = 'text-type-local';
       let targetText = `:${item.port}`;
       if (item.mode === 'proxy') {
         modeText = '端口映射';
-        modeClass = 'text-type-proxy';
         targetText = `${item.target_url} ➔ :${item.port}`;
       } else if (item.mode === 'shortcut') {
         modeText = '网页链接';
-        modeClass = 'text-type-shortcut';
         targetText = item.target_url;
       }
+
+      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const typeColHtml = `
+        <div>
+          <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+        </div>`;
 
       const hasIcon = !item.no_display;
       const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
       let entryText = '图标';
       if (hasIcon && hasContextMenu) {
-        entryText = '图标 / 右键';
+        entryText = '图标/右键';
       } else if (hasIcon && !hasContextMenu) {
         entryText = '图标';
       } else if (!hasIcon && hasContextMenu) {
@@ -975,12 +996,13 @@ function renderDesktopTable() {
       } else {
         entryText = '-';
       }
-      const entryHtml = `<span style="font-size: 0.88rem; color: var(--text-main);">${entryText}</span>`;
-
-      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
-      const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
       const permText = item.all_users ? '所有用户' : '仅管理员';
-      const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
+      const entryColHtml = `
+        <div>
+          <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+        </div>`;
+
       const toggleHtml = `
         <div class="status-toggle-wrapper">
           <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
@@ -997,7 +1019,7 @@ function renderDesktopTable() {
       let statusColHtml = toggleHtml;
       const isReconciling = !!item.reconciling;
       if (isReconciling || item._updating) {
-        const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '正在更新中...');
+        const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '更新中...');
         statusColHtml = `
           <div class="status-updating-badge">
             <span class="spinner-small"></span>
@@ -1012,20 +1034,15 @@ function renderDesktopTable() {
       }
 
       const isUpdating = !!item._updating || isReconciling;
-      const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
-        ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
-        : '';
 
       html += `<tr class="${isUpdating ? 'row-updating' : ''}">
         <td>
           <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong>${fileTypesBadge}</td>
-        <td><span class="${modeClass}">${modeText}</span></td>
-        <td>${entryHtml}</td>
+        <td><strong>${escapeHtml(item.name)}</strong></td>
+        <td>${typeColHtml}</td>
+        <td>${entryColHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
-        <td><span class="${openModeClass}">${openModeText}</span></td>
-        <td><span class="${permClass}">${permText}</span></td>
         <td>${statusColHtml}</td>
         <td>
           <div class="table-actions">
@@ -1042,31 +1059,35 @@ function renderDesktopTable() {
   if (filteredWatchcow.length > 0) {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
-        <td colspan="10" class="table-sink-divider-cell">
-          <span class="table-sink-title">以下内容读取自 Docker 项目的 Watchcow 标签</span>
+        <td colspan="8" class="table-sink-divider-cell">
+          <span class="table-sink-title">以下内容读取自 Docker 容器标签</span>
         </td>
       </tr>`;
 
     for (const item of filteredWatchcow) {
       const iconSrc = getIconUrl(item.display_icon || item.icon);
       let modeText = '本机端口';
-      let modeClass = 'text-type-local';
       let targetText = `:${item.port}${item.path && item.path !== '/' ? item.path : ''}`;
       if (item.mode === 'shortcut') {
         modeText = '网页链接';
-        modeClass = 'text-type-shortcut';
         targetText = item.target_url || item.redirect || `:${item.port}`;
       } else if (item.mode === 'proxy') {
         modeText = '端口映射';
-        modeClass = 'text-type-proxy';
         targetText = `${item.target_url} ➔ :${item.port}`;
       }
+
+      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const typeColHtml = `
+        <div>
+          <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+        </div>`;
 
       const hasIcon = !item.no_display;
       const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
       let entryText = '图标';
       if (hasIcon && hasContextMenu) {
-        entryText = '图标 / 右键';
+        entryText = '图标/右键';
       } else if (hasIcon && !hasContextMenu) {
         entryText = '图标';
       } else if (!hasIcon && hasContextMenu) {
@@ -1074,15 +1095,13 @@ function renderDesktopTable() {
       } else {
         entryText = '-';
       }
-      const entryHtml = `<span style="font-size: 0.88rem; color: var(--text-main);">${entryText}</span>`;
-
-      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
-      const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
       const permText = item.all_users ? '所有用户' : '仅管理员';
-      const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
-      const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
-        ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
-        : '';
+      const entryColHtml = `
+        <div>
+          <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+        </div>`;
+
       const containerHint = item.container_name
         ? `<div style="font-size: 0.76rem; color: var(--text-muted); font-weight: normal; margin-top: 2px;">${escapeHtml(item.container_name)}</div>`
         : '';
@@ -1098,19 +1117,36 @@ function renderDesktopTable() {
           </span>
         </div>`;
 
-      html += `<tr>
+      let statusColHtml = toggleHtml;
+      const isReconciling = !!item.reconciling;
+      if (isReconciling || item._updating) {
+        const statusText = item._statusText || item.status_text || '更新中...';
+        statusColHtml = `
+          <div class="status-updating-badge">
+            <span class="spinner-small"></span>
+            <span>${escapeHtml(statusText)}</span>
+          </div>`;
+      } else if (item._error) {
+        statusColHtml = `
+          <div class="status-error-badge" style="display: inline-flex; align-items: center; gap: 4px; color: #ef4444; font-size: 0.82rem; font-weight: 500;" title="${escapeHtml(item._statusText || '')}">
+            <span>⚠️</span>
+            <span>${escapeHtml(item._statusText || '操作失败')}</span>
+          </div>`;
+      }
+
+      const isUpdating = !!item._updating || isReconciling;
+
+      html += `<tr class="${isUpdating ? 'row-updating' : ''}">
         <td>
           <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}${fileTypesBadge}</td>
-        <td><span class="${modeClass}">${modeText}</span></td>
-        <td>${entryHtml}</td>
+        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}</td>
+        <td>${typeColHtml}</td>
+        <td>${entryColHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
-        <td><span class="${openModeClass}">${openModeText}</span></td>
-        <td><span class="${permClass}">${permText}</span></td>
-        <td>${toggleHtml}</td>
+        <td>${statusColHtml}</td>
         <td>
-          <span style="color: var(--text-muted); font-size: 0.82rem; user-select: none;">不可编辑</span>
+          <span style="color: var(--text-muted); font-size: 0.82rem; user-select: none;">只读</span>
         </td>
         <td class="filler-col"></td>
       </tr>`;
@@ -1124,25 +1160,26 @@ function renderDesktopTable() {
       const id = chk.dataset.id;
       if (chk.disabled) return;
 
-      const wrapper = chk.closest('.status-toggle-wrapper');
-      const label = wrapper ? wrapper.querySelector('.status-toggle-label') : null;
-      const originalText = label ? label.textContent.trim() : '';
+      const item = state.desktopItems.find(i => i.id === id);
+      if (item) {
+        item._updating = true;
+        item._statusText = '更新中...';
+        item._error = false;
+        renderDesktopTable();
+      }
 
       reportClientLog('action', '用户切换桌面图标状态', `ID: ${id}, 目标状态: ${chk.checked ? '启用' : '停用'}`, { id, checked: chk.checked });
-
-      // Immediately disable checkbox and show loading state
-      chk.disabled = true;
-      if (label) {
-        label.className = 'status-toggle-label pending';
-        label.textContent = '处理中...';
-      }
 
       try {
         const res = await fetch(apiUrl(`/api/desktop/items/${id}/toggle`), { method: 'POST' });
         if (res.ok) {
           const updated = await res.json();
-          const item = state.desktopItems.find(i => i.id === id);
-          if (item) item.enabled = updated.enabled;
+          const targetItem = state.desktopItems.find(i => i.id === id);
+          if (targetItem) {
+            targetItem.enabled = updated.enabled;
+            targetItem._updating = false;
+            targetItem._statusText = null;
+          }
           showToast(`已成功${updated.enabled ? '启用' : '停用'}桌面图标`, 'success');
           renderDesktopTable();
           fetchPorts();
@@ -1150,21 +1187,23 @@ function renderDesktopTable() {
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.error || res.statusText;
           showToast('切换状态失败: ' + errMsg, 'error', 5000);
-          chk.checked = !chk.checked;
-          if (label) {
-            label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
-            label.textContent = originalText;
+          const targetItem = state.desktopItems.find(i => i.id === id);
+          if (targetItem) {
+            targetItem._updating = false;
+            targetItem._error = true;
+            targetItem._statusText = errMsg;
           }
-          chk.disabled = false;
+          renderDesktopTable();
         }
       } catch (e) {
         showToast('网络请求异常: ' + e.message, 'error', 5000);
-        chk.checked = !chk.checked;
-        if (label) {
-          label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
-          label.textContent = originalText;
+        const targetItem = state.desktopItems.find(i => i.id === id);
+        if (targetItem) {
+          targetItem._updating = false;
+          targetItem._error = true;
+          targetItem._statusText = e.message;
         }
-        chk.disabled = false;
+        renderDesktopTable();
       }
     });
   });
@@ -1174,46 +1213,50 @@ function renderDesktopTable() {
       const id = chk.dataset.id;
       if (chk.disabled) return;
 
-      const wrapper = chk.closest('.status-toggle-wrapper');
-      const label = wrapper ? wrapper.querySelector('.status-toggle-label') : null;
-      const originalText = label ? label.textContent.trim() : '';
-
-      reportClientLog('action', '用户切换Watchcow条目状态', `ID: ${id}, 目标状态: ${chk.checked ? '启用' : '停用'}`, { id, checked: chk.checked });
-
-      chk.disabled = true;
-      if (label) {
-        label.className = 'status-toggle-label pending';
-        label.textContent = '处理中...';
+      const item = (state.watchcowItems || []).find(i => i.id === id);
+      if (item) {
+        item._updating = true;
+        item._statusText = '更新中...';
+        item._error = false;
+        renderDesktopTable();
       }
 
+      reportClientLog('action', '用户切换容器标签条目状态', `ID: ${id}, 目标状态: ${chk.checked ? '启用' : '停用'}`, { id, checked: chk.checked });
+
       try {
-        const res = await fetch(apiUrl(`/api/desktop/watchcow/${encodeURIComponent(id)}/toggle`), { method: 'POST' });
+        const res = await fetch(apiUrl(`/api/desktop/docklabel/${encodeURIComponent(id)}/toggle`), { method: 'POST' });
         if (res.ok) {
           const updated = await res.json();
-          const item = (state.watchcowItems || []).find(i => i.id === id);
-          if (item) item.enabled = updated.enabled;
-          showToast(`已成功${updated.enabled ? '启用' : '停用'} Watchcow 图标`, 'success');
+          const targetItem = (state.watchcowItems || []).find(i => i.id === id);
+          if (targetItem) {
+            targetItem.enabled = updated.enabled;
+            targetItem._updating = false;
+            targetItem._statusText = null;
+          }
+          showToast(`已成功${updated.enabled ? '启用' : '停用'}桌面图标`, 'success');
           renderDesktopTable();
           fetchPorts();
         } else {
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.error || res.statusText;
           showToast('切换状态失败: ' + errMsg, 'error', 5000);
-          chk.checked = !chk.checked;
-          if (label) {
-            label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
-            label.textContent = originalText;
+          const targetItem = (state.watchcowItems || []).find(i => i.id === id);
+          if (targetItem) {
+            targetItem._updating = false;
+            targetItem._error = true;
+            targetItem._statusText = errMsg;
           }
-          chk.disabled = false;
+          renderDesktopTable();
         }
       } catch (e) {
         showToast('网络请求异常: ' + e.message, 'error', 5000);
-        chk.checked = !chk.checked;
-        if (label) {
-          label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
-          label.textContent = originalText;
+        const targetItem = (state.watchcowItems || []).find(i => i.id === id);
+        if (targetItem) {
+          targetItem._updating = false;
+          targetItem._error = true;
+          targetItem._statusText = e.message;
         }
-        chk.disabled = false;
+        renderDesktopTable();
       }
     });
   });
@@ -3205,7 +3248,7 @@ async function handleSaveDesktopItem(e) {
       if (existing) {
         existing._updating = true;
         existing._error = false;
-        existing._statusText = '正在更新中...';
+        existing._statusText = '更新中...';
         existing.name = name;
         existing.port = port;
         existing.app_name = appName;
@@ -3222,7 +3265,7 @@ async function handleSaveDesktopItem(e) {
         ...payload,
         _updating: true,
         _error: false,
-        _statusText: '正在创建中...',
+        _statusText: '更新中...',
         created_at: new Date().toISOString(),
       });
     }

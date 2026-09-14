@@ -537,6 +537,17 @@ table.data-table td:first-child {
   padding-left: 1.25rem;
 }
 
+#desktop-table th:first-child,
+#desktop-table td:first-child {
+  padding-right: 4px !important;
+  width: 44px;
+}
+
+#desktop-table th:nth-child(2),
+#desktop-table td:nth-child(2) {
+  padding-left: 4px !important;
+}
+
 table.data-table tr:hover td {
   background-color: var(--bg-hover);
 }
@@ -632,8 +643,11 @@ table.data-table td.filler-col {
 /* Toggle Switch */
 .status-toggle-wrapper {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
+  gap: 2px;
+  vertical-align: middle;
 }
 
 .toggle-switch {
@@ -643,6 +657,11 @@ table.data-table td.filler-col {
   height: 20px;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+.status-toggle-wrapper .toggle-switch {
+  width: 28px;
+  height: 15px;
 }
 
 .toggle-switch input {
@@ -663,6 +682,10 @@ table.data-table td.filler-col {
   transition: all 0.2s ease;
 }
 
+.status-toggle-wrapper .toggle-slider {
+  border-radius: 15px;
+}
+
 .toggle-slider:before {
   position: absolute;
   content: "";
@@ -676,6 +699,13 @@ table.data-table td.filler-col {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
+.status-toggle-wrapper .toggle-slider:before {
+  height: 11px;
+  width: 11px;
+  left: 2px;
+  bottom: 2px;
+}
+
 .toggle-switch input:checked + .toggle-slider {
   background-color: var(--primary);
 }
@@ -684,9 +714,14 @@ table.data-table td.filler-col {
   transform: translateX(16px);
 }
 
+.status-toggle-wrapper .toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(13px);
+}
+
 .status-toggle-label {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 500;
+  line-height: 1;
 }
 
 .status-toggle-label.active {
@@ -1193,22 +1228,18 @@ table.data-table td.filler-col {
 .status-updating-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border-radius: 4px;
+  gap: 5px;
   font-size: 12px;
   font-weight: 500;
-  background-color: rgba(59, 130, 246, 0.12);
-  color: var(--primary);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #0284c7;
   white-space: nowrap;
 }
 
 .spinner-small {
-  width: 13px;
-  height: 13px;
-  border: 2px solid rgba(59, 130, 246, 0.3);
-  border-top-color: var(--primary);
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(2, 132, 199, 0.3);
+  border-top-color: #0284c7;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   display: inline-block;

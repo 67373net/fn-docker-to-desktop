@@ -2986,10 +2986,82 @@ INFO
    - Docker 容器内运行 `go test -count=1 ./...` 100% 全部通过，涵盖新增的 Watchcow `fndocker.wc-` 包名前缀断言测试。
 2. **完整二进制构建验证**：
    - Docker 容器内执行 `go build -v ./cmd/server` 成功，无任何编译警告或错误。
+
+---
+
+## 第三十六次修改（2026-09-14）
+
+### 用户原始输入 (User Request Verbatim)
+
+```text
+- 启动中不要用黑色主题，改成白色。
+- 重新安装后，下方watchcow中设为启用的图标没有恢复。为什么上面和下面还是有不一样？我说了上面和下面用同样的方式处理，只不过下面是直接读取的只读的watchcow配置，你看不懂我说的意思吗？
+- 下方watchcow中，我同时点击了两个为启用，结果加载了很久，先是第一个变成启用，第二个是已停用，过了一会儿第二个也变成就绪了，但是中间变成“已停用”这个状态很奇怪。
+- 你刚才说本产品的命名空间是watchcow.go？我希望这个产品的命名空间、包名等各种属于本产品的标示跟watchcow彻底隔离，重新起一个名字，将这些变量都换掉。
+- 前端console报错：Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING
+:12588/app/fn-docker-to-desktop/api/events?session=1a63ef25bfde5bef08b497445da7090ac69b1ef0ada99c78:1  Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING
+- 运行状态这一列，文字显示在按钮的下方，按钮改小一点，不要将这一行撑的很高。
+- 操作这一列，不可编辑 改为 只读。
+- 桌面图标表格中，图标和名称这一列，中间的间距太大，改小一点，留半个中文到1个中文的宽度即可。
+- 正在更新中...不要用badge样式，显示为普通的文字样式，但是可以用一种特殊的颜色高亮显示。文案改为：更新中...
+- 名称这一栏中，如果设置了右键菜单关联文件，不要显示这一类的类型名称（因为入口列已经有展示了）。
+- 打开方式这一列去掉，放在类型这一列的下方，变成两行，不要彩色高亮，显示为普通的默认字体颜色。
+- 访问权限这一列去掉，放在入口这一列的下方，变成两行，不要颜色；并且图标 / 右键，改为 图标/右键，中间的空格去掉。
+```
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **启动过渡页切换为纯白天鹅白/现代明亮主题 (`cmd/server/main.go`)**：
+   - 将 `cmd/server/main.go` 内嵌的启动过渡页样式从原深色卡片重构成明亮高级的纯白现代卡片（白色背景 `#f8fafc`、卡片底色 `#ffffff`、深色主文本 `#0f172a`、柔和边框与蓝色指示环），去除一切黑色暗黑元素。
+
+2. **重装/开机与普通图标完全同构统一自动恢复 (`cmd/server/main.go`, `internal/desktop/storage.go`, `internal/desktop/docklabel.go`)**：
+   - **深层根因**：此前在应用重新安装或开机冷启动时，`cmd/server/main.go` 中的 `ReconcileInstalledItems` 仅遍历了 `storage.GetAllItems()`（普通手动添加的图标），遗漏了容器标签条目，导致重装后标签图标未被 AppCenter 自动恢复。
+   - **同构恢复治理**：在启动阶段统一通过 `ScanDockLabelItems` 获取所有已启用（`Enabled == true`）的容器标签条目，转换为标准 `DesktopItem` 后与普通图标无缝合并，统一交由 `installer.ReconcileInstalledItems` 执行向 AppCenter 的检查、修复与重新安装，保证重装、重启、升级后上下两部分图标行为 100% 相同且全量自动恢复。
+
+3. **并发切换状态闪烁与中间态回跳根治 (`web/app.js`, `internal/api/handler.go`)**：
+   - **深层根因**：同时切换两个图标时，前端在第一个请求返回后立即调用 `fetchWatchcowItems`，而此函数此前直接用服务端返回覆盖 `state.watchcowItems`，因第二个切换请求仍在后台并发队列中尚未落盘，被服务端数据冲刷回跳为旧状态“已停用”；且服务端缺乏在途并发标记。
+   - **架构修复**：
+     - **服务端并发互斥与状态反射**：在 `internal/api/handler.go` 中，给 `handleToggleDockLabelItem` 增加 `inFlightOps` 互斥保护；在 `handleGetDockLabelItems` 中挂载 `inFlightOps` 与 `installer.GetReconcileStatus`，即时输出 `reconciling: true` 与 `status_text: "更新中..."`。
+     - **前端乐观更新与挂起态继承**：前端在点击开关时立即为对应条目打上本地 `_updating = true`、`_statusText = '更新中...'`；并在 `fetchWatchcowItems()` 收到服务端数据时通过 `pendingMap` 自动保留正在更新中的条目的中间态，彻底消除了中间出现“已停用”的回跳闪烁。
+
+4. **命名空间与标识彻底与 watchcow 隔离 (`internal/desktop/docklabel.go`, `internal/desktop/storage.go`, `internal/api/handler.go`)**：
+   - **规范化全新命名**：将底层文件名重命名为 [`internal/desktop/docklabel.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/docklabel.go)。
+   - **包名前缀**：统一为 `fndocker.dock-<containerName>`，属于本产品 `fndocker` 专属管辖。
+   - **条目 ID**：统一为 `docklabel-<containerName>`。
+   - **状态存储文件**：独立存储为 `docklabel_states.json`，且启动时自动向下兼容读取并平滑迁移 `watchcow_states.json`。
+   - **API 路径**：全新主路由 `/api/desktop/docklabel`（并保留兼容别名）。
+
+5. **彻底根治 SSE 控制台报错 `ERR_INCOMPLETE_CHUNKED_ENCODING` (`cmd/server/main.go`, `internal/api/handler.go`)**：
+   - **深层根因**：`cmd/server/main.go` 中配置了全局 `srv.WriteTimeout = 60 * time.Second`，Go 内置 HTTP 服务底层定时器每 60 秒强行关闭 TCP 传输通道，导致前端长连接 EventSource 在 60 秒时被强行断开并抛出 `ERR_INCOMPLETE_CHUNKED_ENCODING`。
+   - **架构修复**：将全局 `WriteTimeout` 置为 `0`；在 `handler.go` 的 `handleEvents` 中通过 `http.NewResponseController(w).SetWriteDeadline(time.Time{})` 专门为 SSE 取消写入超时，并追加 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache, no-transform`，彻底消除超时断连与反向代理缓冲问题。
+
+6. **表格列重构与两行合并排版 (`web/index.html`, `web/app.js`, `web/style.css`)**：
+   - **去掉独立“打开方式”列**：合并至“类型”列下方显示为第 2 行纯文本（第 1 行类型，第 2 行打开方式），使用普通默认颜色，无彩色药丸。
+   - **去掉独立“访问权限”列**：合并至“入口”列下方显示为第 2 行纯文本（第 1 行入口，第 2 行权限），无彩色药丸；且“图标 / 右键”文案去除中间空格规范为“图标/右键”。
+   - **图标与名称列间距缩小**：通过精确控制 `#desktop-table` 第 1 列与第 2 列 padding（`padding-right: 4px; padding-left: 4px;`），将间距缩至半个到 1 个中文宽度（~8px）。
+   - **名称列去除右键文件关联标签**：因入口列已有明确展示，名称列移除 `${fileTypesBadge}`。
+   - **更新中状态样式改造**：移除 `status-updating-badge` 的胶囊背景与边框，改为普通文字展示（配合 `#0284c7` 高亮与小型微型 Spinner），文案统一为“更新中...”。
+   - **运行状态列微型化纵向布局**：开关尺寸缩小为 28x15px，滑块 11x11px，就绪/已停用文字垂直居中置于开关正下方，整行高度保持紧凑。
+   - **操作列文案**：“不可编辑”改为“只读”。
+
+7. **全链路版本升级至 `v1.1.22`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.22`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内运行 `go test -v ./...` 全部通过（涵盖 `TestWatchcowEndpoints`、`TestReconcileInstalledItems` 等全部测试）。
+2. **完整二进制构建验证**：
+   - Docker 容器内执行 `go build -v -o /dev/null ./cmd/server` 成功，无任何编译警告或错误。
 3. **零 .fpk 文件残留**：
    - 仓库内保持纯净，无任何 `.fpk` 文件残留。
 4. **Git 提交与发布**：
-   - 打上 Git Tag `v1.1.21` 并推送至 GitHub 远程仓库。
+   - 打上 Git Tag `v1.1.22` 并推送至 GitHub 远程仓库。
+
 
 
 

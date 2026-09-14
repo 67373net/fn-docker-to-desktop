@@ -105,9 +105,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/desktop/items/{id}/delete", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/toggle", h.handleToggleDesktopItem)
 	mux.HandleFunc("GET /api/desktop/export", h.handleExportDesktopItems)
-	mux.HandleFunc("GET /api/desktop/watchcow", h.handleGetWatchcowItems)
-	mux.HandleFunc("POST /api/desktop/watchcow/{id}/toggle", h.handleToggleWatchcowItem)
-	mux.HandleFunc("GET /api/desktop/watchcow/icon", h.handleGetWatchcowIcon)
+	mux.HandleFunc("GET /api/desktop/docklabel", h.handleGetDockLabelItems)
+	mux.HandleFunc("POST /api/desktop/docklabel/{id}/toggle", h.handleToggleDockLabelItem)
+	mux.HandleFunc("GET /api/desktop/docklabel/icon", h.handleGetDockLabelIcon)
+	// Backward compatibility aliases
+	mux.HandleFunc("GET /api/desktop/watchcow", h.handleGetDockLabelItems)
+	mux.HandleFunc("POST /api/desktop/watchcow/{id}/toggle", h.handleToggleDockLabelItem)
+	mux.HandleFunc("GET /api/desktop/watchcow/icon", h.handleGetDockLabelIcon)
 
 	mux.HandleFunc("POST /api/logs/client", h.handleClientLog)
 
@@ -444,9 +448,13 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	ch := h.watcher.Subscribe("ports")
 	defer h.watcher.Unsubscribe(ch)
@@ -1845,26 +1853,41 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// /api/desktop/watchcow
-func (h *Handler) handleGetWatchcowItems(w http.ResponseWriter, r *http.Request) {
+// /api/desktop/docklabel
+func (h *Handler) handleGetDockLabelItems(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAuth(r) {
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
-	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	items, err := desktop.ScanDockLabelItems(h.storage.GetDockLabelState)
 	if err != nil {
-		slog.Warn("[WATCHCOW] 扫描 Docker 标签失败", "error", err)
-		h.jsonResponse(w, r, []desktop.WatchcowItem{}, http.StatusOK)
+		slog.Warn("[DOCKLABEL] 扫描 Docker 容器标签失败", "error", err)
+		h.jsonResponse(w, r, []desktop.DockLabelItem{}, http.StatusOK)
 		return
 	}
 	if items == nil {
-		items = []desktop.WatchcowItem{}
+		items = []desktop.DockLabelItem{}
+	}
+	for i := range items {
+		appName := items[i].AppName
+		if appName == "" {
+			appName = desktop.DeriveDockLabelAppName(items[i].ContainerName, items[i].EntryName, "")
+		}
+		if _, inFlight := h.inFlightOps.Load(items[i].ID); inFlight {
+			items[i].Reconciling = true
+			items[i].StatusText = "更新中..."
+		} else if h.installer != nil {
+			if isRec, statusText := h.installer.GetReconcileStatus(items[i].ID, appName); isRec {
+				items[i].Reconciling = true
+				items[i].StatusText = statusText
+			}
+		}
 	}
 	h.jsonResponse(w, r, items, http.StatusOK)
 }
 
-// /api/desktop/watchcow/{id}/toggle
-func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Request) {
+// /api/desktop/docklabel/{id}/toggle
+func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAuth(r) {
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
@@ -1875,13 +1898,20 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	if _, loaded := h.inFlightOps.LoadOrStore(id, true); loaded {
+		slog.Warn("[DOCKLABEL] 容器标签条目正在处理中，拒绝重复并发请求", "id", id)
+		h.jsonResponse(w, r, map[string]string{"error": "该图标正在处理中，请稍候"}, http.StatusConflict)
+		return
+	}
+	defer h.inFlightOps.Delete(id)
+
+	items, err := desktop.ScanDockLabelItems(h.storage.GetDockLabelState)
 	if err != nil {
-		h.jsonResponse(w, r, map[string]string{"error": "扫描 Watchcow 标签失败: " + err.Error()}, http.StatusInternalServerError)
+		h.jsonResponse(w, r, map[string]string{"error": "扫描容器标签失败: " + err.Error()}, http.StatusInternalServerError)
 		return
 	}
 
-	var targetItem *desktop.WatchcowItem
+	var targetItem *desktop.DockLabelItem
 	for i := range items {
 		if items[i].ID == id {
 			targetItem = &items[i]
@@ -1889,18 +1919,18 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if targetItem == nil {
-		h.jsonResponse(w, r, map[string]string{"error": "未找到对应的 Watchcow 项目"}, http.StatusNotFound)
+		h.jsonResponse(w, r, map[string]string{"error": "未找到对应的容器标签项目"}, http.StatusNotFound)
 		return
 	}
 
 	targetState := !targetItem.Enabled
 	targetItem.Enabled = targetState
-	_ = h.storage.SetWatchcowState(id, targetState)
+	_ = h.storage.SetDockLabelState(id, targetState)
 
 	if h.installer != nil {
 		appName := targetItem.AppName
-		if appName == "" || !strings.HasPrefix(appName, "fndocker.") {
-			appName = desktop.DeriveWatchcowAppName(targetItem.ContainerName, targetItem.EntryName, "")
+		if appName == "" || !strings.HasPrefix(appName, "fndocker.dock-") {
+			appName = desktop.DeriveDockLabelAppName(targetItem.ContainerName, targetItem.EntryName, "")
 		}
 		targetItem.AppName = appName
 
@@ -1926,20 +1956,26 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 			_ = h.installer.InstallItem(dItem)
 		} else {
 			_ = h.installer.UninstallItem(dItem)
-			// Defensively uninstall any legacy watchcow package name (e.g. watchcow.<container>)
-			legacyAppName := "watchcow." + targetItem.ContainerName
-			if targetItem.EntryName != "" && targetItem.EntryName != "default" {
-				legacyAppName = fmt.Sprintf("watchcow.%s.%s", targetItem.ContainerName, targetItem.EntryName)
+			// Defensively uninstall legacy package names
+			legacyPrefixes := []string{
+				"fndocker.wc-" + targetItem.ContainerName,
+				"watchcow." + targetItem.ContainerName,
 			}
-			if legacyAppName != dItem.AppName {
+			if targetItem.EntryName != "" && targetItem.EntryName != "default" {
+				legacyPrefixes = append(legacyPrefixes,
+					fmt.Sprintf("fndocker.wc-%s-%s", targetItem.ContainerName, targetItem.EntryName),
+					fmt.Sprintf("watchcow.%s.%s", targetItem.ContainerName, targetItem.EntryName),
+				)
+			}
+			for _, pfx := range legacyPrefixes {
 				legacyItem := dItem
-				legacyItem.AppName = legacyAppName
+				legacyItem.AppName = pfx
 				_ = h.installer.UninstallItem(legacyItem)
 			}
 		}
 	}
 
-	slog.Info("<=== [WATCHCOW] 切换 Watchcow 条目状态成功", "id", id, "name", targetItem.Name, "enabled", targetItem.Enabled)
+	slog.Info("<=== [DOCKLABEL] 切换容器标签条目状态成功", "id", id, "name", targetItem.Name, "enabled", targetItem.Enabled)
 	h.jsonResponse(w, r, targetItem, http.StatusOK)
 }
 
@@ -1963,21 +1999,21 @@ func (h *Handler) serveDefaultItemIcon(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// /api/desktop/watchcow/icon
-func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) {
+// /api/desktop/docklabel/icon
+func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		h.serveDefaultItemIcon(w, r)
 		return
 	}
 
-	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	items, err := desktop.ScanDockLabelItems(h.storage.GetDockLabelState)
 	if err != nil || len(items) == 0 {
 		h.serveDefaultItemIcon(w, r)
 		return
 	}
 
-	var found *desktop.WatchcowItem
+	var found *desktop.DockLabelItem
 	for i := range items {
 		if items[i].ID == id {
 			found = &items[i]
@@ -1998,17 +2034,35 @@ func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// 2. If Icon is an HTTP/HTTPS URL, proxy and cache
+	// 2. If Icon is a local icons directory reference
+	if found.Icon != "" {
+		if strings.HasPrefix(found.Icon, "/icons/") || strings.HasPrefix(found.Icon, "icons/") {
+			rel := strings.TrimPrefix(strings.TrimPrefix(found.Icon, "/icons/"), "icons/")
+			target := filepath.Join(h.iconsDir, filepath.Clean(rel))
+			if info, err := os.Stat(target); err == nil && !info.IsDir() {
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				http.ServeFile(w, r, target)
+				return
+			}
+		}
+	}
+
+	// 3. If Icon is an HTTP/HTTPS URL, proxy and cache
 	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
 		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.Icon)))
 		ext := filepath.Ext(found.Icon)
 		if ext == "" || len(ext) > 5 {
 			ext = ".png"
 		}
-		cachePath := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
+		cachePath := filepath.Join(h.iconsDir, "dock_cache_"+hash+ext)
+		legacyCachePath := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
 		if info, err := os.Stat(cachePath); err == nil && info.Size() > 0 {
 			w.Header().Set("Cache-Control", "public, max-age=86400")
 			http.ServeFile(w, r, cachePath)
+			return
+		} else if info, err := os.Stat(legacyCachePath); err == nil && info.Size() > 0 {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			http.ServeFile(w, r, legacyCachePath)
 			return
 		}
 
@@ -2036,6 +2090,6 @@ func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// 3. Fallback to default icon
+	// 4. Fallback to default icon
 	h.serveDefaultItemIcon(w, r)
 }
