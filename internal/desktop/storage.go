@@ -14,10 +14,12 @@ import (
 type Storage struct {
 	mu           sync.RWMutex
 	dataDir      string
-	itemsFile    string
-	settingsFile string
-	items        map[string]DesktopItem
-	settings     Settings
+	itemsFile          string
+	settingsFile       string
+	watchcowStatesFile string
+	items              map[string]DesktopItem
+	settings           Settings
+	watchcowStates     map[string]bool
 }
 
 // NewStorage initializes storage using dataDir.
@@ -30,15 +32,18 @@ func NewStorage(dataDir string) (*Storage, error) {
 	}
 
 	s := &Storage{
-		dataDir:      dataDir,
-		itemsFile:    filepath.Join(dataDir, "desktop_items.json"),
-		settingsFile: filepath.Join(dataDir, "settings.json"),
-		items:        make(map[string]DesktopItem),
-		settings:     DefaultSettings(),
+		dataDir:            dataDir,
+		itemsFile:          filepath.Join(dataDir, "desktop_items.json"),
+		settingsFile:       filepath.Join(dataDir, "settings.json"),
+		watchcowStatesFile: filepath.Join(dataDir, "watchcow_states.json"),
+		items:              make(map[string]DesktopItem),
+		settings:           DefaultSettings(),
+		watchcowStates:     make(map[string]bool),
 	}
 
 	s.loadSettings()
 	s.loadItems()
+	s.loadWatchcowStates()
 	return s, nil
 }
 
@@ -187,4 +192,42 @@ func (s *Storage) DeleteItem(id string) error {
 	defer s.mu.Unlock()
 	delete(s.items, id)
 	return s.saveItemsLocked()
+}
+
+func (s *Storage) loadWatchcowStates() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.watchcowStatesFile)
+	if err == nil {
+		var loaded map[string]bool
+		if err := json.Unmarshal(data, &loaded); err == nil && loaded != nil {
+			s.watchcowStates = loaded
+		}
+	}
+}
+
+func (s *Storage) saveWatchcowStatesLocked() error {
+	data, err := json.MarshalIndent(s.watchcowStates, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.watchcowStatesFile, data, 0644)
+}
+
+// GetWatchcowState retrieves saved state or returns defaultVal if not set.
+func (s *Storage) GetWatchcowState(id string, defaultVal bool) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if val, ok := s.watchcowStates[id]; ok {
+		return val
+	}
+	return defaultVal
+}
+
+// SetWatchcowState updates and persists a Watchcow item's enabled state.
+func (s *Storage) SetWatchcowState(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.watchcowStates[id] = enabled
+	return s.saveWatchcowStatesLocked()
 }

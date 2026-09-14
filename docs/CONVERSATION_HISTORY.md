@@ -2799,6 +2799,70 @@ INFO
 2. **零 .fpk 文件残留**：
    - 仓库内保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## 轮次 33 (Turn 33) - 2026-09-14
+
+### 用户需求 (User Requirements)
+1. **公告界面图标 404 与 console 刷屏修复**：排查并修复 `icon.png:1 GET http://192.168.1.147:12588/icon.png 404 (Not Found)` 报错刷屏问题。
+2. **去掉公告界面“应用启动提示”**：移除 Notice 页面中的 `<div class="notice-badge">📢 应用启动提示</div>`。
+3. **桌面图标中，如果有公告，去掉名称列中的公告 badge**：列表不再显示 `📢 公告` 徽章。
+4. **编辑弹窗文案调整**：应用启动公告 / 提示 (可选) 改为 “开屏提示（可选）”。
+5. **去掉“开启打开前公告”勾选框**：直接显示输入框，输入框中默认文字为：留空则不设置提示。
+6. **去掉公告提示说明文字**：删除“开启后，从飞牛桌面点击图标将首先弹出此提示，用户确认后再打开。支持“今日不再提示”。”。
+7. **右键菜单关联介绍折叠与图标化**：去掉默认显示的说明长文，在“文件右键菜单关联 (可选)”标题右边显示一个圆圈感叹号图标，点开显示介绍。
+8. **网页链接类型隐藏右键关联模块**：如果类型为网页链接，去掉右键关联这个模块。
+9. **浏览器缓存提示文案与样式**：修改为 “由于浏览器缓存，图标更新可能会延迟很久（长达数天）”，字体改为蓝色。
+10. **极简模式文案简化**：进程列表中的“极简模式”改为“极简”。
+11. **导出按钮文案简化**：桌面图标中的“导出设置”改为“导出”。
+12. **日志界面清理**：去掉“滚到底部”按钮；“自动保留8天”改为“保留8天”。
+13. **设置界面 GitHub 模块极简化**：去掉卡片模块，改为纯文本+链接：`项目仓库：https://github.com/67373net/fn-docker-to-desktop`。
+14. **Watchcow 数据置底表格与管理**：在桌面图标表格下方，采用进程列表中置底的分隔栏样式（`<tr class="table-sink-divider-row">...`），增加标题 `Watchcow 数据：读取自 Docker 项目的 Watchcow 标签`。自动读取容器的 `watchcow.*` 标签数据展示对应项，这些条目不可编辑，只能切换启用/停用状态。
+15. **按钮顺序调整**：桌面图标工具栏中，刷新按钮改在“导出”按钮的左边。
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **公告界面图标 404 与死循环刷屏根因修复 (`internal/api/handler.go`, `internal/desktop/installer.go`)**：
+   - **根本原因**：桌面快捷方式点击由 fnOS 统一网关 CGI 处理，页面中的相对路径 `/icon.png` 导致浏览器向 fnOS 宿主系统 Web 端口（12588）请求未导出的静态资源，返回 404；且 `onerror` 属性再次给 `src` 赋值触发无限递归网络请求死循环；
+   - **修复方案**：在服务端渲染公告页面时，直接将图标文件编码为内联 Base64 Data URL（`data:image/...;base64,...`）注入 HTML，彻底避免任何外部 HTTP 请求；同时在 `<img>` 标签中设置 `onerror="this.onerror=null; this.style.display='none';"` 阻断任何可能的死循环；
+   - **文案与标题调整**：移除 `<div class="notice-badge">📢 应用启动提示</div>`，页面标题统一更新为“开屏提示”。
+
+2. **Watchcow 标签自动扫描与全流程支持 (`internal/desktop/watchcow.go`, `internal/desktop/storage.go`, `internal/api/handler.go`)**：
+   - **Docker 套接字扫描 (`ScanWatchcowItems`)**：对接 `/var/run/docker.sock`，解析全部容器的 `watchcow.*` 标签（兼容默认项与命名多入口子项 `watchcow.<entry>.*`），解析端口、协议、路径、打开方式、权限、图标与右键关联属性；
+   - **状态独立持久化 (`watchcow_states.json`)**：在 `desktop.Storage` 中提供 `GetWatchcowState` 与 `SetWatchcowState`，保持用户在前端对每个 Watchcow 项目的启用/停用设置；
+   - **API 接口**：
+     - `GET /api/desktop/watchcow`：提供合并扫描与持久化状态后的 Watchcow 列表；
+     - `POST /api/desktop/watchcow/{id}/toggle`：切换 Watchcow 条目的启用/停用状态，自动联动系统应用安装/卸载；
+     - `GET /api/desktop/watchcow/icon`：提供本地 `file://` 关联图标的读取与代理。
+
+3. **前端 UI 与交互全方位精细化 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - **桌面图标表格置底分隔栏**：采用与进程列表一致的置底分隔样式（`<tr class="table-sink-divider-row">...<span class="table-sink-title">Watchcow 数据：读取自 Docker 项目的 Watchcow 标签</span>`），列出容器 Watchcow 图标；操作列标记为“不可编辑”，状态列提供滑动开关实现一键启停；搜索框支持全局即时过滤；
+   - **开屏提示简化**：去掉“开启打开前公告”复选框，直接显示文本域，placeholder 设为“留空则不设置提示”，根据内容是否存在自动识别开关；桌面图标列表移除公告 badge；
+   - **右键菜单介绍折叠与图标化**：标题右侧新增圆形感叹号图标按钮（`.info-circle-help-btn`），点击展开/折叠说明卡片；模式切换至“网页链接”时自动隐藏右键关联模块；
+   - **文案与样式**：
+     - 浏览器缓存提示改为：“由于浏览器缓存，图标更新可能会延迟很久（长达数天）”，字体改为蓝色；
+     - 进程列表“极简模式”改为“极简”；
+     - 桌面图标工具栏按钮顺序调整为「刷新」位于「导出」左侧，「导出设置」改为「导出」；
+     - 日志界面去掉“滚到底部”按钮，“自动保留 8 天”改为“保留 8 天”；
+     - 设置界面顶部关于卡片改为极简纯文本+超链接：`项目仓库：https://github.com/67373net/fn-docker-to-desktop`。
+
+4. **版本同步升级至 `v1.1.19`**：
+   - 更新 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 与 `web/app.js` 至 `1.1.19`；
+   - 补充 `TestWatchcowEndpoints` 单元测试，全面验证 Watchcow 数据扫描与状态切换接口。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内运行 `go test -count=1 ./...` 100% 全部通过。
+2. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.19` 并推送至 GitHub 远程仓库。
+
 
 
 

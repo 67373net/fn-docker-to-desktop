@@ -270,12 +270,18 @@ html, body {
 
 .desktop-cache-tip {
   font-size: 0.8rem;
-  color: var(--text-muted);
+  color: #2563eb;
   margin-left: 0.85rem;
   display: inline-flex;
   align-items: center;
   line-height: 1.35;
   white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .desktop-cache-tip {
+    color: #60a5fa;
+  }
 }
 
 .filter-chips {
@@ -1894,4 +1900,30 @@ tr.row-updating {
   white-space: nowrap;
   vertical-align: middle;
 }
+
+/* ==================== Info Help Circle Button ==================== */
+.info-circle-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.info-circle-help-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: var(--primary-subtle);
+}
+
 

@@ -363,7 +363,7 @@ desktop_uidir=ui
 		entryMap["fileTypes"] = cfg.FileTypes
 	}
 
-	isNotice := cfg.NoticeEnabled && strings.TrimSpace(cfg.NoticeContent) != ""
+	isNotice := strings.TrimSpace(cfg.NoticeContent) != ""
 
 	if (cfg.Port == 0 && isExternalURL) || isNotice {
 		// CGI redirect mode strictly aligned with WatchCow and for Notice mode
@@ -455,7 +455,7 @@ cat << 'EOFCGIHTML'
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>%s - 启动提示</title>
+<title>%s - 开屏提示</title>
 <style>
   :root { --bg-page: #f1f5f9; --bg-card: #ffffff; --text-main: #0f172a; --text-muted: #64748b; --border: #e2e8f0; --primary: #2563eb; --primary-hover: #1d4ed8; --notice-bg: #eff6ff; --notice-border: #bfdbfe; --notice-text: #1e3a8a; }
   @media (prefers-color-scheme: dark) { :root { --bg-page: #0b0f17; --bg-card: #151b28; --text-main: #f8fafc; --text-muted: #94a3b8; --border: #242f42; --primary: #3b82f6; --primary-hover: #2563eb; --notice-bg: #172554; --notice-border: #1e40af; --notice-text: #dbeafe; } }
@@ -464,7 +464,6 @@ cat << 'EOFCGIHTML'
   .notice-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; max-width: 460px; width: 100%%; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
   .notice-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
   .notice-app-name { font-size: 17px; font-weight: 700; color: var(--text-main); }
-  .notice-badge { font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 2px; }
   .notice-body { background: var(--notice-bg); border: 1px solid var(--notice-border); color: var(--notice-text); border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; margin-bottom: 20px; }
   .notice-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .skip-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
@@ -477,7 +476,6 @@ cat << 'EOFCGIHTML'
   <div class="notice-header">
     <div>
       <div class="notice-app-name">%s</div>
-      <div class="notice-badge">📢 应用启动提示</div>
     </div>
   </div>
   <div class="notice-body">%s</div>

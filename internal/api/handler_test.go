@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -67,7 +68,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.18",
+		AppVersion: "1.1.19",
 	})
 
 	mux := http.NewServeMux()
@@ -115,8 +116,8 @@ func TestHandleExportDesktopItems(t *testing.T) {
 				t.Fatalf("Failed to decode desktop-items.json inside ZIP: %v", err)
 			}
 			_ = rc.Close()
-			if exportResult.Version != "1.1.18" {
-				t.Errorf("Expected version 1.1.18 inside ZIP, got %s", exportResult.Version)
+			if exportResult.Version != "1.1.19" {
+				t.Errorf("Expected version 1.1.19 inside ZIP, got %s", exportResult.Version)
 			}
 			if exportResult.Total != 1 || len(exportResult.Items) != 1 {
 				t.Errorf("Expected 1 item inside ZIP, got %d items", exportResult.Total)
@@ -159,7 +160,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 	if err := json.NewDecoder(recJSON.Body).Decode(&jsonExport); err != nil {
 		t.Fatalf("Failed to decode JSON export: %v", err)
 	}
-	if jsonExport.Version != "1.1.18" || jsonExport.Total != 1 {
+	if jsonExport.Version != "1.1.19" || jsonExport.Total != 1 {
 		t.Errorf("Unexpected JSON export result: %+v", jsonExport)
 	}
 }
@@ -183,7 +184,7 @@ func TestWANSecurityBlocking(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.18",
+		AppVersion: "1.1.19",
 	})
 
 	mux := http.NewServeMux()
@@ -219,7 +220,7 @@ func TestWANWithValidSessionToken(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.18",
+		AppVersion: "1.1.19",
 	})
 
 	mux := http.NewServeMux()
@@ -290,7 +291,7 @@ func TestNoticePageRedirect(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.18",
+		AppVersion: "1.1.19",
 	})
 
 	mux := http.NewServeMux()
@@ -340,7 +341,7 @@ func TestHandleUploadIconSizeLimitAndResize(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.18",
+		AppVersion: "1.1.19",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -430,5 +431,113 @@ func TestHandleUploadIconSizeLimitAndResize(t *testing.T) {
 		if bounds.Dx() != 256 || bounds.Dy() != 256 {
 			t.Errorf("Expected resized image dimensions 256x256, got %dx%d", bounds.Dx(), bounds.Dy())
 		}
+	}
+}
+
+func TestWatchcowEndpoints(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-watchcow-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	mockSock := filepath.Join(tempDir, "mock-docker.sock")
+	listener, err := net.Listen("unix", mockSock)
+	if err != nil {
+		t.Fatalf("Failed to listen on mock unix socket: %v", err)
+	}
+	defer listener.Close()
+
+	mockServer := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+				{
+					"Id":    "c1234567890abcdef",
+					"Names": []string{"/watchcow-test-container"},
+					"Image": "test/image:latest",
+					"State": "running",
+					"Labels": map[string]string{
+						"watchcow.enable":       "false",
+						"watchcow.display_name": "Test App",
+						"watchcow.service_port": "9999",
+					},
+				},
+			})
+		}),
+	}
+	go func() {
+		_ = mockServer.Serve(listener)
+	}()
+	defer mockServer.Close()
+
+	desktop.SetWatchcowDockerSocketPath(mockSock)
+	defer desktop.SetWatchcowDockerSocketPath("/var/run/docker.sock")
+
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.19",
+	})
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. GET /api/desktop/watchcow
+	req := httptest.NewRequest("GET", "/api/desktop/watchcow", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for GET /api/desktop/watchcow, got %d", rec.Code)
+	}
+
+	var items []desktop.WatchcowItem
+	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+		t.Fatalf("Failed to decode watchcow items response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 watchcow item, got %d", len(items))
+	}
+	if items[0].ID != "watchcow-watchcow-test-container" {
+		t.Errorf("Expected item ID 'watchcow-watchcow-test-container', got %s", items[0].ID)
+	}
+
+	// 2. Toggle a watchcow item state
+	testID := items[0].ID
+	storage.SetWatchcowState(testID, false)
+	if storage.GetWatchcowState(testID, true) != false {
+		t.Errorf("Expected initial state for %s to be false", testID)
+	}
+
+	reqToggle := httptest.NewRequest("POST", "/api/desktop/watchcow/"+testID+"/toggle", nil)
+	reqToggle.RemoteAddr = "127.0.0.1:1234"
+	recToggle := httptest.NewRecorder()
+	mux.ServeHTTP(recToggle, reqToggle)
+
+	if recToggle.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for toggle, got %d. Body: %s", recToggle.Code, recToggle.Body.String())
+	}
+
+	var toggleResp struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(recToggle.Body).Decode(&toggleResp); err != nil {
+		t.Fatalf("Failed to decode toggle response: %v", err)
+	}
+
+	if !toggleResp.Enabled {
+		t.Errorf("Expected toggle to switch from false to true, got false")
+	}
+	if storage.GetWatchcowState(testID, false) != true {
+		t.Errorf("Expected storage state to be persisted as true")
 	}
 }

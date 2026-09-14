@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -103,6 +104,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/desktop/items/{id}/delete", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/toggle", h.handleToggleDesktopItem)
 	mux.HandleFunc("GET /api/desktop/export", h.handleExportDesktopItems)
+	mux.HandleFunc("GET /api/desktop/watchcow", h.handleGetWatchcowItems)
+	mux.HandleFunc("POST /api/desktop/watchcow/{id}/toggle", h.handleToggleWatchcowItem)
+	mux.HandleFunc("GET /api/desktop/watchcow/icon", h.handleGetWatchcowIcon)
 
 	mux.HandleFunc("POST /api/logs/client", h.handleClientLog)
 
@@ -1460,9 +1464,37 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
 
 	escapedTitle := html.EscapeString(item.Name)
 	escapedNotice := html.EscapeString(item.NoticeContent)
-	iconUrl := "/icon.png"
-	if item.ID != "" {
-		iconUrl = fmt.Sprintf("/api/desktop/items/%s/icon", item.ID)
+
+	iconDataUrl := ""
+	if strings.HasPrefix(item.Icon, "data:image/") {
+		iconDataUrl = item.Icon
+	} else if item.Icon != "" {
+		cleanName := filepath.Clean(strings.TrimPrefix(strings.TrimPrefix(item.Icon, "/icons/"), "icons/"))
+		iconPath := filepath.Join(h.iconsDir, cleanName)
+		if data, err := os.ReadFile(iconPath); err == nil && len(data) > 0 {
+			mimeType := "image/png"
+			if strings.HasSuffix(cleanName, ".svg") {
+				mimeType = "image/svg+xml"
+			} else if strings.HasSuffix(cleanName, ".jpg") || strings.HasSuffix(cleanName, ".jpeg") {
+				mimeType = "image/jpeg"
+			} else if strings.HasSuffix(cleanName, ".webp") {
+				mimeType = "image/webp"
+			} else if strings.HasSuffix(cleanName, ".ico") {
+				mimeType = "image/x-icon"
+			}
+			iconDataUrl = fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data))
+		}
+	}
+	if iconDataUrl == "" {
+		if data, err := os.ReadFile(filepath.Join(h.iconsDir, "default_item_icon.png")); err == nil && len(data) > 0 {
+			iconDataUrl = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+		} else if data, err := os.ReadFile(filepath.Join(h.iconsDir, "icon.png")); err == nil && len(data) > 0 {
+			iconDataUrl = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+		} else if data, err := os.ReadFile(filepath.Join(h.iconsDir, "../web/default_item_icon.png")); err == nil && len(data) > 0 {
+			iconDataUrl = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+		} else if data, err := os.ReadFile(filepath.Join(h.iconsDir, "../icon.png")); err == nil && len(data) > 0 {
+			iconDataUrl = "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+		}
 	}
 
 	targetJson, _ := json.Marshal(target)
@@ -1473,7 +1505,7 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>%s - 启动提示</title>
+  <title>%s - 开屏提示</title>
   <style>
     :root {
       --bg-page: #f1f5f9;
@@ -1615,10 +1647,9 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
 <body>
   <div class="notice-card">
     <div class="notice-header">
-      <img src="%s" alt="icon" class="notice-icon" onerror="this.src='/icon.png'">
+      <img src="%s" alt="icon" class="notice-icon" onerror="this.onerror=null; this.style.display='none';">
       <div class="notice-title-group">
         <div class="notice-app-name">%s</div>
-        <div class="notice-badge">📢 应用启动提示</div>
       </div>
     </div>
     <div class="notice-body">%s</div>
@@ -1669,7 +1700,7 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
     })();
   </script>
 </body>
-</html>`, escapedTitle, iconUrl, escapedTitle, escapedNotice, string(targetJson), string(idJson))
+</html>`, escapedTitle, iconDataUrl, escapedTitle, escapedNotice, string(targetJson), string(idJson))
 }
 
 // Auth handlers
@@ -1811,4 +1842,126 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"fn-docker-to-desktop-%s.log\"", date))
 	http.ServeFile(w, r, filePath)
+}
+
+// /api/desktop/watchcow
+func (h *Handler) handleGetWatchcowItems(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	if err != nil {
+		slog.Warn("[WATCHCOW] 扫描 Docker 标签失败", "error", err)
+		h.jsonResponse(w, r, []desktop.WatchcowItem{}, http.StatusOK)
+		return
+	}
+	if items == nil {
+		items = []desktop.WatchcowItem{}
+	}
+	h.jsonResponse(w, r, items, http.StatusOK)
+}
+
+// /api/desktop/watchcow/{id}/toggle
+func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		h.jsonResponse(w, r, map[string]string{"error": "id is required"}, http.StatusBadRequest)
+		return
+	}
+
+	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	if err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "扫描 Watchcow 标签失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	var targetItem *desktop.WatchcowItem
+	for i := range items {
+		if items[i].ID == id {
+			targetItem = &items[i]
+			break
+		}
+	}
+	if targetItem == nil {
+		h.jsonResponse(w, r, map[string]string{"error": "未找到对应的 Watchcow 项目"}, http.StatusNotFound)
+		return
+	}
+
+	targetState := !targetItem.Enabled
+	targetItem.Enabled = targetState
+	_ = h.storage.SetWatchcowState(id, targetState)
+
+	if h.installer != nil {
+		dItem := desktop.DesktopItem{
+			ID:            targetItem.ID,
+			Name:          targetItem.Name,
+			AppName:       targetItem.AppName,
+			ContainerName: targetItem.ContainerName,
+			Image:         targetItem.Image,
+			Port:          targetItem.Port,
+			Protocol:      targetItem.Protocol,
+			Path:          targetItem.Path,
+			UIType:        targetItem.UIType,
+			AllUsers:      targetItem.AllUsers,
+			Icon:          targetItem.Icon,
+			FileTypes:     targetItem.FileTypes,
+			NoDisplay:     targetItem.NoDisplay,
+			Enabled:       targetItem.Enabled,
+			Mode:          desktop.ModeLocalPort,
+		}
+		if targetState {
+			_ = h.installer.InstallItem(dItem)
+		} else {
+			_ = h.installer.UninstallItem(dItem)
+		}
+	}
+
+	slog.Info("<=== [WATCHCOW] 切换 Watchcow 条目状态成功", "id", id, "name", targetItem.Name, "enabled", targetItem.Enabled)
+	h.jsonResponse(w, r, targetItem, http.StatusOK)
+}
+
+// /api/desktop/watchcow/icon
+func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
+	if err != nil || len(items) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	var found *desktop.WatchcowItem
+	for i := range items {
+		if items[i].ID == id {
+			found = &items[i]
+			break
+		}
+	}
+	if found == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if found.LocalIconPath != "" {
+		if _, err := os.Stat(found.LocalIconPath); err == nil {
+			http.ServeFile(w, r, found.LocalIconPath)
+			return
+		}
+	}
+
+	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
+		http.Redirect(w, r, found.Icon, http.StatusFound)
+		return
+	}
+
+	http.NotFound(w, r)
 }

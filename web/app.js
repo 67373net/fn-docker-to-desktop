@@ -42,6 +42,9 @@ function getIconUrl(icon) {
   if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
     return icon;
   }
+  if (icon.startsWith('/api/')) {
+    return apiUrl(icon);
+  }
   const clean = icon.replace(/^\/?icons\//, '').replace(/^\/+/, '');
   if (!clean || clean === 'icon.png' || clean === 'default_item_icon.png') {
     return apiUrl('/default_item_icon.png');
@@ -121,6 +124,7 @@ let state = {
   currentTab: 'ports',
   ports: [],
   desktopItems: [],
+  watchcowItems: [],
   processes: [],
   system: null,
   host: null,
@@ -232,7 +236,22 @@ async function fetchPorts() {
   }
 }
 
+async function fetchWatchcowItems() {
+  try {
+    const res = await fetch(apiUrl('/api/desktop/watchcow'));
+    if (res.status === 401) return;
+    if (res.ok) {
+      state.watchcowItems = await res.json();
+      renderDesktopTable();
+      updateDesktopCountBadge();
+    }
+  } catch (err) {
+    console.error('Fetch watchcow items error:', err);
+  }
+}
+
 async function fetchDesktopItems() {
+  fetchWatchcowItems();
   try {
     const res = await fetch(apiUrl('/api/desktop/items'));
     if (res.status === 401) return showAuthModal();
@@ -556,7 +575,7 @@ function updatePortCountBadge() {
 
 function updateDesktopCountBadge() {
   const badge = document.getElementById('desktop-count-badge');
-  if (badge) badge.textContent = state.desktopItems.length;
+  if (badge) badge.textContent = (state.desktopItems ? state.desktopItems.length : 0) + (state.watchcowItems ? state.watchcowItems.length : 0);
 }
 
 function updateDesktopBadge() {
@@ -895,95 +914,159 @@ function renderDesktopTable() {
   const query = state.desktopSearch.trim().toLowerCase();
   const filtered = state.desktopItems.filter(item => {
     if (!query) return true;
-    return item.name.toLowerCase().includes(query) ||
+    return (item.name || '').toLowerCase().includes(query) ||
       (item.target_url || '').toLowerCase().includes(query) ||
-      String(item.port).includes(query);
+      (item.container_name || '').toLowerCase().includes(query) ||
+      String(item.port || '').includes(query);
   });
 
-  if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">暂无已创建的桌面图标</td></tr>';
+  const filteredWatchcow = (state.watchcowItems || []).filter(item => {
+    if (!query) return true;
+    return (item.name || '').toLowerCase().includes(query) ||
+      (item.container_name || '').toLowerCase().includes(query) ||
+      String(item.port || '').includes(query);
+  });
+
+  if (filtered.length === 0 && filteredWatchcow.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
     return;
   }
 
   let html = '';
-  for (const item of filtered) {
-    let modeText = '本机端口';
-    let modeClass = 'text-type-local';
-    let targetText = `:${item.port}`;
-    if (item.mode === 'proxy') {
-      modeText = '端口映射';
-      modeClass = 'text-type-proxy';
-      targetText = `${item.target_url} ➔ :${item.port}`;
-    } else if (item.mode === 'shortcut') {
-      modeText = '网页链接';
-      modeClass = 'text-type-shortcut';
-      targetText = item.target_url;
-    }
 
-    const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
-    const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
-    const permText = item.all_users ? '所有用户' : '仅管理员';
-    const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
-    const toggleHtml = `
-      <div class="status-toggle-wrapper">
-        <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
-          <input type="checkbox" class="desktop-toggle-checkbox" data-id="${item.id}" ${item.enabled ? 'checked' : ''}>
-          <span class="toggle-slider"></span>
-        </label>
-        <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
-          ${item.enabled ? '就绪' : '已停用'}
-        </span>
-      </div>`;
+  if (filtered.length === 0 && filteredWatchcow.length > 0) {
+    html += '<tr><td colspan="9" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
+  } else {
+    for (const item of filtered) {
+      let modeText = '本机端口';
+      let modeClass = 'text-type-local';
+      let targetText = `:${item.port}`;
+      if (item.mode === 'proxy') {
+        modeText = '端口映射';
+        modeClass = 'text-type-proxy';
+        targetText = `${item.target_url} ➔ :${item.port}`;
+      } else if (item.mode === 'shortcut') {
+        modeText = '网页链接';
+        modeClass = 'text-type-shortcut';
+        targetText = item.target_url;
+      }
 
-    const iconSrc = getIconUrl(item.icon);
-
-    let statusColHtml = toggleHtml;
-    const isReconciling = !!item.reconciling;
-    if (isReconciling || item._updating) {
-      const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '正在更新中...');
-      statusColHtml = `
-        <div class="status-updating-badge">
-          <span class="spinner-small"></span>
-          <span>${escapeHtml(statusText)}</span>
+      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
+      const permText = item.all_users ? '所有用户' : '仅管理员';
+      const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
+      const toggleHtml = `
+        <div class="status-toggle-wrapper">
+          <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
+            <input type="checkbox" class="desktop-toggle-checkbox" data-id="${item.id}" ${item.enabled ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
+            ${item.enabled ? '就绪' : '已停用'}
+          </span>
         </div>`;
-    } else if (item._error) {
-      statusColHtml = `
-        <div class="status-error-badge" style="display: inline-flex; align-items: center; gap: 4px; color: #ef4444; font-size: 0.82rem; font-weight: 500;" title="${escapeHtml(item._statusText || '')}">
-          <span>⚠️</span>
-          <span>${escapeHtml(item._statusText || '操作失败')}</span>
-        </div>`;
+
+      const iconSrc = getIconUrl(item.icon);
+
+      let statusColHtml = toggleHtml;
+      const isReconciling = !!item.reconciling;
+      if (isReconciling || item._updating) {
+        const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '正在更新中...');
+        statusColHtml = `
+          <div class="status-updating-badge">
+            <span class="spinner-small"></span>
+            <span>${escapeHtml(statusText)}</span>
+          </div>`;
+      } else if (item._error) {
+        statusColHtml = `
+          <div class="status-error-badge" style="display: inline-flex; align-items: center; gap: 4px; color: #ef4444; font-size: 0.82rem; font-weight: 500;" title="${escapeHtml(item._statusText || '')}">
+            <span>⚠️</span>
+            <span>${escapeHtml(item._statusText || '操作失败')}</span>
+          </div>`;
+      }
+
+      const isUpdating = !!item._updating || isReconciling;
+      const noDisplayBadge = item.no_display
+        ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
+        : '';
+      const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
+        ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
+        : '';
+
+      html += `<tr class="${isUpdating ? 'row-updating' : ''}">
+        <td>
+          <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+        </td>
+        <td><strong>${escapeHtml(item.name)}</strong>${noDisplayBadge}${fileTypesBadge}</td>
+        <td><span class="${modeClass}">${modeText}</span></td>
+        <td><code>${escapeHtml(targetText)}</code></td>
+        <td><span class="${openModeClass}">${openModeText}</span></td>
+        <td><span class="${permClass}">${permText}</span></td>
+        <td>${statusColHtml}</td>
+        <td>
+          <div class="table-actions">
+            <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
+              <span>编辑</span>
+            </button>
+          </div>
+        </td>
+        <td class="filler-col"></td>
+      </tr>`;
     }
+  }
 
-    const isUpdating = !!item._updating || isReconciling;
-    const noticeBadge = (item.notice_enabled && (item.notice_content || '').trim())
-      ? '<span class="badge badge-info" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); padding: 1px 6px; border-radius: 4px;" title="已开启启动前提醒公告">📢 公告</span>'
-      : '';
-    const noDisplayBadge = item.no_display
-      ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
-      : '';
-    const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
-      ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
-      : '';
+  if (filteredWatchcow.length > 0) {
+    html += `
+      <tr class="table-sink-divider-row" aria-hidden="true">
+        <td colspan="9" class="table-sink-divider-cell">
+          <span class="table-sink-title">Watchcow 数据：读取自 Docker 项目的 Watchcow 标签</span>
+        </td>
+      </tr>`;
 
-    html += `<tr class="${isUpdating ? 'row-updating' : ''}">
-      <td>
-        <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
-      </td>
-      <td><strong>${escapeHtml(item.name)}</strong>${noticeBadge}${noDisplayBadge}${fileTypesBadge}</td>
-      <td><span class="${modeClass}">${modeText}</span></td>
-      <td><code>${escapeHtml(targetText)}</code></td>
-      <td><span class="${openModeClass}">${openModeText}</span></td>
-      <td><span class="${permClass}">${permText}</span></td>
-      <td>${statusColHtml}</td>
-      <td>
-        <div class="table-actions">
-          <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
-            <span>编辑</span>
-          </button>
-        </div>
-      </td>
-      <td class="filler-col"></td>
-    </tr>`;
+    for (const item of filteredWatchcow) {
+      const iconSrc = getIconUrl(item.display_icon || item.icon);
+      const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
+      const permText = item.all_users ? '所有用户' : '仅管理员';
+      const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
+      const noDisplayBadge = item.no_display
+        ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
+        : '';
+      const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
+        ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
+        : '';
+      const containerHint = item.container_name
+        ? `<div style="font-size: 0.76rem; color: var(--text-muted); font-weight: normal; margin-top: 2px;">${escapeHtml(item.container_name)}</div>`
+        : '';
+
+      const targetText = `:${item.port}${item.path && item.path !== '/' ? item.path : ''}`;
+      const toggleHtml = `
+        <div class="status-toggle-wrapper">
+          <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
+            <input type="checkbox" class="watchcow-toggle-checkbox" data-id="${escapeHtml(item.id)}" ${item.enabled ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
+            ${item.enabled ? '就绪' : '已停用'}
+          </span>
+        </div>`;
+
+      html += `<tr>
+        <td>
+          <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+        </td>
+        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}${noDisplayBadge}${fileTypesBadge}</td>
+        <td><span class="badge badge-info" style="font-size: 0.8rem; font-weight: 500; background: rgba(14, 165, 233, 0.12); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); padding: 2px 8px; border-radius: 4px;">Docker 标签</span></td>
+        <td><code>${escapeHtml(targetText)}</code></td>
+        <td><span class="${openModeClass}">${openModeText}</span></td>
+        <td><span class="${permClass}">${permText}</span></td>
+        <td>${toggleHtml}</td>
+        <td>
+          <span style="color: var(--text-muted); font-size: 0.82rem; user-select: none;">不可编辑</span>
+        </td>
+        <td class="filler-col"></td>
+      </tr>`;
+    }
   }
 
   tbody.innerHTML = html;
@@ -1013,6 +1096,55 @@ function renderDesktopTable() {
           const item = state.desktopItems.find(i => i.id === id);
           if (item) item.enabled = updated.enabled;
           showToast(`已成功${updated.enabled ? '启用' : '停用'}桌面图标`, 'success');
+          renderDesktopTable();
+          fetchPorts();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.error || res.statusText;
+          showToast('切换状态失败: ' + errMsg, 'error', 5000);
+          chk.checked = !chk.checked;
+          if (label) {
+            label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
+            label.textContent = originalText;
+          }
+          chk.disabled = false;
+        }
+      } catch (e) {
+        showToast('网络请求异常: ' + e.message, 'error', 5000);
+        chk.checked = !chk.checked;
+        if (label) {
+          label.className = `status-toggle-label ${chk.checked ? 'active' : 'paused'}`;
+          label.textContent = originalText;
+        }
+        chk.disabled = false;
+      }
+    });
+  });
+
+  tbody.querySelectorAll('.watchcow-toggle-checkbox').forEach(chk => {
+    chk.addEventListener('change', async () => {
+      const id = chk.dataset.id;
+      if (chk.disabled) return;
+
+      const wrapper = chk.closest('.status-toggle-wrapper');
+      const label = wrapper ? wrapper.querySelector('.status-toggle-label') : null;
+      const originalText = label ? label.textContent.trim() : '';
+
+      reportClientLog('action', '用户切换Watchcow条目状态', `ID: ${id}, 目标状态: ${chk.checked ? '启用' : '停用'}`, { id, checked: chk.checked });
+
+      chk.disabled = true;
+      if (label) {
+        label.className = 'status-toggle-label pending';
+        label.textContent = '处理中...';
+      }
+
+      try {
+        const res = await fetch(apiUrl(`/api/desktop/watchcow/${encodeURIComponent(id)}/toggle`), { method: 'POST' });
+        if (res.ok) {
+          const updated = await res.json();
+          const item = (state.watchcowItems || []).find(i => i.id === id);
+          if (item) item.enabled = updated.enabled;
+          showToast(`已成功${updated.enabled ? '启用' : '停用'} Watchcow 图标`, 'success');
           renderDesktopTable();
           fetchPorts();
         } else {
@@ -1188,7 +1320,6 @@ function getDesktopItemFormSnapshot() {
     iconBgColor: (document.getElementById('icon-bg-color')?.value || '#1e293b').toLowerCase(),
     iconUrl: document.getElementById('icon-url-input')?.value || '',
     iconHidden: document.getElementById('item-icon')?.value || '',
-    noticeEnabled: !!document.getElementById('item-notice-enabled')?.checked,
     noticeContent: document.getElementById('item-notice-content')?.value || '',
     fileTypes: document.getElementById('item-file-types')?.value || '',
     noDisplay: !!document.getElementById('item-no-display')?.checked
@@ -1208,13 +1339,21 @@ function isDesktopItemFormDirty() {
 
 function tryCloseDesktopItemModal() {
   if (isDesktopItemFormDirty()) {
-    if (!confirm('当前内容已修改但尚未保存，确定要放弃修改并关闭窗口吗？')) {
-      return false;
-    }
+    openConfirmModal({
+      title: '未保存的修改',
+      message: '您有尚未保存的配置更改，直接关闭将丢失这些修改。确定放弃并退出吗？',
+      confirmText: '放弃修改',
+      cancelText: '继续编辑',
+      danger: true,
+      onConfirm: () => {
+        state.desktopItemFormSnapshot = null;
+        closeModal('modal-desktop-item');
+      }
+    });
+  } else {
+    state.desktopItemFormSnapshot = null;
+    closeModal('modal-desktop-item');
   }
-  state.desktopItemFormSnapshot = null;
-  closeModal('modal-desktop-item');
-  return true;
 }
 
 function initModals() {
@@ -1240,7 +1379,7 @@ function initModals() {
     });
   }
 
-  // Global ESC key listener to safely prompt before closing active modals
+  // Global ESC key to close modal with dirty check
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const elDesktop = document.getElementById('modal-desktop-item');
@@ -1261,16 +1400,12 @@ function initModals() {
     }
   });
 
-  // Announcement / Notice toggle in desktop item modal
-  const chkNotice = document.getElementById('item-notice-enabled');
-  const wrapNotice = document.getElementById('item-notice-wrap');
-  if (chkNotice && wrapNotice) {
-    chkNotice.addEventListener('change', () => {
-      wrapNotice.style.display = chkNotice.checked ? 'block' : 'none';
-      if (chkNotice.checked) {
-        const txtNotice = document.getElementById('item-notice-content');
-        if (txtNotice) txtNotice.focus();
-      }
+  // File types help toggle
+  const btnFileTypesHelp = document.getElementById('btn-file-types-help');
+  const helpFileTypes = document.getElementById('item-file-types-help');
+  if (btnFileTypesHelp && helpFileTypes) {
+    btnFileTypesHelp.addEventListener('click', () => {
+      helpFileTypes.style.display = helpFileTypes.style.display === 'none' ? 'block' : 'none';
     });
   }
 
@@ -1451,6 +1586,10 @@ function setDesktopModalMode(mode) {
   const groupUiType = document.getElementById('group-ui-type');
   if (groupUiType) {
     groupUiType.style.display = mode === 'shortcut' ? 'none' : 'block';
+  }
+  const groupFileTypes = document.getElementById('form-group-file-types');
+  if (groupFileTypes) {
+    groupFileTypes.style.display = mode === 'shortcut' ? 'none' : 'block';
   }
   if (mode === 'shortcut') {
     const elUiType = document.getElementById('item-ui-type');
@@ -2562,15 +2701,13 @@ function resetDesktopForm() {
     btnDel.style.display = 'none';
     btnDel.onclick = null;
   }
-  const chkNotice = document.getElementById('item-notice-enabled');
-  if (chkNotice) chkNotice.checked = false;
-  const wrapNotice = document.getElementById('item-notice-wrap');
-  if (wrapNotice) wrapNotice.style.display = 'none';
   const txtNotice = document.getElementById('item-notice-content');
   if (txtNotice) txtNotice.value = '';
 
   const elFileTypes = document.getElementById('item-file-types');
   if (elFileTypes) elFileTypes.value = '';
+  const helpFileTypes = document.getElementById('item-file-types-help');
+  if (helpFileTypes) helpFileTypes.style.display = 'none';
   const chkNoDisplay = document.getElementById('item-no-display');
   if (chkNoDisplay) chkNoDisplay.checked = false;
 
@@ -2660,15 +2797,13 @@ function openEditDesktopModal(id) {
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
   document.getElementById('item-icon').value = item.icon || '';
 
-  const chkNotice = document.getElementById('item-notice-enabled');
-  const wrapNotice = document.getElementById('item-notice-wrap');
   const txtNotice = document.getElementById('item-notice-content');
-  if (chkNotice) chkNotice.checked = !!item.notice_enabled;
-  if (wrapNotice) wrapNotice.style.display = item.notice_enabled ? 'block' : 'none';
   if (txtNotice) txtNotice.value = item.notice_content || '';
 
   const elFileTypes = document.getElementById('item-file-types');
   if (elFileTypes) elFileTypes.value = Array.isArray(item.file_types) ? item.file_types.join(', ') : '';
+  const helpFileTypes = document.getElementById('item-file-types-help');
+  if (helpFileTypes) helpFileTypes.style.display = 'none';
   const chkNoDisplay = document.getElementById('item-no-display');
   if (chkNoDisplay) chkNoDisplay.checked = !!item.no_display;
 
@@ -2986,8 +3121,8 @@ async function handleSaveDesktopItem(e) {
     const formEl = document.getElementById('form-desktop-item');
     const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
 
-    const noticeEnabled = document.getElementById('item-notice-enabled') ? document.getElementById('item-notice-enabled').checked : false;
     const noticeContent = document.getElementById('item-notice-content') ? document.getElementById('item-notice-content').value.trim() : '';
+    const noticeEnabled = !!noticeContent;
 
     const rawFileTypes = document.getElementById('item-file-types') ? document.getElementById('item-file-types').value.trim() : '';
     const fileTypes = rawFileTypes
@@ -3587,6 +3722,7 @@ function initApp() {
   if (btnRefreshDesktop) {
     btnRefreshDesktop.addEventListener('click', () => {
       fetchDesktopItems();
+      fetchWatchcowItems();
     });
   }
 
@@ -3748,13 +3884,6 @@ function initLogViewer() {
   if (btnDownload) {
     btnDownload.addEventListener('click', () => {
       downloadLogFile();
-    });
-  }
-
-  const btnScrollBottom = document.getElementById('btn-scroll-bottom');
-  if (btnScrollBottom) {
-    btnScrollBottom.addEventListener('click', () => {
-      scrollLogsToBottom();
     });
   }
 }

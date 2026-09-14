@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.18">
+  <link rel="stylesheet" href="style.css?v=1.1.19">
 </head>
 <body>
   <!-- Header Bar -->
@@ -29,12 +29,9 @@
       <button class="nav-tab" data-tab="donate">
         <span>🥺 投喂</span>
       </button>
-
-      <!-- Spacer to push subsequent tabs to the right -->
-      <div class="nav-spacer"></div>
-
       <button class="nav-tab" data-tab="processes">
         <span>系统进程</span>
+        <span class="badge" id="proc-count-badge">0</span>
       </button>
       <button class="nav-tab" data-tab="logs">
         <span>日志</span>
@@ -43,9 +40,23 @@
         <span>设置</span>
       </button>
     </nav>
+
+    <!-- System Stats Pill in Header -->
+    <div class="header-metrics">
+      <div class="metric-chip" id="cpu-chip">
+        <span class="metric-dot dot-cpu"></span>
+        <span class="metric-label">CPU</span>
+        <span class="metric-value" id="header-cpu">0%</span>
+      </div>
+      <div class="metric-chip" id="mem-chip">
+        <span class="metric-dot dot-mem"></span>
+        <span class="metric-label">内存</span>
+        <span class="metric-value" id="header-mem">0%</span>
+      </div>
+    </div>
   </header>
 
-  <!-- Main Container (100% Width) -->
+  <!-- Main Content Layout -->
   <main class="app-main">
     <!-- ==================== TAB 1: 进程列表 ==================== -->
     <section class="tab-pane active" id="pane-ports">
@@ -53,10 +64,10 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="port-search" placeholder="搜索端口号、进程、Docker 容器...">
+          <input type="text" id="port-search" placeholder="搜索端口、进程名、容器名...">
         </div>
         <select id="port-filter-source" class="toolbar-select" title="来源筛选">
-          <option value="all">全部</option>
+          <option value="all">全部来源</option>
           <option value="docker" selected>Docker 容器</option>
           <option value="host">系统原生</option>
         </select>
@@ -73,7 +84,7 @@
         <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
           <input type="checkbox" id="toggle-minimal-mode" checked>
           <span class="toggle-switch-track"><span class="toggle-switch-thumb"></span></span>
-          <span class="toggle-switch-text">极简模式</span>
+          <span class="toggle-switch-text">极简</span>
         </label>
         <button class="btn btn-primary" id="btn-quick-add-desktop">
           <span>添加桌面图标</span>
@@ -110,11 +121,11 @@
           <input type="text" id="desktop-search" placeholder="搜索已创建的桌面图标...">
         </div>
         <div class="desktop-cache-tip">
-          💡 由于浏览器缓存，图标更新可能会延迟（约 1~3 分钟，按 Ctrl+F5 强制刷新可立即显示）
+          由于浏览器缓存，图标更新可能会延迟很久（长达数天）
         </div>
         <div class="toolbar-spacer"></div>
-        <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置为 JSON 文件">导出设置</button>
         <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
+        <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置与图标资源为 ZIP 压缩包">导出</button>
         <button class="btn btn-primary" id="btn-open-create-modal">
           <span>添加桌面图标</span>
         </button>
@@ -201,7 +212,6 @@
 
         <button class="btn btn-secondary" id="btn-refresh-logs" title="立即刷新日志">刷新</button>
         <button class="btn btn-secondary" id="btn-download-logs" title="下载当前日志文件">下载日志</button>
-        <button class="btn btn-secondary" id="btn-scroll-bottom" title="滚动到底部">滚到底部</button>
       </div>
 
       <!-- Log Info Bar -->
@@ -209,7 +219,7 @@
         <div class="log-info-meta">
           <span class="log-info-tag">存储路径</span>
           <code id="log-path-display">/var/apps/fn-docker-to-desktop/var/logs/app-YYYY-MM-DD.log</code>
-          <span class="badge badge-neutral" style="margin-left: 8px;">自动保留 8 天</span>
+          <span class="badge badge-neutral" style="margin-left: 8px;">保留 8 天</span>
         </div>
         <div class="log-info-stats">
           <span>当前显示 <strong id="log-display-count">0</strong> / 共 <strong id="log-total-count">0</strong> 行</span>
@@ -231,24 +241,8 @@
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
         <!-- 关于与开源地址 -->
-        <div class="info-section" style="margin-bottom: 1.5rem;">
-          <div class="settings-card" style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; gap: 16px;">
-            <div style="display: flex; align-items: center; gap: 14px;">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-main); flex-shrink: 0;">
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
-              </svg>
-              <div>
-                <div style="font-weight: 600; font-size: 14px; color: var(--text-main);">把 Docker 放到桌面 (fn-docker-to-desktop)</div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                  开源免费项目，欢迎在 GitHub 提交 Issue 与 Star 支持项目持续迭代！
-                </div>
-              </div>
-            </div>
-            <a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 6px; text-decoration: none; padding: 6px 14px; font-size: 13px;">
-              <span>GitHub 仓库</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-            </a>
-          </div>
+        <div style="margin-bottom: 1.25rem; font-size: 13px; color: var(--text-muted);">
+          项目仓库：<a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">https://github.com/67373net/fn-docker-to-desktop</a>
         </div>
 
         <div class="info-section">
@@ -736,31 +730,23 @@
             </div>
 
             <div class="form-group" style="margin-top: 1rem;">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-                <label class="form-label" style="margin-bottom: 0;">应用启动公告 / 提示 (可选)</label>
-                <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; user-select: none;">
-                  <input type="checkbox" id="item-notice-enabled">
-                  <span>开启打开前公告</span>
-                </label>
-              </div>
-              <div id="item-notice-wrap" style="display: none; margin-top: 8px;">
-                <textarea id="item-notice-content" class="form-input" rows="3" placeholder="输入在点击图标打开应用前显示的公告或提醒（支持换行）...&#10;例如：该服务涉及外网穿透，请勿在公共网络泄漏密码；首次载入可能需等待数秒。" style="resize: vertical; min-height: 60px;"></textarea>
-                <div class="form-tip" style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">
-                  开启后，从飞牛桌面点击图标将首先弹出此提示，用户确认后再打开。支持“今日不再提示”。
-                </div>
-              </div>
+              <label class="form-label">开屏提示（可选）</label>
+              <textarea id="item-notice-content" class="form-input" rows="3" placeholder="留空则不设置提示" style="resize: vertical; min-height: 60px;"></textarea>
             </div>
 
-            <div class="form-group" style="margin-top: 1rem;">
+            <div class="form-group" id="form-group-file-types" style="margin-top: 1rem;">
               <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-                <label class="form-label" style="margin-bottom: 0;">文件右键菜单关联 (可选)</label>
+                <div style="display: inline-flex; align-items: center; gap: 6px;">
+                  <label class="form-label" style="margin-bottom: 0;">文件右键菜单关联 (可选)</label>
+                  <button type="button" id="btn-file-types-help" class="info-circle-help-btn" title="点击查看说明" aria-label="查看说明">!</button>
+                </div>
                 <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; user-select: none;">
                   <input type="checkbox" id="item-no-display">
                   <span>不在桌面显示（仅右键菜单）</span>
                 </label>
               </div>
               <input type="text" id="item-file-types" class="form-input" placeholder="输入关联的文件扩展名，多个用逗号隔开，如：txt, md, json, mp4">
-              <div class="form-tip" style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">
+              <div id="item-file-types-help" class="form-tip" style="display: none; margin-top: 6px; font-size: 12px; color: var(--text-muted); background: var(--bg-surface-subtle); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); line-height: 1.5;">
                 配置后，在 fnOS 文件管理器中右键对应类型文件时，可选择通过该应用打开。勾选“不在桌面显示”则桌面不创建普通快捷方式。
               </div>
             </div>
@@ -881,6 +867,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.18"></script>
+  <script src="app.js?v=1.1.19"></script>
 </body>
 </html>
