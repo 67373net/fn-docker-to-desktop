@@ -2863,6 +2863,79 @@ INFO
 3. **Git 提交与发布**：
    - 打上 Git Tag `v1.1.19` 并推送至 GitHub 远程仓库。
 
+---
+
+## 轮次 34 (Turn 34) - 2026-09-14
+
+### 用户需求 (User Requirements)
+1. **标签栏错位与残留元素清理**：顶部导航便签栏所有便签挤到了最左边，且最右边出现了早期版本的残留元素（CPU 0% / 内存 0%），修复布局错位并清理残留内容。
+2. **Watchcow 置底分隔栏文案修改**：“Watchcow 数据：读取自 Docker 项目的 Watchcow 标签” 改为 “以下内容读取自 Docker 项目的 Watchcow 标签”。
+3. **Watchcow 图标读取修复**：Watchcow 数据没有正确读取到图标，当前全部显示为默认图标。
+4. **Watchcow 类型显示根据规则对齐普通图标**：Watchcow 类型之前写死为“Docker 标签”，需根据 Watchcow 规则对齐为普通图标类型（`本机端口` 或 `网页链接`）。
+5. **Watchcow 列表仅显示运行中容器**：不要显示已停止的容器。
+6. **桌面图标表格增加“入口”列**：新增一列“入口”，显示内容为：“图标/右键”、“图标”、“右键”。
+7. **桌面图标刷新按钮排查与解答**：用户点击桌面图标刷新按钮后发现飞牛桌面图标重新排列，排查原因并予以解答。
+8. **桌面图标编辑界面关闭与取消按钮失效修复**：排查并修复 `openConfirmModal is not defined` 引起的无法关闭/取消弹窗问题。
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **导航栏错位与旧指标清理 (`web/index.html`)**：
+   - 恢复 `<nav class="header-nav">` 中的 `<div class="nav-spacer"></div>`（位于「🥺 投喂」与「系统进程」之间），使左侧核心业务与右侧管理设置两翼自然展开对齐；
+   - 彻底删除 `<header>` 中早期遗留且未使用的 `<div class="header-metrics">`（CPU 0% / 内存 0%）结构，界面恢复纯净。
+
+2. **桌面图标编辑弹窗取消/关闭恢复正常 (`web/app.js`)**：
+   - 修复 `tryCloseDesktopItemModal()`：将未定义的 `openConfirmModal(...)` 替换为项目中统一规范的浏览器原生 `confirm(...)` 二次确认弹窗；
+   - 确保未修改直接关闭，有未保存修改时弹出确认，点击右上角 `×`、底部「取消」、模态背景或按 `ESC` 均能正常响应并安全关闭。
+
+3. **Watchcow 容器运行状态过滤 (`internal/desktop/watchcow.go`)**：
+   - Docker API 请求从 `/containers/json?all=1` 改为 `/containers/json`（默认仅返回运行中容器）；
+   - 并在扫描循环中增加 `if c.State != "" && c.State != "running" { continue }` 双重保护，过滤掉所有非运行中容器。
+
+4. **Watchcow 类型动态识别与对齐普通图标 (`internal/desktop/watchcow.go`, `web/app.js`)**：
+   - 根据 Watchcow 官方规范，解析容器的 `watchcow.redirect`、`watchcow.redirect_force_external` 与 `service_port`：
+     - 若配置了外部跳转且无端口或设为强跳外部时，标记为 `shortcut`（网页链接）；
+     - 其它具有服务端口的情况，标记为 `local`（本机端口）；
+   - 在前端表格中去除写死的 `Docker 标签` 徽章，改用与普通图标一致的动态类型标签（`本机端口` / `网页链接`），并统一目标/映射端口格式显示。
+
+5. **Watchcow 图标多源智能解析与服务端代理缓存 (`internal/desktop/watchcow.go`, `internal/api/handler.go`)**：
+   - **本地路径多维度定位 (`resolveWatchcowIconPath`)**：
+     - 在 `dockerContainerJSON` 中加入 `Mounts` 字段解析；
+     - 遇到 `file://` 图标时，依次探测宿主绝对路径、Compose `workingDir`、容器所有 Bind Mounts 宿主路径及衍生目录（如 `-proxy`、`-portal`）、宿主通用工作目录（`/home/net67373`、`/vol1/1000/docker` 等）；
+     - 成功定位并直接映射到宿主有效文件（如 `/home/net67373/watchcow-proxy/icons/homeassistant.png` 与 `/home/net67373/wild-live-bgm/icons/icon.jpg`）；
+   - **服务端代理与磁盘缓存 (`/api/desktop/watchcow/icon`)**：
+     - 对远程 HTTP/HTTPS 图标（如 GitHub raw 地址），由服务端统一代理拉取并缓存至 `iconsDir/wc_cache_<hash>`，彻底规避客户端直接请求外部网络被国内网络阻断或因 CORS 跨域无法加载的问题；
+     - 当图标不存在或网络请求超时时，优雅回退至内嵌默认图标 `default_item_icon.png`（返回 200 OK 并附加缓存头），杜绝 404 报错与客户端控制台刷屏。
+
+6. **桌面图标表格新增“入口”列 (`web/index.html`, `web/app.js`)**：
+   - 表头在“类型”右侧增加 `<th style="width: 110px;">入口</th>`，表格总列数升级为 10 列；
+   - 根据条目的 `no_display`（是否桌面显示图标）与 `file_types`（是否配置文件右键菜单）判定并展示：
+     - 同时拥有图标与右键菜单：显示蓝色徽章 `图标 / 右键`；
+     - 仅有桌面快捷方式：显示灰色徽章 `图标`；
+     - 仅有右键菜单：显示橙色徽章 `右键`；
+   - 同步更新 Watchcow 条目与普通条目，并将置底分隔栏与空状态的 `colspan` 调整为 `10`；
+   - 置底分隔栏标题更新为：“以下内容读取自 Docker 项目的 Watchcow 标签”。
+
+7. **桌面图标“刷新”按钮与桌面重排原理排查与释疑**：
+   - 经全面审查前端 `fetchDesktopItems()` 与后端 `handleGetDesktopItems`，确认该接口仅为内存与数据库的纯只读查询（只调用 `storage.GetAllItems()`），绝不触发 `appcenter-cli`，亦无任何写操作或系统桌面通知；
+   - 飞牛桌面图标重排系因 fnOS 统一网关在应用安装、更新或条目启停时由 AppCenter 触发了系统桌面网格重新排版，与只读刷新按钮无关。
+
+8. **版本升级至 `v1.1.20`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.20`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内运行 `go test -count=1 ./...` 100% 全部通过。
+2. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.20` 并推送至 GitHub 远程仓库。
+
+
 
 
 

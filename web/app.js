@@ -928,14 +928,14 @@ function renderDesktopTable() {
   });
 
   if (filtered.length === 0 && filteredWatchcow.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
     return;
   }
 
   let html = '';
 
   if (filtered.length === 0 && filteredWatchcow.length > 0) {
-    html += '<tr><td colspan="9" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
+    html += '<tr><td colspan="10" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
   } else {
     for (const item of filtered) {
       let modeText = '本机端口';
@@ -950,6 +950,25 @@ function renderDesktopTable() {
         modeClass = 'text-type-shortcut';
         targetText = item.target_url;
       }
+
+      const hasIcon = !item.no_display;
+      const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
+      let entryText = '图标';
+      let entryBadgeClass = 'badge-neutral';
+      if (hasIcon && hasContextMenu) {
+        entryText = '图标 / 右键';
+        entryBadgeClass = 'badge-info';
+      } else if (hasIcon && !hasContextMenu) {
+        entryText = '图标';
+        entryBadgeClass = 'badge-neutral';
+      } else if (!hasIcon && hasContextMenu) {
+        entryText = '右键';
+        entryBadgeClass = 'badge-warning';
+      } else {
+        entryText = '-';
+        entryBadgeClass = 'badge-neutral';
+      }
+      const entryHtml = `<span class="badge ${entryBadgeClass}" style="font-size: 0.8rem; font-weight: 500;">${entryText}</span>`;
 
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
       const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
@@ -986,9 +1005,6 @@ function renderDesktopTable() {
       }
 
       const isUpdating = !!item._updating || isReconciling;
-      const noDisplayBadge = item.no_display
-        ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
-        : '';
       const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
         ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
         : '';
@@ -997,8 +1013,9 @@ function renderDesktopTable() {
         <td>
           <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong>${noDisplayBadge}${fileTypesBadge}</td>
+        <td><strong>${escapeHtml(item.name)}</strong>${fileTypesBadge}</td>
         <td><span class="${modeClass}">${modeText}</span></td>
+        <td>${entryHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
         <td><span class="${openModeClass}">${openModeText}</span></td>
         <td><span class="${permClass}">${permText}</span></td>
@@ -1018,20 +1035,49 @@ function renderDesktopTable() {
   if (filteredWatchcow.length > 0) {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
-        <td colspan="9" class="table-sink-divider-cell">
-          <span class="table-sink-title">Watchcow 数据：读取自 Docker 项目的 Watchcow 标签</span>
+        <td colspan="10" class="table-sink-divider-cell">
+          <span class="table-sink-title">以下内容读取自 Docker 项目的 Watchcow 标签</span>
         </td>
       </tr>`;
 
     for (const item of filteredWatchcow) {
       const iconSrc = getIconUrl(item.display_icon || item.icon);
+      let modeText = '本机端口';
+      let modeClass = 'text-type-local';
+      let targetText = `:${item.port}${item.path && item.path !== '/' ? item.path : ''}`;
+      if (item.mode === 'shortcut') {
+        modeText = '网页链接';
+        modeClass = 'text-type-shortcut';
+        targetText = item.target_url || item.redirect || `:${item.port}`;
+      } else if (item.mode === 'proxy') {
+        modeText = '端口映射';
+        modeClass = 'text-type-proxy';
+        targetText = `${item.target_url} ➔ :${item.port}`;
+      }
+
+      const hasIcon = !item.no_display;
+      const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
+      let entryText = '图标';
+      let entryBadgeClass = 'badge-neutral';
+      if (hasIcon && hasContextMenu) {
+        entryText = '图标 / 右键';
+        entryBadgeClass = 'badge-info';
+      } else if (hasIcon && !hasContextMenu) {
+        entryText = '图标';
+        entryBadgeClass = 'badge-neutral';
+      } else if (!hasIcon && hasContextMenu) {
+        entryText = '右键';
+        entryBadgeClass = 'badge-warning';
+      } else {
+        entryText = '-';
+        entryBadgeClass = 'badge-neutral';
+      }
+      const entryHtml = `<span class="badge ${entryBadgeClass}" style="font-size: 0.8rem; font-weight: 500;">${entryText}</span>`;
+
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
       const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
       const permText = item.all_users ? '所有用户' : '仅管理员';
       const permClass = item.all_users ? 'text-perm-all' : 'text-perm-admin';
-      const noDisplayBadge = item.no_display
-        ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
-        : '';
       const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
         ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
         : '';
@@ -1039,7 +1085,6 @@ function renderDesktopTable() {
         ? `<div style="font-size: 0.76rem; color: var(--text-muted); font-weight: normal; margin-top: 2px;">${escapeHtml(item.container_name)}</div>`
         : '';
 
-      const targetText = `:${item.port}${item.path && item.path !== '/' ? item.path : ''}`;
       const toggleHtml = `
         <div class="status-toggle-wrapper">
           <label class="toggle-switch" title="${item.enabled ? '点击停用' : '点击启用'}">
@@ -1055,8 +1100,9 @@ function renderDesktopTable() {
         <td>
           <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}${noDisplayBadge}${fileTypesBadge}</td>
-        <td><span class="badge badge-info" style="font-size: 0.8rem; font-weight: 500; background: rgba(14, 165, 233, 0.12); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); padding: 2px 8px; border-radius: 4px;">Docker 标签</span></td>
+        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}${fileTypesBadge}</td>
+        <td><span class="${modeClass}">${modeText}</span></td>
+        <td>${entryHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
         <td><span class="${openModeClass}">${openModeText}</span></td>
         <td><span class="${permClass}">${permText}</span></td>
@@ -1339,21 +1385,12 @@ function isDesktopItemFormDirty() {
 
 function tryCloseDesktopItemModal() {
   if (isDesktopItemFormDirty()) {
-    openConfirmModal({
-      title: '未保存的修改',
-      message: '您有尚未保存的配置更改，直接关闭将丢失这些修改。确定放弃并退出吗？',
-      confirmText: '放弃修改',
-      cancelText: '继续编辑',
-      danger: true,
-      onConfirm: () => {
-        state.desktopItemFormSnapshot = null;
-        closeModal('modal-desktop-item');
-      }
-    });
-  } else {
-    state.desktopItemFormSnapshot = null;
-    closeModal('modal-desktop-item');
+    if (!confirm('当前图标内容已修改但尚未保存，确定要放弃修改并退出吗？')) {
+      return;
+    }
   }
+  state.desktopItemFormSnapshot = null;
+  closeModal('modal-desktop-item');
 }
 
 function initModals() {

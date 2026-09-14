@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.19">
+  <link rel="stylesheet" href="style.css?v=1.1.20">
 </head>
 <body>
   <!-- Header Bar -->
@@ -29,6 +29,7 @@
       <button class="nav-tab" data-tab="donate">
         <span>🥺 投喂</span>
       </button>
+      <div class="nav-spacer"></div>
       <button class="nav-tab" data-tab="processes">
         <span>系统进程</span>
         <span class="badge" id="proc-count-badge">0</span>
@@ -40,20 +41,6 @@
         <span>设置</span>
       </button>
     </nav>
-
-    <!-- System Stats Pill in Header -->
-    <div class="header-metrics">
-      <div class="metric-chip" id="cpu-chip">
-        <span class="metric-dot dot-cpu"></span>
-        <span class="metric-label">CPU</span>
-        <span class="metric-value" id="header-cpu">0%</span>
-      </div>
-      <div class="metric-chip" id="mem-chip">
-        <span class="metric-dot dot-mem"></span>
-        <span class="metric-label">内存</span>
-        <span class="metric-value" id="header-mem">0%</span>
-      </div>
-    </div>
   </header>
 
   <!-- Main Content Layout -->
@@ -137,17 +124,18 @@
             <tr>
               <th style="width: 80px;">图标</th>
               <th style="width: 200px;">名称</th>
-              <th style="width: 130px;">类型</th>
-              <th style="width: 260px;">目标 / 映射端口</th>
-              <th style="width: 120px;">打开方式</th>
-              <th style="width: 120px;">访问权限</th>
-              <th style="width: 120px;">运行状态</th>
+              <th style="width: 110px;">类型</th>
+              <th style="width: 110px;">入口</th>
+              <th style="width: 240px;">目标 / 映射端口</th>
+              <th style="width: 110px;">打开方式</th>
+              <th style="width: 110px;">访问权限</th>
+              <th style="width: 110px;">运行状态</th>
               <th style="width: 200px;">操作</th>
               <th class="filler-col"></th>
             </tr>
           </thead>
           <tbody id="desktop-tbody">
-            <tr><td colspan="9" class="empty-state">暂无已创建的桌面图标</td></tr>
+            <tr><td colspan="10" class="empty-state">暂无已创建的桌面图标</td></tr>
           </tbody>
         </table>
       </div>
@@ -867,6 +855,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.19"></script>
+  <script src="app.js?v=1.1.20"></script>
 </body>
 </html>

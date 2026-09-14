@@ -24,9 +24,12 @@ type WatchcowItem struct {
 	EntryName     string   `json:"entry_name"`
 	AppName       string   `json:"app_name"`
 	Name          string   `json:"name"`
+	Mode          string   `json:"mode"`
 	Port          int      `json:"port"`
 	Protocol      string   `json:"protocol"`
 	Path          string   `json:"path"`
+	TargetURL     string   `json:"target_url,omitempty"`
+	Redirect      string   `json:"redirect,omitempty"`
 	UIType        string   `json:"ui_type"`
 	AllUsers      bool     `json:"all_users"`
 	Icon          string   `json:"icon"`
@@ -38,19 +41,99 @@ type WatchcowItem struct {
 	IsWatchcow    bool     `json:"is_watchcow"`
 }
 
+type dockerContainerMount struct {
+	Type        string `json:"Type"`
+	Source      string `json:"Source"`
+	Destination string `json:"Destination"`
+}
+
 type dockerContainerJSON struct {
-	ID     string            `json:"Id"`
-	Names  []string          `json:"Names"`
-	Image  string            `json:"Image"`
-	State  string            `json:"State"`
-	Status string            `json:"Status"`
-	Labels map[string]string `json:"Labels"`
+	ID     string                 `json:"Id"`
+	Names  []string               `json:"Names"`
+	Image  string                 `json:"Image"`
+	State  string                 `json:"State"`
+	Status string                 `json:"Status"`
+	Labels map[string]string      `json:"Labels"`
 	Ports  []struct {
 		IP          string `json:"IP"`
 		PrivatePort int    `json:"PrivatePort"`
 		PublicPort  int    `json:"PublicPort"`
 		Type        string `json:"Type"`
 	} `json:"Ports"`
+	Mounts []dockerContainerMount `json:"Mounts"`
+}
+
+func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
+	if !strings.HasPrefix(iconVal, "file://") {
+		return ""
+	}
+	clean := strings.TrimPrefix(iconVal, "file://")
+	clean = strings.TrimPrefix(clean, "./")
+	clean = strings.TrimPrefix(clean, "/")
+
+	// 1. Host absolute path
+	if strings.HasPrefix(iconVal, "file:///") {
+		absPath := strings.TrimPrefix(iconVal, "file://")
+		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+			return absPath
+		}
+	}
+
+	// 2. Compose workingDir
+	if workingDir != "" {
+		cand := filepath.Join(workingDir, clean)
+		if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+			return cand
+		}
+	}
+
+	baseName := filepath.Base(clean)
+
+	// 3. Mount sources and common variations
+	for _, m := range mounts {
+		if m.Source == "" {
+			continue
+		}
+		sources := []string{
+			m.Source,
+			m.Source + "-proxy",
+			m.Source + "-portal",
+		}
+		for _, s := range sources {
+			candidates := []string{
+				filepath.Join(s, clean),
+				filepath.Join(s, "icons", baseName),
+				filepath.Join(s, baseName),
+			}
+			for _, cand := range candidates {
+				if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+					return cand
+				}
+			}
+		}
+	}
+
+	// 4. Common host storage locations
+	commonBases := []string{
+		"/home/net67373",
+		"/vol1/1000/docker",
+		"/var/apps",
+	}
+	for _, b := range commonBases {
+		candidates := []string{
+			filepath.Join(b, "watchcow-proxy", "icons", baseName),
+			filepath.Join(b, "watchcow", "icons", baseName),
+			filepath.Join(b, "watchcow", "README.assets", baseName),
+			filepath.Join(b, "wild-live-bgm", "icons", baseName),
+		}
+		for _, cand := range candidates {
+			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+				return cand
+			}
+		}
+	}
+
+	return ""
 }
 
 var (
@@ -95,7 +178,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 	}
 
 	client := getWatchcowDockerClient()
-	resp, err := client.Get("http://localhost/containers/json?all=1")
+	resp, err := client.Get("http://localhost/containers/json")
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +196,9 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 	var results []WatchcowItem
 
 	for _, c := range rawContainers {
+		if c.State != "" && c.State != "running" {
+			continue
+		}
 		labels := c.Labels
 		if len(labels) == 0 {
 			continue
@@ -199,17 +285,29 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 
 			itemID := fmt.Sprintf("watchcow-%s", containerName)
 
-			iconVal := defaultEntry["icon"]
-			localIcon := ""
-			displayIcon := iconVal
-			if strings.HasPrefix(iconVal, "file://") && workingDir != "" {
-				rel := strings.TrimPrefix(strings.TrimPrefix(iconVal, "file://./"), "file://")
-				candidate := filepath.Join(workingDir, rel)
-				if _, err := os.Stat(candidate); err == nil {
-					localIcon = candidate
-					displayIcon = fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
+			redirectVal := defaultEntry["redirect"]
+			forceExternal := defaultEntry["redirect_force_external"] == "true"
+			mode := "local"
+			targetURL := ""
+			if redirectVal != "" {
+				if pVal == 0 || forceExternal {
+					mode = "shortcut"
+					targetURL = redirectVal
+				} else {
+					mode = "local"
+					targetURL = redirectVal
+				}
+			} else {
+				if pVal > 0 {
+					mode = "local"
+				} else {
+					mode = "shortcut"
 				}
 			}
+
+			iconVal := defaultEntry["icon"]
+			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
+			displayIcon := fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
 
 			var fileTypes []string
 			if ft := defaultEntry["file_types"]; ft != "" {
@@ -250,9 +348,12 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				EntryName:     "default",
 				AppName:       appName,
 				Name:          displayName,
+				Mode:          mode,
 				Port:          pVal,
 				Protocol:      protocol,
 				Path:          pathVal,
+				TargetURL:     targetURL,
+				Redirect:      redirectVal,
 				UIType:        uiType,
 				AllUsers:      defaultEntry["all_users"] == "true",
 				Icon:          iconVal,
@@ -300,17 +401,29 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 
 			itemID := fmt.Sprintf("watchcow-%s-%s", containerName, en)
 
-			iconVal := eData["icon"]
-			localIcon := ""
-			displayIcon := iconVal
-			if strings.HasPrefix(iconVal, "file://") && workingDir != "" {
-				rel := strings.TrimPrefix(strings.TrimPrefix(iconVal, "file://./"), "file://")
-				candidate := filepath.Join(workingDir, rel)
-				if _, err := os.Stat(candidate); err == nil {
-					localIcon = candidate
-					displayIcon = fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
+			redirectVal := eData["redirect"]
+			forceExternal := eData["redirect_force_external"] == "true"
+			mode := "local"
+			targetURL := ""
+			if redirectVal != "" {
+				if pVal == 0 || forceExternal {
+					mode = "shortcut"
+					targetURL = redirectVal
+				} else {
+					mode = "local"
+					targetURL = redirectVal
+				}
+			} else {
+				if pVal > 0 {
+					mode = "local"
+				} else {
+					mode = "shortcut"
 				}
 			}
+
+			iconVal := eData["icon"]
+			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
+			displayIcon := fmt.Sprintf("/api/desktop/watchcow/icon?id=%s", itemID)
 
 			var fileTypes []string
 			if ft := eData["file_types"]; ft != "" {
@@ -351,9 +464,12 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				EntryName:     en,
 				AppName:       appName,
 				Name:          title,
+				Mode:          mode,
 				Port:          pVal,
 				Protocol:      protocol,
 				Path:          pathVal,
+				TargetURL:     targetURL,
+				Redirect:      redirectVal,
 				UIType:        uiType,
 				AllUsers:      eData["all_users"] == "true",
 				Icon:          iconVal,

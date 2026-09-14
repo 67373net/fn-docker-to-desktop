@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1925,17 +1926,37 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 	h.jsonResponse(w, r, targetItem, http.StatusOK)
 }
 
+func (h *Handler) serveDefaultItemIcon(w http.ResponseWriter, r *http.Request) {
+	if h.webFS != nil {
+		if data, err := fs.ReadFile(h.webFS, "default_item_icon.png"); err == nil && len(data) > 0 {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.WriteHeader(http.StatusOK)
+			w.Write(data)
+			return
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(h.iconsDir, "default_item_icon.png")); err == nil && len(data) > 0 {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+		return
+	}
+	http.NotFound(w, r)
+}
+
 // /api/desktop/watchcow/icon
 func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		http.NotFound(w, r)
+		h.serveDefaultItemIcon(w, r)
 		return
 	}
 
 	items, err := desktop.ScanWatchcowItems(h.storage.GetWatchcowState)
 	if err != nil || len(items) == 0 {
-		http.NotFound(w, r)
+		h.serveDefaultItemIcon(w, r)
 		return
 	}
 
@@ -1947,21 +1968,57 @@ func (h *Handler) handleGetWatchcowIcon(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if found == nil {
-		http.NotFound(w, r)
+		h.serveDefaultItemIcon(w, r)
 		return
 	}
 
+	// 1. If LocalIconPath exists, serve directly
 	if found.LocalIconPath != "" {
-		if _, err := os.Stat(found.LocalIconPath); err == nil {
+		if info, err := os.Stat(found.LocalIconPath); err == nil && !info.IsDir() {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 			http.ServeFile(w, r, found.LocalIconPath)
 			return
 		}
 	}
 
+	// 2. If Icon is an HTTP/HTTPS URL, proxy and cache
 	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
-		http.Redirect(w, r, found.Icon, http.StatusFound)
-		return
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.Icon)))
+		ext := filepath.Ext(found.Icon)
+		if ext == "" || len(ext) > 5 {
+			ext = ".png"
+		}
+		cachePath := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
+		if info, err := os.Stat(cachePath); err == nil && info.Size() > 0 {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			http.ServeFile(w, r, cachePath)
+			return
+		}
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, found.Icon, nil)
+		if err == nil {
+			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; fn-docker-to-desktop)")
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+				if err == nil && len(data) > 0 {
+					_ = os.WriteFile(cachePath, data, 0644)
+					ct := resp.Header.Get("Content-Type")
+					if ct == "" {
+						ct = http.DetectContentType(data)
+					}
+					w.Header().Set("Content-Type", ct)
+					w.Header().Set("Cache-Control", "public, max-age=86400")
+					w.WriteHeader(http.StatusOK)
+					w.Write(data)
+					return
+				}
+			}
+		}
 	}
 
-	http.NotFound(w, r)
+	// 3. Fallback to default icon
+	h.serveDefaultItemIcon(w, r)
 }
