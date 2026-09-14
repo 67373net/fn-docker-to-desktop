@@ -319,15 +319,12 @@ func (w *Watcher) broadcastMessage(event string, data interface{}) {
 		return
 	}
 
-	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(payload))
-	b := []byte(msg)
-
 	w.subLock.RLock()
 	defer w.subLock.RUnlock()
 
 	for ch := range w.subscribers {
 		select {
-		case ch <- b:
+		case ch <- payload:
 		default:
 			// Client slow, skip to prevent blocking
 		}
@@ -343,16 +340,13 @@ func (w *Watcher) broadcastMessageToView(event string, data interface{}, targetV
 		return
 	}
 
-	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(payload))
-	b := []byte(msg)
-
 	w.subLock.RLock()
 	defer w.subLock.RUnlock()
 
 	for ch, view := range w.subscribers {
 		if view == targetView || view == "all" {
 			select {
-			case ch <- b:
+			case ch <- payload:
 			default:
 			}
 		}

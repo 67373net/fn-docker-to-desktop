@@ -1898,6 +1898,12 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 	_ = h.storage.SetWatchcowState(id, targetState)
 
 	if h.installer != nil {
+		appName := targetItem.AppName
+		if appName == "" || !strings.HasPrefix(appName, "fndocker.") {
+			appName = desktop.DeriveWatchcowAppName(targetItem.ContainerName, targetItem.EntryName, "")
+		}
+		targetItem.AppName = appName
+
 		dItem := desktop.DesktopItem{
 			ID:            targetItem.ID,
 			Name:          targetItem.Name,
@@ -1907,18 +1913,29 @@ func (h *Handler) handleToggleWatchcowItem(w http.ResponseWriter, r *http.Reques
 			Port:          targetItem.Port,
 			Protocol:      targetItem.Protocol,
 			Path:          targetItem.Path,
+			TargetURL:     targetItem.TargetURL,
 			UIType:        targetItem.UIType,
 			AllUsers:      targetItem.AllUsers,
 			Icon:          targetItem.Icon,
 			FileTypes:     targetItem.FileTypes,
 			NoDisplay:     targetItem.NoDisplay,
 			Enabled:       targetItem.Enabled,
-			Mode:          desktop.ModeLocalPort,
+			Mode:          desktop.ItemMode(targetItem.Mode),
 		}
 		if targetState {
 			_ = h.installer.InstallItem(dItem)
 		} else {
 			_ = h.installer.UninstallItem(dItem)
+			// Defensively uninstall any legacy watchcow package name (e.g. watchcow.<container>)
+			legacyAppName := "watchcow." + targetItem.ContainerName
+			if targetItem.EntryName != "" && targetItem.EntryName != "default" {
+				legacyAppName = fmt.Sprintf("watchcow.%s.%s", targetItem.ContainerName, targetItem.EntryName)
+			}
+			if legacyAppName != dItem.AppName {
+				legacyItem := dItem
+				legacyItem.AppName = legacyAppName
+				_ = h.installer.UninstallItem(legacyItem)
+			}
 		}
 	}
 

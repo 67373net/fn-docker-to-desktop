@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.20">
+  <link rel="stylesheet" href="style.css?v=1.1.21">
 </head>
 <body>
   <!-- Header Bar -->
@@ -32,7 +32,6 @@
       <div class="nav-spacer"></div>
       <button class="nav-tab" data-tab="processes">
         <span>系统进程</span>
-        <span class="badge" id="proc-count-badge">0</span>
       </button>
       <button class="nav-tab" data-tab="logs">
         <span>日志</span>
@@ -68,7 +67,7 @@
         </button>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
-        <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、进程/容器、桌面图标、操作）">
+        <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、容器/进程、桌面图标、操作）">
           <input type="checkbox" id="toggle-minimal-mode" checked>
           <span class="toggle-switch-track"><span class="toggle-switch-thumb"></span></span>
           <span class="toggle-switch-text">极简</span>
@@ -86,7 +85,7 @@
               <th style="width: 140px;">端口</th>
               <th class="col-hide-minimal" style="width: 100px;">协议</th>
               <th class="col-hide-minimal" style="width: 180px;">监听地址</th>
-              <th style="width: 240px;">进程 / 容器</th>
+              <th style="width: 240px;">容器 / 进程</th>
               <th class="col-hide-minimal" style="width: 140px;">资源消耗</th>
               <th style="width: 140px;">桌面图标</th>
               <th style="width: 160px;">操作</th>
@@ -855,6 +854,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.20"></script>
+  <script src="app.js?v=1.1.21"></script>
 </body>
 </html>

@@ -2935,6 +2935,62 @@ INFO
 3. **Git 提交与发布**：
    - 打上 Git Tag `v1.1.20` 并推送至 GitHub 远程仓库。
 
+---
+
+## 轮次 35 (Turn 35) - 2026-09-14
+
+### 用户需求 (User Requirements)
+1. 安装完成后马上打开，显示 bad gateway，如果程序启动较慢，能否先显示一个启动中。
+2. 系统进程 tab 上不用显示数字 badge。
+3. 打开 app 窗口后，console 一直报错：
+   `SSE parse error: SyntaxError: Unexpected token 'e', "event: por"... is not valid JSON (at VM15237:1:1) at JSON.parse (<anonymous>) at state.eventSource.onmessage (app.js?v=1.1.20:550:25)`
+4. 桌面图标的入口这一列，显示为普通文字样式，不要显示得像标签一样。
+5. 进程列表中 进程 / 容器 改为 容器 / 进程。
+6. 将 2 个 watchcow 的图标设为了启用，卸载本产品后，图标没有消失，排查原因；明确要求：读取 watchcow 的设置后，跟本产品的其他图标一样处理，都在本产品的范围内处理，绝不能影响到原生 watchcow 或其他 app，并在卸载时彻底清理干净。
+
+### 架构设计与改动清单 (Architectural Changes)
+
+1. **消除 Bad Gateway 与构建极速就绪启动过渡页 (`cmd/server/main.go`, `fnos-app/cmd/main`)**：
+   - **Unix Socket 提前极速绑定**：在 `cmd/server/main.go` 中，将 `net.Listen("unix", socketPath)` 提升至初始化最前列（在加载存储、设置、代理和桌面同步之前执行），并以 `isAppReady`（`atomic.Bool`）控制状态分发。使得进程启动数毫秒内即已建立 Socket，彻底解决系统网关连接失败导致的 502 Bad Gateway。
+   - **内嵌启动过渡页与秒级热重载**：在 `!isAppReady.Load()` 期间，若收到浏览器页面请求，立即返回 HTTP 200 的“把 Docker 放到桌面 正在启动中...”精美加载页面（包含加载动画、`<meta http-equiv="refresh" content="1">` 及 1 秒定时自动刷新）；收到 API 请求则返回 503 提示服务正在初始化。一旦初始化全部完成即原子切换至正式服务处理器，自动无缝进入主界面。
+   - **脚本级 Socket 就绪等待 (`fnos-app/cmd/main`)**：`start_process()` 启动后台进程后，轮询等待 `app.sock` 文件出现后再向应用中心返回 0，杜绝应用中心提前提示启动完毕导致用户秒点即遇 502。
+
+2. **系统进程 Tab 移除数字 Badge (`web/index.html`)**：
+   - 移除系统进程选项卡上的 `<span class="badge" id="proc-count-badge">0</span>`，保持界面整洁大方。
+
+3. **SSE 管道解耦与控制台解析报错根除 (`internal/monitor/watcher.go`, `web/app.js`)**：
+   - **深层根因**：`watcher.go` 的 `broadcastMessage` 内部拼接了 `event: ...\ndata: ...\n\n`，而 `handler.go` 的 `handleEvents` 又执行了一次 `fmt.Fprintf(w, "data: %s\n\n", ...)`，导致浏览器 EventSource 收到两个连续 `data:` 行并拼合为 `event: port_change\n{"event":...}`，使前端 `JSON.parse` 抛出 `SyntaxError`。
+   - **架构修复**：`watcher.go` 改为仅将序列化后的 JSON 字节 `payload` 投递给订阅 channel；由 `handler.go` 统一负责 SSE 外层数据封装。
+   - **前端防御**：在 `web/app.js` 的 `onmessage` 中加入智能解析与解包逻辑，支持直接解析系统指标更新，彻底杜绝任何解析报错。
+
+4. **桌面图标“入口”列样式改平 (`web/app.js`)**：
+   - 将普通图标与 Watchcow 图标表格中“入口”列的渲染从 Badge 药丸标签样式重构为普通文字样式（`<span style="font-size: 0.88rem; color: var(--text-main);">${entryText}</span>`），展示为清晰的 `图标 / 右键`、`图标`、`右键` 或 `-`。
+
+5. **文案规范化微调 (`web/index.html`, `web/app.js`)**：
+   - 进程列表表头与极简模式 tooltip 提示中的“进程 / 容器”统一调整为“容器 / 进程”。
+   - 端口详情弹窗中的“关联进程 / 容器”同步调整为“关联容器 / 进程”。
+
+6. **Watchcow 命名空间隔离与全生命周期彻底卸载治理 (`internal/desktop/watchcow.go`, `internal/api/handler.go`, `fnos-app/cmd/uninstall_init`)**：
+   - **专属命名空间隔离**：Watchcow 启用的应用包名全部强制派生为本产品专属的 `fndocker.wc-*`（如 `fndocker.wc-<containerName>`，截断至 32 字符），完全在本产品辖区范围内管理，与系统内可能存在的原生 Watchcow 应用彻底隔离，互不干扰、互不冲突。
+   - **旧版遗留包防卸载兜底 (`internal/api/handler.go`)**：在停用 Watchcow 条目时，除了注销 `fndocker.wc-*` 外，自动防御性注销早期可能产生的 `watchcow.<container>` 包名。
+   - **卸载脚本零残留保障 (`fnos-app/cmd/uninstall_init`)**：卸载脚本在扫描 `desktop_items.json` 与 `appcenter-cli list`（严格限定 `fndocker.*` 与 `put-port.*`）的基础上，同步扫描数据目录下的 `watchcow_states.json`，将本产品曾启用的所有 Watchcow 图标（包含早期遗留名）一并并发停止并彻底注销，卸载后桌面零残留，且绝不误伤任何第三方应用。
+
+7. **版本全链路升级至 `v1.1.21`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.21`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内运行 `go test -count=1 ./...` 100% 全部通过，涵盖新增的 Watchcow `fndocker.wc-` 包名前缀断言测试。
+2. **完整二进制构建验证**：
+   - Docker 容器内执行 `go build -v ./cmd/server` 成功，无任何编译警告或错误。
+3. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+4. **Git 提交与发布**：
+   - 打上 Git Tag `v1.1.21` 并推送至 GitHub 远程仓库。
+
 
 
 

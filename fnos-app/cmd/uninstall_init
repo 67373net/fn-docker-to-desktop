@@ -49,14 +49,20 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
             apps=$(grep -oE '"app_name"\s*:\s*"[^"]+"' "${json_file}" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
             RAW_APPS="${RAW_APPS} ${apps}"
         fi
+        wc_file="${d}/watchcow_states.json"
+        if [ -f "${wc_file}" ]; then
+            # 扫描此前版本中可能被用户在本产品中开启过的旧版 watchcow 兼容包名 (watchcow.xxx)
+            legacy_wc=$(grep -E '":\s*true' "${wc_file}" 2>/dev/null | grep -oE '"watchcow-[^"]+"' | tr -d '"' | sed 's/^watchcow-/watchcow./' || true)
+            RAW_APPS="${RAW_APPS} ${legacy_wc}"
+        fi
     done
 
-    # 从 cli list 扫描残留应用
+    # 从 cli list 扫描残留应用 (仅扫描本程序专属命名空间 fndocker.* 与 put-port.*)
     cli_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' || true)
     RAW_APPS="${RAW_APPS} ${cli_apps}"
 
-    # 严格过滤仅保留本程序专属命名空间的子应用 (fndocker.* 与 put-port.*)，绝不波及任何外部第三方应用
-    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
+    # 严格过滤仅保留本程序专属命名空间的子应用 (fndocker.* 与 put-port.*，以及本程序 watchcow_states.json 中明确标记启用的遗留应用)，绝不波及任何外部第三方原生 Watchcow 应用
+    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -oE '((fndocker|put-port)\.[a-zA-Z0-9._-]+|watchcow\.[a-zA-Z0-9._-]+)' | sort -u || true)
 
     if [ -n "${UNIQUE_APPS}" ]; then
         log_msg "发现待清理子应用列表: ${UNIQUE_APPS}"

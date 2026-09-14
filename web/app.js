@@ -547,10 +547,22 @@ function initEventSource() {
   state.eventSource = new EventSource(eventUrl);
   state.eventSource.onmessage = (e) => {
     try {
-      const data = JSON.parse(e.data);
+      if (!e.data || typeof e.data !== 'string') return;
+      let jsonStr = e.data.trim();
+      if (jsonStr.startsWith('event:')) {
+        const dataIdx = jsonStr.indexOf('data:');
+        if (dataIdx !== -1) {
+          jsonStr = jsonStr.slice(dataIdx + 5).trim();
+        }
+      }
+      const parsed = JSON.parse(jsonStr);
+      const data = (parsed && typeof parsed === 'object' && parsed.data) ? parsed.data : parsed;
       if (data.system) {
         state.system = data.system;
         updateSystemMetrics(data.system);
+      } else if (data.cpu_percent !== undefined) {
+        state.system = data;
+        updateSystemMetrics(data);
       }
       if (data.snapshot) {
         state.ports = data.snapshot;
@@ -954,21 +966,16 @@ function renderDesktopTable() {
       const hasIcon = !item.no_display;
       const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
       let entryText = '图标';
-      let entryBadgeClass = 'badge-neutral';
       if (hasIcon && hasContextMenu) {
         entryText = '图标 / 右键';
-        entryBadgeClass = 'badge-info';
       } else if (hasIcon && !hasContextMenu) {
         entryText = '图标';
-        entryBadgeClass = 'badge-neutral';
       } else if (!hasIcon && hasContextMenu) {
         entryText = '右键';
-        entryBadgeClass = 'badge-warning';
       } else {
         entryText = '-';
-        entryBadgeClass = 'badge-neutral';
       }
-      const entryHtml = `<span class="badge ${entryBadgeClass}" style="font-size: 0.8rem; font-weight: 500;">${entryText}</span>`;
+      const entryHtml = `<span style="font-size: 0.88rem; color: var(--text-main);">${entryText}</span>`;
 
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
       const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
@@ -1058,21 +1065,16 @@ function renderDesktopTable() {
       const hasIcon = !item.no_display;
       const hasContextMenu = Array.isArray(item.file_types) && item.file_types.length > 0;
       let entryText = '图标';
-      let entryBadgeClass = 'badge-neutral';
       if (hasIcon && hasContextMenu) {
         entryText = '图标 / 右键';
-        entryBadgeClass = 'badge-info';
       } else if (hasIcon && !hasContextMenu) {
         entryText = '图标';
-        entryBadgeClass = 'badge-neutral';
       } else if (!hasIcon && hasContextMenu) {
         entryText = '右键';
-        entryBadgeClass = 'badge-warning';
       } else {
         entryText = '-';
-        entryBadgeClass = 'badge-neutral';
       }
-      const entryHtml = `<span class="badge ${entryBadgeClass}" style="font-size: 0.8rem; font-weight: 500;">${entryText}</span>`;
+      const entryHtml = `<span style="font-size: 0.88rem; color: var(--text-main);">${entryText}</span>`;
 
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
       const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
@@ -3628,7 +3630,7 @@ function openPortDetailModal(portNum) {
     </div>
 
     <div style="margin-bottom: 1rem;">
-      <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.3rem;">关联进程 / 容器</div>
+      <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.3rem;">关联容器 / 进程</div>
       <div><strong>${escapeHtml(port.process_name || '-')}</strong> (PID: ${port.pid || '-'})</div>
       <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.2rem;">属主: ${escapeHtml(port.user || 'root')}</div>
       ${port.cmdline ? `<div style="font-size: 0.8rem; font-family: monospace; background: var(--bg-surface-subtle); padding: 0.4rem; border-radius: 4px; margin-top: 0.4rem; word-break: break-all;">${escapeHtml(port.cmdline)}</div>` : ''}

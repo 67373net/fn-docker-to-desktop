@@ -68,7 +68,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 
 	mux := http.NewServeMux()
@@ -116,8 +116,8 @@ func TestHandleExportDesktopItems(t *testing.T) {
 				t.Fatalf("Failed to decode desktop-items.json inside ZIP: %v", err)
 			}
 			_ = rc.Close()
-			if exportResult.Version != "1.1.20" {
-				t.Errorf("Expected version 1.1.20 inside ZIP, got %s", exportResult.Version)
+			if exportResult.Version != "1.1.21" {
+				t.Errorf("Expected version 1.1.21 inside ZIP, got %s", exportResult.Version)
 			}
 			if exportResult.Total != 1 || len(exportResult.Items) != 1 {
 				t.Errorf("Expected 1 item inside ZIP, got %d items", exportResult.Total)
@@ -160,7 +160,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 	if err := json.NewDecoder(recJSON.Body).Decode(&jsonExport); err != nil {
 		t.Fatalf("Failed to decode JSON export: %v", err)
 	}
-	if jsonExport.Version != "1.1.20" || jsonExport.Total != 1 {
+	if jsonExport.Version != "1.1.21" || jsonExport.Total != 1 {
 		t.Errorf("Unexpected JSON export result: %+v", jsonExport)
 	}
 }
@@ -184,7 +184,7 @@ func TestWANSecurityBlocking(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 
 	mux := http.NewServeMux()
@@ -220,7 +220,7 @@ func TestWANWithValidSessionToken(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 
 	mux := http.NewServeMux()
@@ -291,7 +291,7 @@ func TestNoticePageRedirect(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 
 	mux := http.NewServeMux()
@@ -341,7 +341,7 @@ func TestHandleUploadIconSizeLimitAndResize(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -483,7 +483,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.20",
+		AppVersion: "1.1.21",
 	})
 
 	mux := http.NewServeMux()
@@ -508,6 +508,9 @@ func TestWatchcowEndpoints(t *testing.T) {
 	}
 	if items[0].ID != "watchcow-watchcow-test-container" {
 		t.Errorf("Expected item ID 'watchcow-watchcow-test-container', got %s", items[0].ID)
+	}
+	if !strings.HasPrefix(items[0].AppName, "fndocker.wc-") {
+		t.Errorf("Expected item AppName to start with 'fndocker.wc-', got %s", items[0].AppName)
 	}
 
 	// 2. Toggle a watchcow item state

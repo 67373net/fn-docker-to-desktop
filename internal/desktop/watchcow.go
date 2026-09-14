@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -134,6 +136,34 @@ func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 	}
 
 	return ""
+}
+
+// DeriveWatchcowAppName generates an isolated fnOS package name within our app's namespace (fndocker.wc-*)
+func DeriveWatchcowAppName(containerName, entryName, customName string) string {
+	base := ""
+	if customName != "" {
+		base = SanitizeAppNamePart(customName)
+	}
+	if base == "" {
+		base = SanitizeAppNamePart(containerName)
+		if entryName != "" && entryName != "default" {
+			base = base + "-" + SanitizeAppNamePart(entryName)
+		}
+	}
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "app"
+	}
+
+	prefix := "fndocker.wc-"
+	// Max allowed length for fnOS app name is 32 chars.
+	// prefix is 12 chars. Remaining space is 20 chars.
+	if len(base) > 20 {
+		h := sha256.Sum256([]byte(containerName + "/" + entryName + "/" + customName))
+		suffix := hex.EncodeToString(h[:])[:4]
+		base = strings.TrimRight(base[:15], "-") + "-" + suffix
+	}
+	return prefix + base
 }
 
 var (
@@ -278,10 +308,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				displayName = containerName
 			}
 
-			appName := defaultEntry["appname"]
-			if appName == "" {
-				appName = "watchcow." + containerName
-			}
+			appName := DeriveWatchcowAppName(containerName, "default", defaultEntry["appname"])
 
 			itemID := fmt.Sprintf("watchcow-%s", containerName)
 
@@ -394,10 +421,7 @@ func ScanWatchcowItems(stateResolver func(id string, defaultEnabled bool) bool) 
 				title = fmt.Sprintf("%s (%s)", containerName, en)
 			}
 
-			appName := eData["appname"]
-			if appName == "" {
-				appName = fmt.Sprintf("watchcow.%s.%s", containerName, en)
-			}
+			appName := DeriveWatchcowAppName(containerName, en, eData["appname"])
 
 			itemID := fmt.Sprintf("watchcow-%s-%s", containerName, en)
 

@@ -65,14 +65,32 @@ start_process() {
     printf "%s" "${pid}" > "${PID_FILE}"
     log_msg "Started fn-docker-to-desktop with PID ${pid}"
 
-    sleep 1
-    if ! check_process "${pid}"; then
-        log_msg "ERROR: Process ${pid} exited immediately after startup! Check ${LOG_FILE} and ${FALLBACK_LOG}"
-        if [ -f "${LOG_FILE}" ]; then
-            tail -n 30 "${LOG_FILE}" >> "${FALLBACK_LOG}" 2>/dev/null || true
-        fi
-        return 1
+    local sock_path=""
+    if [ -n "${TRIM_APPDEST}" ]; then
+        sock_path="${TRIM_APPDEST}/app.sock"
     fi
+
+    local waited=0
+    # 等待进程就绪并确保 unix socket 监听建立（最多等待 8 秒）
+    while [ ${waited} -lt 40 ]; do
+        if ! check_process "${pid}"; then
+            log_msg "ERROR: Process ${pid} exited immediately after startup! Check ${LOG_FILE} and ${FALLBACK_LOG}"
+            if [ -f "${LOG_FILE}" ]; then
+                tail -n 30 "${LOG_FILE}" >> "${FALLBACK_LOG}" 2>/dev/null || true
+            fi
+            return 1
+        fi
+        if [ -z "${sock_path}" ] || [ -S "${sock_path}" ]; then
+            break
+        fi
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+
+    if [ -n "${sock_path}" ] && [ -S "${sock_path}" ]; then
+        log_msg "Unix socket ${sock_path} is ready (waited $((waited * 200))ms)."
+    fi
+
     log_msg "Process ${pid} is healthy and running."
     return 0
 }
