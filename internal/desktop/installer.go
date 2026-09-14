@@ -264,6 +264,8 @@ type AppcenterPackageConfig struct {
 	Image         string
 	NoticeEnabled bool
 	NoticeContent string
+	FileTypes     []string
+	NoDisplay     bool
 }
 
 // BuildPackage creates the fnOS app structure on disk in a temporary directory.
@@ -319,11 +321,13 @@ distributor=67373net
 os_min_version=0.9.0
 install_type=root
 desktop_uidir=ui
-desktop_applaunchname=%s
-`, cfg.AppName, title, desc, arch, cfg.AppName)
+`, cfg.AppName, title, desc, arch)
 
-	if cfg.Port > 0 {
-		manifestContent += fmt.Sprintf("service_port=%d\ncheckport=false\n", cfg.Port)
+	if !cfg.NoDisplay {
+		manifestContent += fmt.Sprintf("desktop_applaunchname=%s\n", cfg.AppName)
+		if cfg.Port > 0 {
+			manifestContent += fmt.Sprintf("service_port=%d\ncheckport=false\n", cfg.Port)
+		}
 	}
 
 	if err := os.WriteFile(filepath.Join(pkgDir, "manifest"), []byte(manifestContent), 0644); err != nil {
@@ -353,7 +357,10 @@ desktop_applaunchname=%s
 		"icon":      "images/icon-{0}.png",
 		"type":      uiType,
 		"allUsers":  cfg.AllUsers,
-		"noDisplay": false,
+		"noDisplay": cfg.NoDisplay,
+	}
+	if len(cfg.FileTypes) > 0 {
+		entryMap["fileTypes"] = cfg.FileTypes
 	}
 
 	isNotice := cfg.NoticeEnabled && strings.TrimSpace(cfg.NoticeContent) != ""
@@ -658,6 +665,8 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		Image:         item.Image,
 		NoticeEnabled: item.NoticeEnabled,
 		NoticeContent: item.NoticeContent,
+		FileTypes:     item.FileTypes,
+		NoDisplay:     item.NoDisplay,
 	})
 	if err != nil {
 		return fmt.Errorf("构建应用包失败: %w", err)

@@ -2732,6 +2732,74 @@ INFO
 3. **Git 提交与发布**：
    - 打上 Git Tag `v1.1.17` 并推送至 GitHub 远程仓库。
 
+---
+
+## 轮次 32 (Turn 32) - 2026-09-14
+
+### 用户原始需求 (User Requirements Verbatim)
+1. **上传图标大小限制与自动压缩**：上传图标的时候需要限制不超过 10MB，并且自动压缩尺寸，以免占用太多空间。
+2. **导出打包下载**：导出的时候将数据和图标图片打包下载。
+3. **右键菜单与不显示图标**：原版 watchcow 有一个功能：右键菜单，可以设置某些文件类型右键打开，并且设置为右键菜单的时候，可以设置不显示图标。请参考 watchcow 的代码，将这个功能添加到本产品。
+4. **功能差异排查**：排查一下，watchcow 还有没有什么其他功能，本产品是缺失的。
+5. **设置界面恢复默认图标排查**：设置界面，点击恢复默认图标，没有反应，请排查下是否有这个问题。
+
+---
+
+### 架构设计与改动清单 (Architectural Changes)
+
+#### 1. 图标上传大小限制与纯 Go 图像双线性缩放压缩 (`internal/api/handler.go`, `web/app.js`, `web/index.html`)
+- **双重大小限制**：
+  - 前端：选择文件时立即检查 `file.size <= 10MB`，若超出即刻 Toast 拦截；
+  - 后端：`ParseMultipartForm(10 << 20)` 与读取字节长度双重硬核防线，超过 10MB 直接返回 HTTP 400 与友好中文错误提示。
+- **纯 Go 双线性插值图像缩放 (`ResizeIconImage`)**：
+  - 零外部依赖，使用标准库 `image` 实现保持纵横比居中贴合至 256x256 方图的双线性插值算法；
+  - 非 SVG/ICO 的位图（PNG/JPG/WebP）在服务端自动解码缩放，并以 `png.BestCompression` 重新编码压缩保存，大幅节省 NAS 磁盘存储空间；
+  - 前端引入 `compressIconFile`，上传前通过 Canvas 优先进行 256x256 压缩，减少网络传输负载。
+
+#### 2. 导出配置与图标打包为 ZIP (`internal/api/handler.go`, `web/app.js`)
+- **服务端 ZIP 流式归档**：
+  - `/api/desktop/export` 默认使用 `archive/zip` 将 `desktop-items.json` 与本地所有被引用的图标文件（`icons/...`）打包为 `fn-desktop-icons-YYYYMMDD-HHMMSS.zip` 压缩包供下载；
+  - 保留 `?format=json` 参数以向后兼容纯 JSON 导出。
+- **前端交互适配**：
+  - `handleExportDesktopItems` 调整为异步获取 ZIP Blob 并触发浏览器保存，提升用户备份体验。
+
+#### 3. 文件类型右键菜单关联与无桌面图标支持 (`internal/desktop/types.go`, `internal/desktop/installer.go`, `web/index.html`, `web/app.js`)
+- **参考 WatchCow 底层机制**：
+  - 在 `internal/desktop/types.go` 的 `DesktopItem` 增加 `FileTypes []string` 与 `NoDisplay bool` 字段；
+  - 在 `internal/desktop/installer.go` 构建应用包时：
+    - `ui/config.json` 注入 `"fileTypes": cfg.FileTypes` 与 `"noDisplay": cfg.NoDisplay`；
+    - 当 `cfg.NoDisplay` 为真时，`manifest` 文件中省略 `desktop_applaunchname` 与 `service_port`，使该应用不在飞牛桌面创建常规启动快捷方式，仅作为右键打开关联项；
+- **前端 UI 与状态渲染**：
+  - 添加/编辑图标弹窗新增“文件右键菜单关联 (可选)”表单项与“不在桌面显示（仅右键菜单）”复选框；
+  - 桌面图标列表表格新增 `🖱️ 仅右键` 与 `📄 后缀` 徽章标签。
+
+#### 4. 排查与修复设置界面“恢复默认图标”无响应 (`web/app.js`)
+- **根因分析**：
+  1. 点击时未重置上传状态文字 `setting-icon-upload-status`，仍显示先前上传文件名；
+  2. 未清空文件选择器 `setting-icon-file-input.value`；
+  3. 未提供 Toast 视觉反馈，用户无法直观感知重置已完成；
+  4. 若原设置本身即为默认，`checkSettingsDirty()` 为 false，界面无脏状态提示，造成“无反应”错觉。
+- **修复方案**：
+  - 点击时清空文件输入框，重置状态文案为默认提示，预览图增加时间戳防缓存刷新；
+  - 弹出明确 Toast 提示：`已恢复为默认图标，请点击下方「保存」生效`，并立即调用 `checkSettingsDirty()`。
+
+#### 5. 原版 WatchCow 与本产品功能差异全方位排查与总结
+- 详见本轮回答中的详细对比分析章节。
+
+#### 6. 版本全链路升级至 `v1.1.18`
+- 更新 `cmd/server/main.go`, `fnos-app/manifest`, `internal/api/handler_test.go`, `web/index.html`, `web/app.js` 版本号为 `1.1.18`；
+- 补充完整的 ZIP 导出解压验证与 10MB 上传限制及尺寸压缩测试。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+
+1. **Go 自动化单元测试验证**：
+   - Docker 容器内运行 `go test -count=1 ./...` 全面通过（包含 ZIP 导出、上传限制、双线性插值压缩、公网安全校验及重定向公告测试）。
+2. **零 .fpk 文件残留**：
+   - 仓库内保持纯净，无任何 `.fpk` 文件残留。
+
+
 
 
 

@@ -1,11 +1,18 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
+	"image"
+	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -518,10 +525,77 @@ func (h *Handler) handleExportDesktopItems(w http.ResponseWriter, r *http.Reques
 		"total":       len(items),
 		"items":       items,
 	}
-	filename := fmt.Sprintf("fn-desktop-icons-%s.json", time.Now().Format("20060102-150405"))
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	if r.URL.Query().Get("format") == "json" {
+		filename := fmt.Sprintf("fn-desktop-icons-%s.json", time.Now().Format("20060102-150405"))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		_ = json.NewEncoder(w).Encode(exportData)
+		return
+	}
+
+	jsonData, err := json.MarshalIndent(exportData, "", "  ")
+	if err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "序列化配置数据失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	zipBuf := new(bytes.Buffer)
+	zw := zip.NewWriter(zipBuf)
+
+	// 1. Write desktop-items.json into zip
+	jsonHeader := &zip.FileHeader{
+		Name:     "desktop-items.json",
+		Method:   zip.Deflate,
+		Modified: time.Now(),
+	}
+	jw, err := zw.CreateHeader(jsonHeader)
+	if err == nil {
+		_, _ = jw.Write(jsonData)
+	}
+
+	// 2. Package all referenced local icon files into icons/
+	seenIcons := make(map[string]bool)
+	for _, item := range items {
+		iconPath := item.Icon
+		if iconPath == "" {
+			continue
+		}
+		var filename string
+		if strings.HasPrefix(iconPath, "/icons/") {
+			filename = strings.TrimPrefix(iconPath, "/icons/")
+		} else if strings.HasPrefix(iconPath, "icons/") {
+			filename = strings.TrimPrefix(iconPath, "icons/")
+		} else if !strings.HasPrefix(iconPath, "http://") && !strings.HasPrefix(iconPath, "https://") && !strings.HasPrefix(iconPath, "data:") {
+			filename = iconPath
+		}
+
+		if filename != "" && filename != "icon.png" && filename != "default_item_icon.png" && !seenIcons[filename] {
+			seenIcons[filename] = true
+			fullPath := filepath.Join(h.iconsDir, filepath.Clean(filename))
+			if data, err := os.ReadFile(fullPath); err == nil {
+				iconHeader := &zip.FileHeader{
+					Name:     "icons/" + filename,
+					Method:   zip.Deflate,
+					Modified: time.Now(),
+				}
+				if iw, err := zw.CreateHeader(iconHeader); err == nil {
+					_, _ = iw.Write(data)
+				}
+			}
+		}
+	}
+
+	if err := zw.Close(); err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": "打包压缩文件失败: " + err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("fn-desktop-icons-%s.zip", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	_ = json.NewEncoder(w).Encode(exportData)
+	w.Header().Set("Content-Length", strconv.Itoa(zipBuf.Len()))
+	_, _ = w.Write(zipBuf.Bytes())
 }
 
 func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request) {
@@ -1076,6 +1150,87 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 	h.jsonResponse(w, r, list, http.StatusOK)
 }
 
+// ResizeIconImage pads and scales an image to fit targetSize x targetSize square (e.g. 256x256)
+// with centered aspect ratio and smooth bilinear interpolation.
+func ResizeIconImage(src image.Image, targetSize int) *image.RGBA {
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	if srcW == 0 || srcH == 0 {
+		return image.NewRGBA(image.Rect(0, 0, targetSize, targetSize))
+	}
+
+	var dstW, dstH int
+	if srcW >= srcH {
+		dstW = targetSize
+		dstH = int(float64(srcH) * float64(targetSize) / float64(srcW))
+		if dstH < 1 {
+			dstH = 1
+		}
+	} else {
+		dstH = targetSize
+		dstW = int(float64(srcW) * float64(targetSize) / float64(srcH))
+		if dstW < 1 {
+			dstW = 1
+		}
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, targetSize, targetSize))
+	offsetX := (targetSize - dstW) / 2
+	offsetY := (targetSize - dstH) / 2
+
+	for y := 0; y < dstH; y++ {
+		var srcY float64
+		if dstH > 1 {
+			srcY = float64(y) * float64(srcH-1) / float64(dstH-1)
+		}
+		y0 := int(srcY)
+		y1 := y0 + 1
+		if y1 >= srcH {
+			y1 = srcH - 1
+		}
+		yWeight := srcY - float64(y0)
+
+		for x := 0; x < dstW; x++ {
+			var srcX float64
+			if dstW > 1 {
+				srcX = float64(x) * float64(srcW-1) / float64(dstW-1)
+			}
+			x0 := int(srcX)
+			x1 := x0 + 1
+			if x1 >= srcW {
+				x1 = srcW - 1
+			}
+			xWeight := srcX - float64(x0)
+
+			c00 := src.At(bounds.Min.X+x0, bounds.Min.Y+y0)
+			c10 := src.At(bounds.Min.X+x1, bounds.Min.Y+y0)
+			c01 := src.At(bounds.Min.X+x0, bounds.Min.Y+y1)
+			c11 := src.At(bounds.Min.X+x1, bounds.Min.Y+y1)
+
+			r00, g00, b00, a00 := c00.RGBA()
+			r10, g10, b10, a10 := c10.RGBA()
+			r01, g01, b01, a01 := c01.RGBA()
+			r11, g11, b11, a11 := c11.RGBA()
+
+			interpolate := func(v00, v10, v01, v11 uint32) uint8 {
+				top := float64(v00)*(1-xWeight) + float64(v10)*xWeight
+				bottom := float64(v01)*(1-xWeight) + float64(v11)*xWeight
+				val := top*(1-yWeight) + bottom*yWeight
+				return uint8(val / 257)
+			}
+
+			dst.SetRGBA(offsetX+x, offsetY+y, color.RGBA{
+				R: interpolate(r00, r10, r01, r11),
+				G: interpolate(g00, g10, g01, g11),
+				B: interpolate(b00, b10, b01, b11),
+				A: interpolate(a00, a10, a01, a11),
+			})
+		}
+	}
+	return dst
+}
+
 // /api/icons/upload
 func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAuth(r) {
@@ -1085,8 +1240,8 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		slog.Warn("[AUDIT] 上传图标文件解析失败", "error", err, "remote", r.RemoteAddr)
-		h.jsonResponse(w, r, map[string]string{"error": "文件解析失败"}, http.StatusBadRequest)
+		slog.Warn("[AUDIT] 上传图标文件解析失败或超过大小限制", "error", err, "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "图标文件大小不能超过 10MB"}, http.StatusBadRequest)
 		return
 	}
 
@@ -1097,6 +1252,12 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+
+	if header.Size > 10<<20 {
+		slog.Warn("[AUDIT] 上传图标文件超过 10MB 限制", "sizeBytes", header.Size, "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "图标文件大小不能超过 10MB"}, http.StatusBadRequest)
+		return
+	}
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".svg" && ext != ".ico" {
@@ -1112,19 +1273,42 @@ func (h *Handler) handleUploadIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(fileData) > 10<<20 {
+		slog.Warn("[AUDIT] 上传图标实际读取大小超过 10MB", "sizeBytes", len(fileData), "remote", r.RemoteAddr)
+		h.jsonResponse(w, r, map[string]string{"error": "图标文件大小不能超过 10MB"}, http.StatusBadRequest)
+		return
+	}
+
+	cleanBase := desktop.SanitizeFileName(header.Filename)
+
 	if ext == ".svg" {
 		if err := SanitizeSVGContent(fileData); err != nil {
 			slog.Warn("[SECURITY] 拦截包含潜在不安全代码的 SVG 文件", "error", err, "remote", r.RemoteAddr)
 			h.jsonResponse(w, r, map[string]string{"error": "SVG 图标包含潜在不安全脚本代码，已被安全拦截"}, http.StatusBadRequest)
 			return
 		}
+	} else if ext != ".ico" {
+		// Attempt to decode and auto-resize/compress raster images to 256x256 square PNG
+		if srcImg, _, err := image.Decode(bytes.NewReader(fileData)); err == nil {
+			b := srcImg.Bounds()
+			if b.Dx() > 0 && b.Dy() > 0 {
+				resized := ResizeIconImage(srcImg, 256)
+				var buf bytes.Buffer
+				enc := png.Encoder{CompressionLevel: png.BestCompression}
+				if err := enc.Encode(&buf, resized); err == nil && buf.Len() > 0 {
+					origSize := len(fileData)
+					fileData = buf.Bytes()
+					cleanBase = strings.TrimSuffix(cleanBase, filepath.Ext(cleanBase)) + ".png"
+					slog.Info("[AUDIT] 图标自动压缩完成", "originalSize", origSize, "compressedSize", len(fileData), "dim", "256x256")
+				}
+			}
+		}
 	}
 
-	cleanBase := desktop.SanitizeFileName(header.Filename)
 	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), cleanBase)
 	destPath := filepath.Join(h.iconsDir, filename)
 
-	slog.Info("[AUDIT] 正在保存用户上传的图标...", "originalFilename", header.Filename, "savedAs", filename, "sizeBytes", header.Size, "remote", r.RemoteAddr)
+	slog.Info("[AUDIT] 正在保存用户上传的图标...", "originalFilename", header.Filename, "savedAs", filename, "sizeBytes", len(fileData), "remote", r.RemoteAddr)
 
 	out, err := os.Create(destPath)
 	if err != nil {

@@ -34,6 +34,8 @@ type DesktopItem struct {
 	SkipTLSVerify bool      `json:"skip_tls_verify,omitempty"`// Skip TLS check for self-signed certs
 	NoticeEnabled bool      `json:"notice_enabled,omitempty"` // Whether to show interstitial notice before opening
 	NoticeContent string    `json:"notice_content,omitempty"` // Announcement / notice content before opening
+	FileTypes     []string  `json:"file_types,omitempty"`     // Supported file extensions for right-click context menu
+	NoDisplay     bool      `json:"no_display,omitempty"`     // Hide from desktop, show only in right-click menu
 	Enabled       bool      `json:"enabled"`                  // Is active
 	Installed     bool      `json:"installed"`                // Is installed in fnOS App Center
 	Reconciling   bool      `json:"reconciling,omitempty"`   // Is recovering / installing in background

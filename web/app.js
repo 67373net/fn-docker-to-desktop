@@ -304,36 +304,46 @@ async function fetchDesktopItems() {
   }
 }
 
-function handleExportDesktopItems() {
+async function handleExportDesktopItems() {
   const items = state.desktopItems || [];
-  const exportData = {
-    version: state.settings?.version || '1.1.17',
-    exported_at: new Date().toISOString(),
-    total: items.length,
-    items: items.map(item => {
-      const { _updating, _error, _statusText, ...cleanItem } = item;
-      return cleanItem;
-    }),
-  };
-  const jsonStr = JSON.stringify(exportData, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const d = new Date();
-  const dateStr = d.getFullYear() +
-    String(d.getMonth() + 1).padStart(2, '0') +
-    String(d.getDate()).padStart(2, '0') + '-' +
-    String(d.getHours()).padStart(2, '0') +
-    String(d.getMinutes()).padStart(2, '0') +
-    String(d.getSeconds()).padStart(2, '0');
-  a.href = url;
-  a.download = `fn-desktop-icons-${dateStr}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast(`已成功导出 ${items.length} 个桌面图标配置`, 'success');
-  reportClientLog('action', '用户导出桌面图标配置', `导出数量: ${items.length}`);
+  if (items.length === 0) {
+    showToast('当前没有可导出的桌面图标', 'info');
+    return;
+  }
+  try {
+    showToast('正在生成包含图标与配置的备份压缩包...', 'info');
+    const headers = {};
+    if (state.sessionToken) {
+      headers['X-App-Session'] = state.sessionToken;
+    }
+    const res = await fetch(apiUrl('/api/desktop/export'), { headers });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const d = new Date();
+    const dateStr = d.getFullYear() +
+      String(d.getMonth() + 1).padStart(2, '0') +
+      String(d.getDate()).padStart(2, '0') + '-' +
+      String(d.getHours()).padStart(2, '0') +
+      String(d.getMinutes()).padStart(2, '0') +
+      String(d.getSeconds()).padStart(2, '0');
+    const filename = `fn-desktop-icons-${dateStr}.zip`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`已成功导出 ${items.length} 个桌面图标及图片资源压缩包 (.zip)`, 'success');
+    reportClientLog('action', '用户导出桌面图标ZIP备份', `导出数量: ${items.length}, 文件名: ${filename}`);
+  } catch (err) {
+    console.error('Export error:', err);
+    showToast('导出桌面图标失败: ' + err.message, 'error');
+  }
 }
 
 async function fetchProcesses() {
@@ -405,7 +415,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.17';
+    const ver = state.settings?.version || '1.1.18';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -948,12 +958,18 @@ function renderDesktopTable() {
     const noticeBadge = (item.notice_enabled && (item.notice_content || '').trim())
       ? '<span class="badge badge-info" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); padding: 1px 6px; border-radius: 4px;" title="已开启启动前提醒公告">📢 公告</span>'
       : '';
+    const noDisplayBadge = item.no_display
+      ? '<span class="badge badge-warning" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;" title="桌面不显示图标，仅在右键菜单中提供">🖱️ 仅右键</span>'
+      : '';
+    const fileTypesBadge = (Array.isArray(item.file_types) && item.file_types.length > 0)
+      ? `<span class="badge badge-secondary" style="font-size: 11px; margin-left: 6px; font-weight: normal; vertical-align: middle; background: rgba(100, 116, 139, 0.12); color: #64748b; border: 1px solid rgba(100, 116, 139, 0.3); padding: 1px 6px; border-radius: 4px;" title="支持右键打开文件扩展名: ${escapeHtml(item.file_types.join(', '))}">📄 ${escapeHtml(item.file_types.slice(0, 3).join(','))}${item.file_types.length > 3 ? '...' : ''}</span>`
+      : '';
 
     html += `<tr class="${isUpdating ? 'row-updating' : ''}">
       <td>
         <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
       </td>
-      <td><strong>${escapeHtml(item.name)}</strong>${noticeBadge}</td>
+      <td><strong>${escapeHtml(item.name)}</strong>${noticeBadge}${noDisplayBadge}${fileTypesBadge}</td>
       <td><span class="${modeClass}">${modeText}</span></td>
       <td><code>${escapeHtml(targetText)}</code></td>
       <td><span class="${openModeClass}">${openModeText}</span></td>
@@ -1173,7 +1189,9 @@ function getDesktopItemFormSnapshot() {
     iconUrl: document.getElementById('icon-url-input')?.value || '',
     iconHidden: document.getElementById('item-icon')?.value || '',
     noticeEnabled: !!document.getElementById('item-notice-enabled')?.checked,
-    noticeContent: document.getElementById('item-notice-content')?.value || ''
+    noticeContent: document.getElementById('item-notice-content')?.value || '',
+    fileTypes: document.getElementById('item-file-types')?.value || '',
+    noDisplay: !!document.getElementById('item-no-display')?.checked
   });
 }
 
@@ -2411,14 +2429,30 @@ function initSettingIconEditor() {
   const fileInput = document.getElementById('setting-icon-file-input');
   if (fileInput) {
     fileInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const originalFile = e.target.files[0];
+      if (!originalFile) return;
+
+      if (originalFile.size > 10 * 1024 * 1024) {
+        showToast('上传图标文件不能超过 10MB', 'error');
+        e.target.value = '';
+        return;
+      }
 
       const elIcon = document.getElementById('setting-portal-icon');
       const imgEl = document.getElementById('setting-icon-preview-img');
       const statusEl = document.getElementById('setting-icon-upload-status');
 
-      if (statusEl) statusEl.textContent = '正在上传图标...';
+      if (statusEl) statusEl.textContent = '正在处理并上传图标...';
+
+      let file = originalFile;
+      try {
+        file = await compressIconFile(originalFile, 256);
+      } catch (err) {
+        showToast(err.message, 'error');
+        if (statusEl) statusEl.textContent = '上传失败';
+        e.target.value = '';
+        return;
+      }
 
       const formData = new FormData();
       formData.append('icon', file);
@@ -2453,16 +2487,21 @@ function initSettingIconEditor() {
       if (elSettingIcon) elSettingIcon.value = 'icon.png';
       if (textInput) textInput.value = '';
       if (urlInput) urlInput.value = '';
+      const statusEl = document.getElementById('setting-icon-upload-status');
+      if (statusEl) statusEl.textContent = '支持 PNG、JPG、SVG、ICO 格式（限 10MB 内，位图自动压缩）';
+      const fileInp = document.getElementById('setting-icon-file-input');
+      if (fileInp) fileInp.value = '';
       updateSettingTextColorUI('#ffffff');
       updateSettingBgColorUI('#1e293b');
       closeSettingColorPopovers();
       state.currentSettingTextIconDataUrl = null;
       const previewImg = document.getElementById('setting-icon-preview-img');
       const previewName = document.getElementById('setting-icon-preview-name');
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
+      if (previewImg) previewImg.src = apiUrl('/icon.png?t=' + Date.now());
       if (previewName) previewName.textContent = '把 Docker 放到桌面';
       setSettingIconTab('upload');
       checkSettingsDirty();
+      showToast('已恢复为默认图标，请点击下方「保存」生效', 'info');
     });
   }
 }
@@ -2507,7 +2546,7 @@ function resetDesktopForm() {
   const urlInput = document.getElementById('icon-url-input');
   if (urlInput) urlInput.value = '';
   const uploadStatus = document.getElementById('icon-upload-status');
-  if (uploadStatus) uploadStatus.textContent = '支持 PNG、JPG、SVG、ICO 格式';
+  if (uploadStatus) uploadStatus.textContent = '支持 PNG、JPG、SVG、ICO 格式（限 10MB 内，位图自动压缩）';
   state.currentTextIconDataUrl = null;
   setIconModalTab('text');
 
@@ -2529,6 +2568,11 @@ function resetDesktopForm() {
   if (wrapNotice) wrapNotice.style.display = 'none';
   const txtNotice = document.getElementById('item-notice-content');
   if (txtNotice) txtNotice.value = '';
+
+  const elFileTypes = document.getElementById('item-file-types');
+  if (elFileTypes) elFileTypes.value = '';
+  const chkNoDisplay = document.getElementById('item-no-display');
+  if (chkNoDisplay) chkNoDisplay.checked = false;
 
   setDesktopModalMode('local');
 }
@@ -2622,6 +2666,11 @@ function openEditDesktopModal(id) {
   if (chkNotice) chkNotice.checked = !!item.notice_enabled;
   if (wrapNotice) wrapNotice.style.display = item.notice_enabled ? 'block' : 'none';
   if (txtNotice) txtNotice.value = item.notice_content || '';
+
+  const elFileTypes = document.getElementById('item-file-types');
+  if (elFileTypes) elFileTypes.value = Array.isArray(item.file_types) ? item.file_types.join(', ') : '';
+  const chkNoDisplay = document.getElementById('item-no-display');
+  if (chkNoDisplay) chkNoDisplay.checked = !!item.no_display;
 
   const btnSaveAsNew = document.getElementById('btn-save-as-new');
   if (btnSaveAsNew) btnSaveAsNew.style.display = 'inline-flex';
@@ -2940,6 +2989,12 @@ async function handleSaveDesktopItem(e) {
     const noticeEnabled = document.getElementById('item-notice-enabled') ? document.getElementById('item-notice-enabled').checked : false;
     const noticeContent = document.getElementById('item-notice-content') ? document.getElementById('item-notice-content').value.trim() : '';
 
+    const rawFileTypes = document.getElementById('item-file-types') ? document.getElementById('item-file-types').value.trim() : '';
+    const fileTypes = rawFileTypes
+      ? rawFileTypes.split(/[,，\s]+/).map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean)
+      : [];
+    const noDisplay = document.getElementById('item-no-display') ? document.getElementById('item-no-display').checked : false;
+
     const payload = {
       id: id || `item-${Date.now() % 1000000}`,
       name,
@@ -2961,6 +3016,8 @@ async function handleSaveDesktopItem(e) {
       skip_tls_verify: skipTls,
       notice_enabled: noticeEnabled,
       notice_content: noticeContent,
+      file_types: fileTypes,
+      no_display: noDisplay,
       enabled,
     };
 
@@ -3120,17 +3177,99 @@ async function handleRecommendPort() {
   }
 }
 
-async function handleIconUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+// Compresses and scales bitmap icons to a square (max 256x256) PNG blob
+async function compressIconFile(file, maxSize = 256) {
+  if (!file) return null;
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('图标文件大小不能超过 10MB');
+  }
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  // Vector SVG and ICO formats should retain their native structures
+  if (ext === 'svg' || ext === 'ico' || file.type === 'image/svg+xml' || file.type === 'image/x-icon') {
+    return file;
+  }
 
-  reportClientLog('action', '用户上传本地图标文件', `文件名: ${file.name}, 大小: ${file.size}字节`, { name: file.name, size: file.size, type: file.type });
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onerror = () => resolve(file);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => resolve(file);
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = maxSize;
+          canvas.height = maxSize;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(file);
+            return;
+          }
+          ctx.clearRect(0, 0, maxSize, maxSize);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+
+          const srcW = img.naturalWidth || img.width;
+          const srcH = img.naturalHeight || img.height;
+          let dstW, dstH;
+          if (srcW >= srcH) {
+            dstW = maxSize;
+            dstH = Math.max(1, Math.round((srcH * maxSize) / srcW));
+          } else {
+            dstH = maxSize;
+            dstW = Math.max(1, Math.round((srcW * maxSize) / srcH));
+          }
+          const offsetX = Math.round((maxSize - dstW) / 2);
+          const offsetY = Math.round((maxSize - dstH) / 2);
+          ctx.drawImage(img, 0, 0, srcW, srcH, offsetX, offsetY, dstW, dstH);
+
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              resolve(file);
+              return;
+            }
+            const cleanName = (file.name.replace(/\.[^.]+$/, '') || 'icon') + '.png';
+            const compressedFile = new File([blob], cleanName, { type: 'image/png' });
+            resolve(compressedFile);
+          }, 'image/png');
+        } catch (e) {
+          console.warn('Canvas icon compression failed, using original file:', e);
+          resolve(file);
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleIconUpload(e) {
+  const originalFile = e.target.files[0];
+  if (!originalFile) return;
+
+  if (originalFile.size > 10 * 1024 * 1024) {
+    showToast('上传图标文件不能超过 10MB', 'error');
+    e.target.value = '';
+    return;
+  }
 
   const elIcon = document.getElementById('item-icon');
   const imgEl = document.getElementById('icon-preview-img');
   const nameEl = document.getElementById('icon-preview-name');
 
-  if (nameEl) nameEl.textContent = '正在上传图标...';
+  if (nameEl) nameEl.textContent = '正在处理并上传图标...';
+
+  let file = originalFile;
+  try {
+    file = await compressIconFile(originalFile, 256);
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (nameEl) nameEl.textContent = '上传失败';
+    e.target.value = '';
+    return;
+  }
+
+  reportClientLog('action', '用户上传本地图标文件', `文件名: ${file.name}, 大小: ${file.size}字节`, { name: file.name, size: file.size, type: file.type });
 
   const formData = new FormData();
   formData.append('icon', file);
@@ -3254,7 +3393,7 @@ async function handleSaveSettingsManual() {
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.17';
+        const ver = state.settings?.version || '1.1.18';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

@@ -1,10 +1,18 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +28,16 @@ func TestHandleExportDesktopItems(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
+	iconsDir := filepath.Join(tempDir, "icons")
+	if err := os.MkdirAll(iconsDir, 0755); err != nil {
+		t.Fatalf("Failed to create icons dir: %v", err)
+	}
+	// Create a dummy custom icon file
+	customIconName := "test-custom-icon.png"
+	if err := os.WriteFile(filepath.Join(iconsDir, customIconName), []byte("fake-icon-data"), 0644); err != nil {
+		t.Fatalf("Failed to write custom icon: %v", err)
+	}
+
 	storage, err := desktop.NewStorage(tempDir)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
@@ -27,7 +45,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 
 	authMgr := auth.NewManager("")
 
-	// Add a sample desktop item
+	// Add a sample desktop item with custom icon
 	testItem := desktop.DesktopItem{
 		ID:        "item-test-1",
 		AppName:   "fndocker.testapp",
@@ -36,6 +54,7 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		Protocol:  "http",
 		TargetURL: "http://127.0.0.1:8080",
 		Mode:      desktop.ModeLocalPort,
+		Icon:      "/icons/" + customIconName,
 		Enabled:   true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -48,12 +67,13 @@ func TestHandleExportDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.17",
+		AppVersion: "1.1.18",
 	})
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
+	// 1. Test ZIP Export (Default)
 	req := httptest.NewRequest("GET", "/api/desktop/export", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
@@ -65,29 +85,82 @@ func TestHandleExportDesktopItems(t *testing.T) {
 	}
 
 	disposition := rec.Header().Get("Content-Disposition")
-	if disposition == "" || !strings.Contains(disposition, "fn-desktop-icons-") {
-		t.Errorf("Expected Content-Disposition to contain 'fn-desktop-icons-', got %q", disposition)
+	if disposition == "" || !strings.Contains(disposition, "fn-desktop-icons-") || !strings.Contains(disposition, ".zip") {
+		t.Errorf("Expected Content-Disposition to contain 'fn-desktop-icons-' and '.zip', got %q", disposition)
+	}
+	if cType := rec.Header().Get("Content-Type"); cType != "application/zip" {
+		t.Errorf("Expected Content-Type application/zip, got %q", cType)
 	}
 
-	var exportResult struct {
-		Version    string                `json:"version"`
-		ExportedAt string                `json:"exported_at"`
-		Total      int                   `json:"total"`
-		Items      []desktop.DesktopItem `json:"items"`
+	zipReader, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("Failed to parse returned ZIP archive: %v", err)
 	}
 
-	if err := json.NewDecoder(rec.Body).Decode(&exportResult); err != nil {
-		t.Fatalf("Failed to decode export response: %v", err)
+	var hasJSON, hasIcon bool
+	for _, f := range zipReader.File {
+		if f.Name == "desktop-items.json" {
+			hasJSON = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("Failed to open desktop-items.json inside ZIP: %v", err)
+			}
+			var exportResult struct {
+				Version string                `json:"version"`
+				Total   int                   `json:"total"`
+				Items   []desktop.DesktopItem `json:"items"`
+			}
+			if err := json.NewDecoder(rc).Decode(&exportResult); err != nil {
+				_ = rc.Close()
+				t.Fatalf("Failed to decode desktop-items.json inside ZIP: %v", err)
+			}
+			_ = rc.Close()
+			if exportResult.Version != "1.1.18" {
+				t.Errorf("Expected version 1.1.18 inside ZIP, got %s", exportResult.Version)
+			}
+			if exportResult.Total != 1 || len(exportResult.Items) != 1 {
+				t.Errorf("Expected 1 item inside ZIP, got %d items", exportResult.Total)
+			}
+		}
+		if f.Name == "icons/"+customIconName {
+			hasIcon = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("Failed to open custom icon in ZIP: %v", err)
+			}
+			data, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			if string(data) != "fake-icon-data" {
+				t.Errorf("Expected fake-icon-data in ZIP, got %q", string(data))
+			}
+		}
+	}
+	if !hasJSON {
+		t.Error("Expected ZIP to contain desktop-items.json")
+	}
+	if !hasIcon {
+		t.Error("Expected ZIP to contain icons/" + customIconName)
 	}
 
-	if exportResult.Version != "1.1.17" {
-		t.Errorf("Expected version 1.1.17, got %s", exportResult.Version)
+	// 2. Test JSON Export (?format=json)
+	reqJSON := httptest.NewRequest("GET", "/api/desktop/export?format=json", nil)
+	reqJSON.RemoteAddr = "127.0.0.1:1234"
+	recJSON := httptest.NewRecorder()
+	mux.ServeHTTP(recJSON, reqJSON)
+
+	if recJSON.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for JSON export, got %d", recJSON.Code)
 	}
-	if exportResult.Total != 1 {
-		t.Errorf("Expected total 1, got %d", exportResult.Total)
+	var jsonExport struct {
+		Version string                `json:"version"`
+		Total   int                   `json:"total"`
+		Items   []desktop.DesktopItem `json:"items"`
 	}
-	if len(exportResult.Items) != 1 || exportResult.Items[0].ID != "item-test-1" {
-		t.Errorf("Expected 1 item with ID item-test-1, got %+v", exportResult.Items)
+	if err := json.NewDecoder(recJSON.Body).Decode(&jsonExport); err != nil {
+		t.Fatalf("Failed to decode JSON export: %v", err)
+	}
+	if jsonExport.Version != "1.1.18" || jsonExport.Total != 1 {
+		t.Errorf("Unexpected JSON export result: %+v", jsonExport)
 	}
 }
 
@@ -110,7 +183,7 @@ func TestWANSecurityBlocking(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.17",
+		AppVersion: "1.1.18",
 	})
 
 	mux := http.NewServeMux()
@@ -146,7 +219,7 @@ func TestWANWithValidSessionToken(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    authMgr,
 		DataDir:    tempDir,
-		AppVersion: "1.1.17",
+		AppVersion: "1.1.18",
 	})
 
 	mux := http.NewServeMux()
@@ -217,7 +290,7 @@ func TestNoticePageRedirect(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.17",
+		AppVersion: "1.1.18",
 	})
 
 	mux := http.NewServeMux()
@@ -252,5 +325,110 @@ func TestNoticePageRedirect(t *testing.T) {
 	location2 := rec2.Header().Get("Location")
 	if !strings.Contains(location2, ":8082") {
 		t.Errorf("Expected redirect target to contain port 8082, got: %s", location2)
+	}
+}
+
+func TestHandleUploadIconSizeLimitAndResize(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-upload-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, _ := desktop.NewStorage(tempDir)
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.18",
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Test upload exceeding 10MB limit -> expect 400 Bad Request
+	{
+		body := new(bytes.Buffer)
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("icon", "huge.png")
+		if err != nil {
+			t.Fatalf("CreateFormFile failed: %v", err)
+		}
+		// Write 10MB + 1KB
+		hugeData := make([]byte, (10<<20)+1024)
+		_, _ = part.Write(hugeData)
+		_ = writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/icons/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.RemoteAddr = "127.0.0.1:1234"
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for upload exceeding 10MB, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "10MB") {
+			t.Errorf("Expected response to mention 10MB limit, got: %s", rec.Body.String())
+		}
+	}
+
+	// 2. Test uploading a 400x200 PNG image -> auto-resized and compressed to 256x256 PNG
+	{
+		srcImg := image.NewRGBA(image.Rect(0, 0, 400, 200))
+		for y := 0; y < 200; y++ {
+			for x := 0; x < 400; x++ {
+				srcImg.Set(x, y, color.RGBA{R: 20, G: 150, B: 220, A: 255})
+			}
+		}
+		var imgBuf bytes.Buffer
+		if err := png.Encode(&imgBuf, srcImg); err != nil {
+			t.Fatalf("Failed to encode test png: %v", err)
+		}
+
+		body := new(bytes.Buffer)
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("icon", "test_banner.png")
+		if err != nil {
+			t.Fatalf("CreateFormFile failed: %v", err)
+		}
+		_, _ = part.Write(imgBuf.Bytes())
+		_ = writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/icons/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.RemoteAddr = "127.0.0.1:1234"
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200 for valid icon upload, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("Failed to decode upload response: %v", err)
+		}
+		if !strings.HasPrefix(resp.URL, "/icons/") {
+			t.Fatalf("Expected returned url to start with /icons/, got %s", resp.URL)
+		}
+
+		// Verify the saved file on disk is resized to 256x256
+		savedFilePath := filepath.Join(tempDir, resp.URL)
+		f, err := os.Open(savedFilePath)
+		if err != nil {
+			t.Fatalf("Failed to open saved icon file %s: %v", savedFilePath, err)
+		}
+		defer f.Close()
+
+		decodedImg, _, err := image.Decode(f)
+		if err != nil {
+			t.Fatalf("Failed to decode saved icon file: %v", err)
+		}
+		bounds := decodedImg.Bounds()
+		if bounds.Dx() != 256 || bounds.Dy() != 256 {
+			t.Errorf("Expected resized image dimensions 256x256, got %dx%d", bounds.Dx(), bounds.Dy())
+		}
 	}
 }
