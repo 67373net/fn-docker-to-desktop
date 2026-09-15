@@ -2319,8 +2319,8 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 6. Fallback to default icon with clear diagnostic logging
-	slog.Warn("[DOCKLABEL-ICON] 无法加载 Docker 容器标签图标，回退至系统默认图标",
+	// 6. Fallback to default icon
+	slog.Debug("[DOCKLABEL-ICON] 容器标签未配置或未找到自定义图标，回退至系统默认图标",
 		"id", id,
 		"name", found.Name,
 		"iconVal", found.Icon,

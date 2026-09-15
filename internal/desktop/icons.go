@@ -188,6 +188,31 @@ func getIconCandidates(raw string) []string {
 		addCandidate(rawClean)
 	}
 
+	// 4. Common service mappings (including Chinese service titles)
+	aliasMap := map[string][]string{
+		"百度":   {"baidu", "baidupan"},
+		"百度盘":  {"baidu", "baidupan"},
+		"百度网盘": {"baidu", "baidupan"},
+		"腾讯":   {"tencent", "qq"},
+		"腾讯文档": {"tencent", "qq"},
+		"邮件":   {"mail", "email"},
+		"邮箱":   {"mail", "email"},
+		"弹幕":   {"bilibili", "danmu"},
+		"阿里":   {"aliyun", "alipan"},
+		"阿里云盘": {"alipan", "aliyun"},
+		"迅雷":   {"thunder", "xunlei"},
+		"夸克":   {"quark"},
+		"网易":   {"netease"},
+		"微信":   {"wechat"},
+	}
+	for k, list := range aliasMap {
+		if strings.Contains(raw, k) {
+			for _, item := range list {
+				addCandidate(item)
+			}
+		}
+	}
+
 	return candidates
 }
 

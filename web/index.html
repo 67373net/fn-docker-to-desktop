@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.24">
+  <link rel="stylesheet" href="style.css?v=1.1.25">
 </head>
 <body>
   <!-- Header Bar -->
@@ -26,8 +26,8 @@
         <span>桌面图标</span>
         <span class="badge" id="desktop-count-badge">0</span>
       </button>
-      <button class="nav-tab" data-tab="donate">
-        <span>🥺 投喂</span>
+      <button class="nav-tab" data-tab="about">
+        <span>关于</span>
       </button>
       <div class="nav-spacer"></div>
       <button class="nav-tab" data-tab="processes">
@@ -118,8 +118,7 @@
         <table class="data-table" id="desktop-table">
           <thead>
             <tr>
-              <th style="width: 44px; padding-right: 2px;">图标</th>
-              <th style="width: 200px; padding-left: 6px;">名称</th>
+              <th style="min-width: 180px;">名称</th>
               <th style="width: 110px;">类型</th>
               <th style="width: 110px;">入口</th>
               <th style="width: 240px;">目标 / 映射端口</th>
@@ -129,7 +128,7 @@
             </tr>
           </thead>
           <tbody id="desktop-tbody">
-            <tr><td colspan="8" class="empty-state">暂无已创建的桌面图标</td></tr>
+            <tr><td colspan="7" class="empty-state">暂无已创建的桌面图标</td></tr>
           </tbody>
         </table>
       </div>
@@ -462,21 +461,75 @@
       </div>
     </section>
 
-    <!-- ==================== TAB 6: 🥺投喂 ==================== -->
-    <section class="tab-pane" id="pane-donate">
-      <div class="donate-container">
-        <div class="donate-card">
-          <h2 class="donate-title">🙇🏻 请作者吃顿外卖 🥺</h2>
-          <p class="donate-subtitle">「把 Docker 放到桌面」是一款开源免费应用。如果它为您带来了便利与价值，欢迎扫描下方二维码投喂支持，感谢您的认可与鼓励！☕</p>
-          <div class="donate-qr-grid">
-            <div class="donate-qr-item">
-              <div class="donate-qr-frame">
-                <img src="donate_wechat.jpg?v=1.1.17" alt="微信收款码" class="donate-qr-img">
+    <!-- ==================== TAB 6: 关于 ==================== -->
+    <section class="tab-pane" id="pane-about">
+      <div class="about-container">
+        <div class="about-card">
+          <div class="about-header">
+            <img src="icon.png" alt="Logo" class="about-logo">
+            <div class="about-header-text">
+              <h2 class="about-title">把 Docker 放到桌面 <span class="about-ver">v1.1.25</span></h2>
+              <p class="about-desc">fn-docker-to-desktop · 飞牛 OS 原生桌面快捷方式与反向代理工具</p>
+            </div>
+          </div>
+
+          <div class="about-alert beta-alert">
+            <span class="alert-icon">💡</span>
+            <div class="alert-content">
+              <strong>灵感参考与 Beta 说明</strong>
+              <p>本项目灵感及代码参考了优秀开源项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。当前应用处于 Beta 测试阶段，持续迭代中。可能会有一些 Bug 或功能调整，非常欢迎前往 GitHub 提交反馈与建议。</p>
+            </div>
+          </div>
+
+          <div class="about-section">
+            <h3 class="about-section-title">四大核心功能</h3>
+            <div class="feature-grid">
+              <div class="feature-item">
+                <div class="feature-num">1</div>
+                <div class="feature-body">
+                  <strong>Docker 一键放桌面</strong>
+                  <p>自动识别已运行容器端口与协议，一键在飞牛 OS 桌面生成专属原生应用图标。</p>
+                </div>
+              </div>
+              <div class="feature-item">
+                <div class="feature-num">2</div>
+                <div class="feature-body">
+                  <strong>局域网 / 公网服务反向代理</strong>
+                  <p>将内网其他主机或公网 Web 服务反向代理至 NAS，免配端口生成独立桌面入口。</p>
+                </div>
+              </div>
+              <div class="feature-item">
+                <div class="feature-num">3</div>
+                <div class="feature-body">
+                  <strong>网页快捷方式一键放置</strong>
+                  <p>将任意常用网页快速生成桌面轻量级快捷方式图标，支持自定义窗口与可见权限。</p>
+                </div>
+              </div>
+              <div class="feature-item">
+                <div class="feature-num">4</div>
+                <div class="feature-body">
+                  <strong>自动读取 Watchcow 配置</strong>
+                  <p>无缝兼容并只读读取 docker compose 中的 Watchcow 标签配置，一键启用放置到桌面。</p>
+                </div>
               </div>
             </div>
-            <div class="donate-qr-item">
-              <div class="donate-qr-frame">
-                <img src="donate_alipay.jpg?v=1.1.17" alt="支付宝收款码" class="donate-qr-img">
+          </div>
+
+          <div class="about-divider"></div>
+
+          <div class="donate-section">
+            <h3 class="donate-title">🙇🏻 请作者吃顿外卖 🥺</h3>
+            <p class="donate-subtitle">「把 Docker 放到桌面」是一款开源免费应用。如果它为您带来了便利与价值，欢迎扫描下方二维码投喂支持，感谢您的认可与鼓励！☕</p>
+            <div class="donate-qr-grid">
+              <div class="donate-qr-item">
+                <div class="donate-qr-frame">
+                  <img src="donate_wechat.jpg?v=1.1.25" alt="微信收款码" class="donate-qr-img">
+                </div>
+              </div>
+              <div class="donate-qr-item">
+                <div class="donate-qr-frame">
+                  <img src="donate_alipay.jpg?v=1.1.25" alt="支付宝收款码" class="donate-qr-img">
+                </div>
               </div>
             </div>
           </div>
@@ -876,6 +929,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.24"></script>
+  <script src="app.js?v=1.1.25"></script>
 </body>
 </html>

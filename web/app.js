@@ -36,8 +36,11 @@ function apiUrl(path) {
 }
 
 function getIconUrl(icon) {
-  if (!icon || icon === 'icon.png' || icon === '/icon.png' || icon === 'default_item_icon.png' || icon === '/default_item_icon.png') {
+  if (!icon || icon === 'default_item_icon.png' || icon === '/default_item_icon.png') {
     return apiUrl('/default_item_icon.png');
+  }
+  if (icon === 'icon.png' || icon === '/icon.png') {
+    return apiUrl('/icon.png');
   }
   if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:')) {
     return icon;
@@ -46,8 +49,11 @@ function getIconUrl(icon) {
     return apiUrl(icon);
   }
   const clean = icon.replace(/^\/?icons\//, '').replace(/^\/+/, '');
-  if (!clean || clean === 'icon.png' || clean === 'default_item_icon.png') {
+  if (!clean || clean === 'default_item_icon.png') {
     return apiUrl('/default_item_icon.png');
+  }
+  if (clean === 'icon.png') {
+    return apiUrl('/icon.png');
   }
   return apiUrl(`/icons/${clean}`);
 }
@@ -459,7 +465,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.24';
+    const ver = state.settings?.version || '1.1.25';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -956,14 +962,14 @@ function renderDesktopTable() {
   });
 
   if (filtered.length === 0 && filteredWatchcow.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
     return;
   }
 
   let html = '';
 
   if (filtered.length === 0 && filteredWatchcow.length > 0) {
-    html += '<tr><td colspan="8" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
+    html += '<tr><td colspan="7" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
   } else {
     for (const item of filtered) {
       let modeText = '本机端口';
@@ -1038,9 +1044,13 @@ function renderDesktopTable() {
 
       html += `<tr class="${isUpdating ? 'row-updating' : ''}">
         <td>
-          <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+          <div class="name-with-icon">
+            <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+            <div class="name-with-icon-text">
+              <strong>${escapeHtml(item.name)}</strong>
+            </div>
+          </div>
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong></td>
         <td>${typeColHtml}</td>
         <td>${entryColHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
@@ -1060,7 +1070,7 @@ function renderDesktopTable() {
   if (filteredWatchcow.length > 0) {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
-        <td colspan="8" class="table-sink-divider-cell">
+        <td colspan="7" class="table-sink-divider-cell">
           <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新</span>
         </td>
       </tr>`;
@@ -1141,9 +1151,14 @@ function renderDesktopTable() {
 
       html += `<tr class="${isUpdating ? 'row-updating' : ''}">
         <td>
-          <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+          <div class="name-with-icon">
+            <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+            <div class="name-with-icon-text">
+              <strong>${escapeHtml(item.name)}</strong>
+              ${containerHint}
+            </div>
+          </div>
         </td>
-        <td><strong>${escapeHtml(item.name)}</strong>${containerHint}</td>
         <td>${typeColHtml}</td>
         <td>${entryColHtml}</td>
         <td><code>${escapeHtml(targetText)}</code></td>
@@ -1421,14 +1436,33 @@ function saveDesktopItemFormSnapshot() {
 function isDesktopItemFormDirty() {
   const modal = document.getElementById('modal-desktop-item');
   if (!modal || !modal.classList.contains('active')) return false;
-  if (isIconModified('modal')) return true;
+
+  const isIconDirty = isIconModified('modal');
+  if (isIconDirty) return true;
+
+  const id = document.getElementById('item-id')?.value || '';
+  // If it's a new item creation dialog, and user hasn't typed anything into any text inputs
+  if (!id) {
+    const name = (document.getElementById('item-name')?.value || '').trim();
+    const localPort = (document.getElementById('item-local-port')?.value || '').trim();
+    const targetUrl = (document.getElementById('item-target-url')?.value || '').trim();
+    const shortcutUrl = (document.getElementById('item-shortcut-url')?.value || '').trim();
+    const proxyPort = (document.getElementById('item-proxy-port')?.value || '').trim();
+    if (!name && !localPort && !targetUrl && !shortcutUrl && !proxyPort) {
+      return false;
+    }
+  }
+
   if (!state.desktopItemFormSnapshot) return false;
   return getDesktopItemFormSnapshot() !== state.desktopItemFormSnapshot;
 }
 
 function tryCloseDesktopItemModal() {
   if (isDesktopItemFormDirty()) {
-    if (!confirm('当前图标内容已修改但尚未保存，确定要放弃修改并退出吗？')) {
+    const msg = isIconModified('modal')
+      ? '当前图标已修改但尚未保存，确定要放弃修改并退出吗？'
+      : '当前内容已修改但尚未保存，确定要放弃修改并退出吗？';
+    if (!confirm(msg)) {
       return;
     }
   }
@@ -2092,19 +2126,43 @@ async function renderIconLibraryGrid(scope) {
     : (document.getElementById('item-icon')?.value || '')
   ).trim();
 
-  state.iconLibrary.forEach(icon => {
+  // 1. Prepend built-in app icons (default container icon and product icon)
+  const builtInIcons = [
+    { name: '默认图标', url: 'default_item_icon.png', title: '系统默认图标' },
+    { name: '产品图标', url: 'icon.png', title: '把 Docker 放到桌面 产品图标' },
+  ];
+
+  const allIcons = [...builtInIcons, ...state.iconLibrary];
+
+  allIcons.forEach(icon => {
     const card = document.createElement('div');
     card.className = 'icon-lib-card';
     card.dataset.url = icon.url;
-    card.title = icon.name;
+    card.title = icon.title || icon.name;
 
-    const isSelected = curVal && (curVal === icon.url || curVal === icon.name || curVal === `/icons/${icon.name}` || icon.url === `/icons/${curVal}`);
+    let isSelected = false;
+    if (icon.url === 'default_item_icon.png') {
+      if (scope === 'modal') {
+        isSelected = !curVal || curVal === 'default_item_icon.png' || curVal === '/default_item_icon.png';
+      } else {
+        isSelected = curVal === 'default_item_icon.png' || curVal === '/default_item_icon.png';
+      }
+    } else if (icon.url === 'icon.png') {
+      if (scope === 'setting') {
+        isSelected = !curVal || curVal === 'icon.png' || curVal === '/icon.png';
+      } else {
+        isSelected = curVal === 'icon.png' || curVal === '/icon.png';
+      }
+    } else if (curVal) {
+      isSelected = curVal === icon.url || curVal === icon.name || curVal === `/icons/${icon.name}` || icon.url === `/icons/${curVal}`;
+    }
+
     if (isSelected) {
       card.classList.add('selected');
     }
 
     const img = document.createElement('img');
-    img.src = apiUrl(icon.url);
+    img.src = getIconUrl(icon.url);
     img.alt = icon.name;
     img.loading = 'lazy';
     card.appendChild(img);
@@ -2127,17 +2185,24 @@ function selectLibraryIcon(scope, url, cardEl) {
     cardEl.classList.add('selected');
   }
 
+  let saveVal = url;
+  if (url === '/default_item_icon.png' || url === 'default_item_icon.png') {
+    saveVal = 'default_item_icon.png';
+  } else if (url === '/icon.png' || url === 'icon.png') {
+    saveVal = 'icon.png';
+  }
+
   if (scope === 'setting') {
     const elIcon = document.getElementById('setting-portal-icon');
-    if (elIcon) elIcon.value = url;
+    if (elIcon) elIcon.value = saveVal;
     const imgEl = document.getElementById('setting-icon-preview-img');
-    if (imgEl) imgEl.src = apiUrl(url);
+    if (imgEl) imgEl.src = getIconUrl(saveVal);
     checkSettingsDirty();
   } else {
     const elIcon = document.getElementById('item-icon');
-    if (elIcon) elIcon.value = url;
+    if (elIcon) elIcon.value = saveVal;
     const imgEl = document.getElementById('icon-preview-img');
-    if (imgEl) imgEl.src = apiUrl(url);
+    if (imgEl) imgEl.src = getIconUrl(saveVal);
   }
 }
 
@@ -3740,7 +3805,7 @@ async function handleSaveSettingsManual() {
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.24';
+        const ver = state.settings?.version || '1.1.25';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

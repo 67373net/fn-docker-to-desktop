@@ -3187,3 +3187,64 @@ INFO
 1. **自动化单元测试**：Docker 容器内执行 `go test -v ./...` 全部 PASS。
 2. **零 .fpk 残留**：确认无任何 `.fpk` 文件残留。
 3. **Git 提交与发布**：打上 Git Tag `v1.1.24` 并推送至 GitHub 远程仓库。
+
+---
+
+## Turn 40 - v1.1.25 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **列表模块与表头冻结 (Sticky Header)**：所有列表界面中，上方的搜索、筛选等工具栏模块，以及表格表头均需冻结（滚动时固定在顶部）。
+2. **文本颜色规范微调**：桌面图标列表中，“新标签页”显示黑色，“内部弹窗”显示蓝色；“仅管理员”显示黑色，“所有用户”显示蓝色。
+3. **编辑弹窗脏状态误报排查**：打开编辑图标界面，从“网页链接”切换到“端口映射”，未输入任何内容但关闭窗口时误报“当前图标内容已修改但尚未保存，确定要放弃修改并退出吗？”，排查根因并修复。
+4. **README 核心功能调整**：README 中调整为四大核心功能，第 4 点改为“4. 自动读取 Watchcow 配置”。
+5. **“投喂” Tab 改为 “关于”**：上方展示灵感参考（Watchcow 链接）、Beta 阶段提示、四大核心功能，下方保留微信与支付宝投喂收款二维码。
+6. **图标选择/上传模块内置默认图标**：在“选择或上传”图标模块中，置顶增加显示本 App 中的默认图标（默认容器图标与产品自身图标）。
+7. **根除 Warning 循环刷屏**：
+   - `[WARN] [DOCKLABEL] Docker 事件流断开，5秒后尝试重连... error=context deadline exceeded`；
+   - `[WARN] [DOCKLABEL-ICON] 无法加载 Docker 容器标签图标，回退至系统默认图标 id=docklabel-watchcow-portal-danmu-search name=弹幕搜索 iconVal=http://127.0.0.1`。
+8. **桌面图标合并列与间距均一化**：
+   - 彻底去掉独立的“图标”列，将图标与名称合并为同一列（左边图标、右边名称）；
+   - 消除此前因独立图标列 hack 导致“名称”列与“类型”列间距过大的问题，使其与其他列间距完全一致。
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **表头与工具栏平滑冻结 (Sticky Header)**：
+   - `.table-container` 增加 `max-height: calc(100vh - 165px); overflow-y: auto; overflow-x: auto;`；
+   - `table.data-table th` 设置 `position: sticky; top: 0; z-index: 10; background-color: var(--bg-surface-subtle); box-shadow: 0 1px 0 var(--border-color);`，实现滚动时表头精准吸顶；
+   - `.tab-pane > .toolbar` 设置 `position: sticky; top: 56px; z-index: 20; background-color: var(--bg-app);`，实现多筛选工具栏随页面整体滚动吸顶。
+2. **桌面图标与名称合并，间距完全一致**：
+   - 表头由 8 列精简为 7 列（合并图标与名称）；
+   - 彻底删除 `#desktop-table th:first-child` 等绝对宽度 hack，列间距完全自适应且一致；
+   - 新增 `.name-with-icon` 容器结构，左侧展示 32x32 图标，右侧展示应用名称及 Docker 容器来源标识。
+3. **颜色样式严格按需更新**：
+   - `.type-sub-tab`（新标签页）：`var(--text-main)`（纯黑色）；
+   - `.type-sub-iframe`（内部弹窗）：`#0284c7`（明晰天蓝色）；
+   - `.perm-sub-admin`（仅管理员）：`var(--text-main)`（纯黑色）；
+   - `.perm-sub-all`（所有用户）：`#0284c7`（明晰天蓝色）；
+   - 同时为暗黑模式提供柔和对比度适配。
+4. **弹窗脏状态检测算法精准修复**：
+   - 排查发现原代码未区分“模式切换”与“实质内容修改”，且在关闭确认提示中误用“图标内容已修改”这一容易产生歧义的文案；
+   - 重构 `isDesktopItemFormDirty()`：在新建状态下，仅切换模式且所有文本输入框为空时，判定为非脏状态；
+   - 在 `tryCloseDesktopItemModal()` 中细分提示语：实质修改图标图案提示“当前图标已修改但尚未保存”，修改表单数据提示“当前内容已修改但尚未保存”，彻底解决误报困惑。
+5. **“关于” Tab 重构与 README 规范对齐**：
+   - Header 导航与面板路由切换为 `about`；
+   - 页面顶部展示产品 Logo、版本号、灵感来源（致敬 watchcow 并附带 GitHub 链接）与 Beta 测试提示；
+   - 中间呈现“四大核心功能”现代卡片栅格（Docker 一键放桌面、反向代理、网页快捷方式、自动读取 Watchcow 配置）；
+   - 底部保留优雅圆角的微信与支付宝扫码投喂模块。
+6. **图标库预设置顶 App 默认图标**：
+   - `renderIconLibraryGrid` 在动态加载用户图标库的同时，于上传卡片后置顶插入两张系统内置图标：
+     1. `default_item_icon.png`（默认容器图标）；
+     2. `icon.png`（本 App 产品原生官方图标）；
+   - 点击可直接应用，并在表单中分别保存为标准短名称，杜绝硬编码死链接。
+7. **根除 Warning 循环刷屏**：
+   - 根本诱因剖析：`StartDockerEventListener` 此前使用了共享的 HTTP Client，其默认携带了 `Timeout: 3 * time.Second`，导致 Docker `/events` 流式长连接每 3 秒被强制打断，抛出 `context deadline exceeded` 并每 5 秒重连，重连又触发前端 SSE 刷新，形成高频刷新风暴；
+   - 彻底修复：监听器独立实例化 `Timeout: 0` 的流式客户端，保持永久长连接，彻底终结断连循环；
+   - `handleGetDockLabelIcon` 中找不到图标时的警告降级为 `slog.Debug`；
+   - `icons.go` 扩展中文别名映射词库（百度、腾讯、弹幕、影视等），并升级 `ResolveWatchcowIconPath` 对本地 Compose 路径的多层深挖探测。
+8. **全链路版本升级至 `v1.1.25`**。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器内执行 `go test -v ./...` 全部 PASS。
+2. **零 .fpk 残留**：确认无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：打上 Git Tag `v1.1.25` 并推送至 GitHub 远程仓库。

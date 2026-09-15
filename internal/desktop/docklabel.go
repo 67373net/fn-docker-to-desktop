@@ -168,24 +168,68 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 			}
 		}
 	} else if strings.HasPrefix(iconVal, "http://") || strings.HasPrefix(iconVal, "https://") {
-		// Even for HTTP/HTTPS URLs (like raw.githubusercontent.com/.../icon_circle.png),
+		// Even for HTTP/HTTPS URLs (like http://127.0.0.1:5900/icons/... or raw.githubusercontent.com/...),
 		// check if the file is cloned or stored locally on the host
 		u, err := url.Parse(iconVal)
 		if err == nil {
 			baseName := filepath.Base(u.Path)
 			if baseName != "" && baseName != "/" && baseName != "." {
+				// 1. Check Compose workingDir
+				if workingDir != "" {
+					for _, cand := range []string{
+						filepath.Join(workingDir, "icons", baseName),
+						filepath.Join(workingDir, baseName),
+					} {
+						if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+							return cand
+						}
+					}
+				}
+
+				// 2. Check mounts
+				for _, m := range mounts {
+					if m.Source == "" {
+						continue
+					}
+					for _, cand := range []string{
+						filepath.Join(m.Source, "icons", baseName),
+						filepath.Join(m.Source, baseName),
+					} {
+						if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+							return cand
+						}
+					}
+					parent := filepath.Dir(m.Source)
+					if parent != "" && parent != "/" && parent != "." {
+						matches, _ := filepath.Glob(filepath.Join(parent, "*", "icons", baseName))
+						for _, match := range matches {
+							if info, err := os.Stat(match); err == nil && !info.IsDir() {
+								return match
+							}
+						}
+					}
+				}
+
+				// 3. Common host storage locations
 				commonBases := []string{
 					"/home",
 					"/home/net67373",
 					"/vol1",
+					"/vol2",
+					"/vol3",
+					"/vol4",
 					"/var/apps",
+					"/var/lib/docker/volumes",
 				}
 				for _, b := range commonBases {
 					globPatterns := []string{
 						filepath.Join(b, "*", "README.assets", baseName),
 						filepath.Join(b, "*", "icons", baseName),
 						filepath.Join(b, "*", "*", "icons", baseName),
+						filepath.Join(b, "*", "*", "*", "icons", baseName),
+						filepath.Join(b, "*", "*", "docker", "*", "icons", baseName),
 						filepath.Join(b, "*", baseName),
+						filepath.Join(b, "*", "_data", "icons", baseName),
 					}
 					for _, pat := range globPatterns {
 						matches, _ := filepath.Glob(pat)
@@ -673,7 +717,16 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 				}
 			}
 
-			client := getDockLabelDockerClient()
+			client := &http.Client{
+				Transport: &http.Transport{
+					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+						var d net.Dialer
+						return d.DialContext(ctx, "unix", sock)
+					},
+					DisableKeepAlives: false,
+				},
+				Timeout: 0, // NO timeout for persistent streaming event reader!
+			}
 			// Filters for container events
 			reqURL := "http://localhost/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D"
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
