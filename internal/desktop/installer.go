@@ -61,12 +61,15 @@ func (i *Installer) SetIconsDir(iconsDir string) {
 func NewInstaller(dataDir string, rootIconPath string) *Installer {
 	appsDir := filepath.Join(dataDir, "apps")
 	_ = os.MkdirAll(appsDir, 0755)
+	iconsDir := filepath.Join(dataDir, "icons")
+	_ = os.MkdirAll(iconsDir, 0755)
 
 	cliPath, found := findAppcenterCLI()
 
 	inst := &Installer{
 		cliPath:         cliPath,
 		appsDir:         appsDir,
+		iconsDir:        iconsDir,
 		rootIconPath:    rootIconPath,
 		hasAppcenterCLI: found,
 		reconcileStatus: make(map[string]string),
@@ -1039,8 +1042,12 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 			} else {
 				slog.Warn("同步自身桌面图标资源异常", "dir", dir, "error", err)
 			}
-		} else if settings.PortalIcon == "icon.png" {
-			_ = WritePackageIcons(dir, "", i.iconsDir)
+		} else {
+			if err := WriteProductIcons(dir); err == nil {
+				slog.Info("已还原产品官方桌面图标", "dir", dir)
+			} else {
+				slog.Warn("还原产品官方桌面图标异常", "dir", dir, "error", err)
+			}
 		}
 	}
 

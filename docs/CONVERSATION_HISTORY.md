@@ -3142,3 +3142,48 @@ INFO
 - **思维链 Token (Thinking Tokens)**：约 24,600
 - **输出 Token (Completion Tokens)**：约 8,500
 - **总计 Token (Total Tokens)**：约 91,300
+
+---
+
+## Turn 39 - v1.1.24 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **本产品图标与桌面图标丢失**：排查桌面与应用中心里本产品图标变成飞牛默认图标、`icon.png` 丢失的问题并根治。
+2. **正面明确 Watchcow 图标读取机制与一致性**：明确正面回答能否获取 watchcow 图标；修复列表显示正常但放到桌面变成默认蓝鲸图标、部分读取失败的问题。
+3. **图标编辑 Tab 切换 Bug**：切换 Tab 时左侧图标不要变动，只有右侧编辑产生实质变更或选择图标时才变动。
+4. **提示排版与文案**：“由于浏览器缓存，图标更新可能会延迟很久（长达数天）”紧贴标题放置不要右对齐；“以下内容读取自 docker compose 中的 Watchcow 标签”更新为“以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新”。
+5. **表格字体颜色微调**：“类型”中新标签页与内部弹窗区分字体颜色；“入口”中仅管理员与所有用户区分字体颜色，两排文字大小保持一致。
+6. **Docker 变动实时刷新**：参考 watchcow 机制，容器变动时自动刷新列表。
+7. **导出功能排查与修复**：修复导出图标数量不足问题，补充详细审计日志。
+8. **修复包名超长报错**：解决 `fndocker.dock-...` 长度超 32 字符校验失败的问题。
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **产品原生图标内嵌与安装包固化**：
+   - 内嵌重采样合规的 `PRODUCT_ICON.PNG` (64x64) 与 `PRODUCT_ICON_256.PNG` (256x256)；
+   - `WritePackageIcons` 和 `SyncSelfApp` 优先匹配产品目录及 `icon.png`，自动调用 `WriteProductIcons` 写入官方标准图标，彻底根除被系统默认蓝鲸图标覆写的问题；
+   - 移除此前打包遗留的字面花括号 `icon-{0}.png` 异常文件，CI 自动安装 Pillow 确保图片重采样可靠。
+2. **Watchcow 图标解析能力全面升级与桌面一致性保证**：
+   - 正面明确：watchcow 图标 **100% 能够获取**；
+   - 支持动态探测本地 Compose 目录文件、宿主机常用路径、以及通过 Fastly / jsDelivr / ghproxy 加速拉取远端 URL 并本地缓存；
+   - 当远端 URL 404（如旧 watchcow-proxy `:5900` 失效端口）或为空时，自动提取服务名/容器名向 Homarr 官方图标库 CDN 匹配拉取高清图标；
+   - `handleToggleDockLabelItem` 安装时将解析后的本地图标路径或缓存路径传递给 `dItem.Icon`，确保桌面图标与网页列表 100% 相同。
+3. **包名规范严格对齐 fnOS 32 字符上限**：
+   - `DeriveDockLabelAppName` 截断前缀由 14 字符优化为 13 字符，且增加硬性 32 字符截断，杜绝校验报错。
+4. **图标编辑组件 Tab 切换解耦**：
+   - `setIconModalTab` 和 `setSettingIconTab` 移除切换 Tab 时强制覆写 `previewImg.src` 的逻辑；
+   - 只有在输入框输入文本/URL、调节拾色器、选择图标库卡片时才更新预览，避免误重置。
+5. **表格样式与文案更新**：
+   - `.icon-form-label` 改为 `display: flex; align-items: center; gap: 8px;`，缓存提示紧贴标题；
+   - 更新分隔栏文案为“以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新”；
+   - 增加 `.type-sub-iframe`（天蓝）、`.type-sub-tab`（紫罗兰）、`.perm-sub-all`（翡翠绿）、`.perm-sub-admin`（琥珀金）样式类，字号保持 0.85rem。
+6. **Docker 容器实时事件联动**：
+   - 启动 Docker 事件监听器，容器启停/变更时 1 秒防抖向 SSE 广播 `docklabel_update`；
+   - 前端 EventSource 监听 `docklabel_update` 事件并自动执行 `fetchDesktopItems()`。
+7. **全链路版本升级至 `v1.1.24`**。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器内执行 `go test -v ./...` 全部 PASS。
+2. **零 .fpk 残留**：确认无任何 `.fpk` 文件残留。
+3. **Git 提交与发布**：打上 Git Tag `v1.1.24` 并推送至 GitHub 远程仓库。

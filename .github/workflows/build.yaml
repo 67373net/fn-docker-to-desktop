@@ -58,6 +58,11 @@ jobs:
             chmod +x /tmp/fnpack
           fi
 
+      - name: Install Pillow for icon generation
+        continue-on-error: true
+        run: |
+          python3 -m pip install --break-system-packages Pillow || pip3 install Pillow || true
+
       - name: Build fpk package
         run: |
           chmod +x ./scripts/build-fpk.sh

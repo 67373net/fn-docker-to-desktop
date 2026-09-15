@@ -352,3 +352,10 @@ func (w *Watcher) broadcastMessageToView(event string, data interface{}, targetV
 		}
 	}
 }
+
+// BroadcastDockLabelChange notifies connected SSE clients that Docker containers/labels have changed.
+func (w *Watcher) BroadcastDockLabelChange() {
+	w.broadcastMessage("docklabel_update", map[string]interface{}{
+		"time": time.Now().Unix(),
+	})
+}

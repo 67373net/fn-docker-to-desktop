@@ -569,36 +569,128 @@ func (h *Handler) handleExportDesktopItems(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 2. Package all referenced local icon files into icons/
-	seenIcons := make(map[string]bool)
+	exportedCount := 0
+	seenZipEntries := make(map[string]bool)
+
 	for _, item := range items {
-		iconPath := item.Icon
-		if iconPath == "" {
+		iconSource := strings.TrimSpace(item.Icon)
+		if iconSource == "" {
+			slog.Info("[EXPORT] 项目未配置独立图标，跳过图标文件打包", "item", item.Name, "id", item.ID)
 			continue
 		}
-		var filename string
-		if strings.HasPrefix(iconPath, "/icons/") {
-			filename = strings.TrimPrefix(iconPath, "/icons/")
-		} else if strings.HasPrefix(iconPath, "icons/") {
-			filename = strings.TrimPrefix(iconPath, "icons/")
-		} else if !strings.HasPrefix(iconPath, "http://") && !strings.HasPrefix(iconPath, "https://") && !strings.HasPrefix(iconPath, "data:") {
-			filename = iconPath
+
+		var iconBytes []byte
+		var iconZipName string
+
+		// 1. Check data URI: data:image/png;base64,...
+		if strings.HasPrefix(iconSource, "data:") {
+			idx := strings.Index(iconSource, ",")
+			if idx != -1 {
+				base64Data := strings.TrimSpace(iconSource[idx+1:])
+				if raw, err := base64.StdEncoding.DecodeString(base64Data); err == nil && len(raw) > 0 {
+					iconBytes = raw
+					iconZipName = fmt.Sprintf("icons/%s_icon.png", item.ID)
+				}
+			}
 		}
 
-		if filename != "" && filename != "icon.png" && filename != "default_item_icon.png" && !seenIcons[filename] {
-			seenIcons[filename] = true
-			fullPath := filepath.Join(h.iconsDir, filepath.Clean(filename))
-			if data, err := os.ReadFile(fullPath); err == nil {
+		// 2. Local icons directory or uploaded icon
+		if iconBytes == nil && (strings.HasPrefix(iconSource, "/icons/") || strings.HasPrefix(iconSource, "icons/")) {
+			rel := strings.TrimPrefix(strings.TrimPrefix(iconSource, "/icons/"), "icons/")
+			target := filepath.Join(h.iconsDir, filepath.Clean(rel))
+			if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
+				iconBytes = data
+				iconZipName = "icons/" + filepath.Base(rel)
+			}
+		}
+
+		// 3. Remote URL or cached remote URL
+		if iconBytes == nil && (strings.HasPrefix(iconSource, "http://") || strings.HasPrefix(iconSource, "https://")) {
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(iconSource)))
+			ext := filepath.Ext(iconSource)
+			if ext == "" || len(ext) > 5 {
+				ext = ".png"
+			}
+			cacheFile := filepath.Join(h.iconsDir, "dock_cache_"+hash+ext)
+			legacyCache := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
+			if data, err := os.ReadFile(cacheFile); err == nil && len(data) > 0 {
+				iconBytes = data
+				iconZipName = "icons/" + hash + ext
+			} else if data, err := os.ReadFile(legacyCache); err == nil && len(data) > 0 {
+				iconBytes = data
+				iconZipName = "icons/" + hash + ext
+			} else {
+				client := &http.Client{Timeout: 3 * time.Second}
+				if resp, err := client.Get(iconSource); err == nil && resp.StatusCode == http.StatusOK {
+					data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+					resp.Body.Close()
+					if err == nil && len(data) > 0 {
+						iconBytes = data
+						iconZipName = "icons/" + hash + ext
+						_ = os.WriteFile(cacheFile, data, 0644)
+					}
+				} else if resp != nil {
+					resp.Body.Close()
+				}
+			}
+		}
+
+		// 4. Embedded static or local host files
+		if iconBytes == nil {
+			cleanSource := strings.TrimPrefix(iconSource, "file://")
+			base := filepath.Base(cleanSource)
+			if h.webFS != nil && (base == "icon.png" || iconSource == "icon.png") {
+				if data, err := fs.ReadFile(h.webFS, "icon.png"); err == nil && len(data) > 0 {
+					iconBytes = data
+					iconZipName = "icons/icon.png"
+				}
+			} else if h.webFS != nil && (base == "default_item_icon.png" || iconSource == "default_item_icon.png") {
+				if data, err := fs.ReadFile(h.webFS, "default_item_icon.png"); err == nil && len(data) > 0 {
+					iconBytes = data
+					iconZipName = "icons/default_item_icon.png"
+				}
+			} else {
+				for _, cand := range []string{
+					cleanSource,
+					filepath.Join(h.iconsDir, base),
+					filepath.Join("/home/net67373/watchcow-proxy/icons", base),
+					filepath.Join("/home/net67373/watchcow/icons", base),
+				} {
+					if data, err := os.ReadFile(cand); err == nil && len(data) > 0 {
+						iconBytes = data
+						iconZipName = "icons/" + base
+						break
+					}
+				}
+			}
+		}
+
+		if iconBytes != nil && iconZipName != "" {
+			if !seenZipEntries[iconZipName] {
+				seenZipEntries[iconZipName] = true
 				iconHeader := &zip.FileHeader{
-					Name:     "icons/" + filename,
+					Name:     iconZipName,
 					Method:   zip.Deflate,
 					Modified: time.Now(),
 				}
 				if iw, err := zw.CreateHeader(iconHeader); err == nil {
-					_, _ = iw.Write(data)
+					if _, err := iw.Write(iconBytes); err == nil {
+						exportedCount++
+						slog.Info("[EXPORT] 成功导出图标至备份包", "item", item.Name, "id", item.ID, "zipEntry", iconZipName, "bytes", len(iconBytes))
+						continue
+					}
 				}
+			} else {
+				exportedCount++
+				slog.Info("[EXPORT] 图标已包含在备份包中(复用)", "item", item.Name, "id", item.ID, "zipEntry", iconZipName)
+				continue
 			}
 		}
+
+		slog.Warn("[EXPORT] 图标无法读取，未包含在备份包中", "item", item.Name, "id", item.ID, "iconSource", desktop.SummarizeIconSource(iconSource))
 	}
+
+	slog.Info("[EXPORT] 桌面图标备份ZIP已生成", "totalItems", len(items), "exportedIcons", exportedCount, "totalZipEntries", len(seenZipEntries)+1, "zipBytes", zipBuf.Len())
 
 	if err := zw.Close(); err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "打包压缩文件失败: " + err.Error()}, http.StatusInternalServerError)
@@ -1999,6 +2091,35 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 		}
 		targetItem.AppName = appName
 
+		iconToUse := targetItem.LocalIconPath
+		if iconToUse == "" && targetItem.Icon != "" {
+			iconToUse = desktop.ResolveWatchcowIconPath(targetItem.Icon, "", nil)
+		}
+		if iconToUse == "" {
+			iconToUse = targetItem.Icon
+		}
+		if strings.HasPrefix(iconToUse, "http://") || strings.HasPrefix(iconToUse, "https://") {
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(iconToUse)))
+			ext := filepath.Ext(iconToUse)
+			if ext == "" || len(ext) > 5 {
+				ext = ".png"
+			}
+			cachePath := filepath.Join(h.iconsDir, "dock_cache_"+hash+ext)
+			legacyCachePath := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
+			if info, err := os.Stat(cachePath); err == nil && info.Size() > 0 {
+				iconToUse = cachePath
+			} else if info, err := os.Stat(legacyCachePath); err == nil && info.Size() > 0 {
+				iconToUse = legacyCachePath
+			}
+		}
+		idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(targetItem.ID)))
+		idCachePath := filepath.Join(h.iconsDir, "dock_cache_"+idHash+".png")
+		if (iconToUse == "" || strings.HasPrefix(iconToUse, "http")) {
+			if fi, err := os.Stat(idCachePath); err == nil && fi.Size() > 0 {
+				iconToUse = idCachePath
+			}
+		}
+
 		dItem := desktop.DesktopItem{
 			ID:            targetItem.ID,
 			Name:          targetItem.Name,
@@ -2011,7 +2132,7 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 			TargetURL:     targetItem.TargetURL,
 			UIType:        targetItem.UIType,
 			AllUsers:      targetItem.AllUsers,
-			Icon:          targetItem.Icon,
+			Icon:          iconToUse,
 			FileTypes:     targetItem.FileTypes,
 			NoDisplay:     targetItem.NoDisplay,
 			Enabled:       targetItem.Enabled,
@@ -2184,7 +2305,21 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 5. Fallback to default icon with clear diagnostic logging
+	// 5. Try resolving from Homarr dashboard icon mirrors using candidate names (URL base name, container name, image name, app name)
+	candidates := []string{found.Icon, found.ContainerName, found.Image, found.Name}
+	if data, ct, err := desktop.FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.ID)))
+		cachePath := filepath.Join(h.iconsDir, "dock_cache_"+hash+".png")
+		_ = os.WriteFile(cachePath, data, 0644)
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+		slog.Info("[DOCKLABEL-ICON] 从官方图标库镜像自动匹配并缓存图标成功", "id", id, "candidates", candidates, "size", len(data))
+		return
+	}
+
+	// 6. Fallback to default icon with clear diagnostic logging
 	slog.Warn("[DOCKLABEL-ICON] 无法加载 Docker 容器标签图标，回退至系统默认图标",
 		"id", id,
 		"name", found.Name,

@@ -1502,7 +1502,7 @@ tr.row-updating {
 .icon-form-label {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
 }
 .icon-cache-hint {
   font-size: 12px;
@@ -2114,5 +2114,37 @@ tr.row-updating {
   color: var(--primary);
   background-color: var(--primary-subtle);
 }
+
+/* ==================== Table Column Sub-labels ==================== */
+.type-sub-iframe {
+  color: #0284c7; /* 天蓝色 */
+  font-weight: 500;
+}
+.type-sub-tab {
+  color: #8b5cf6; /* 紫罗兰色 */
+  font-weight: 500;
+}
+.perm-sub-all {
+  color: #10b981; /* 翡翠绿 */
+  font-weight: 500;
+}
+.perm-sub-admin {
+  color: #f59e0b; /* 琥珀金/暖橙色 */
+  font-weight: 500;
+}
+
+[data-theme="dark"] .type-sub-iframe {
+  color: #38bdf8;
+}
+[data-theme="dark"] .type-sub-tab {
+  color: #a78bfa;
+}
+[data-theme="dark"] .perm-sub-all {
+  color: #34d399;
+}
+[data-theme="dark"] .perm-sub-admin {
+  color: #fbbf24;
+}
+
 
 

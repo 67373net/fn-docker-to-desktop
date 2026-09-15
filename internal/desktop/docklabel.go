@@ -1,6 +1,8 @@
 package desktop
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -224,13 +226,20 @@ func DeriveDockLabelAppName(containerName, entryName, customName string) string 
 
 	prefix := "fndocker.dock-"
 	// Max allowed length for fnOS app name is 32 chars.
-	// prefix is 13 chars. Remaining space is 19 chars.
-	if len(base) > 19 {
+	// prefix is 14 chars ("fndocker.dock-"). Max remaining space is 18 chars.
+	// We append "-" + suffix (4 chars) = 5 chars.
+	// Thus base prefix can be at most 18 - 5 = 13 chars.
+	if len(base) > 13 {
 		h := sha256.Sum256([]byte(containerName + "/" + entryName + "/" + customName))
 		suffix := hex.EncodeToString(h[:])[:4]
-		base = strings.TrimRight(base[:14], "-") + "-" + suffix
+		base = strings.TrimRight(base[:13], "-") + "-" + suffix
 	}
-	return prefix + base
+	res := prefix + base
+	if len(res) > 32 {
+		res = res[:32]
+		res = strings.TrimRight(res, "-.")
+	}
+	return res
 }
 
 // DeriveWatchcowAppName is an alias for backward compatibility.
@@ -356,6 +365,11 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 			shortCID = shortCID[:12]
 		}
 		workingDir := labels["com.docker.compose.project.working_dir"]
+		if workingDir == "" {
+			if cfgFile := labels["com.docker.compose.project.config_files"]; cfgFile != "" {
+				workingDir = filepath.Dir(strings.Split(cfgFile, ",")[0])
+			}
+		}
 
 		defaultPort := 0
 		for _, p := range c.Ports {
@@ -435,6 +449,9 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 			}
 
 			iconVal := defaultEntry["icon"]
+			if iconVal == "" {
+				iconVal = DefaultIconForImage(c.Image)
+			}
 			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
 			displayIcon := fmt.Sprintf("/api/desktop/docklabel/icon?id=%s", itemID)
 
@@ -552,6 +569,12 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 			}
 
 			iconVal := eData["icon"]
+			if iconVal == "" {
+				iconVal = defaultEntry["icon"]
+			}
+			if iconVal == "" {
+				iconVal = DefaultIconForImage(c.Image)
+			}
 			localIcon := resolveWatchcowIconPath(iconVal, workingDir, c.Mounts)
 			displayIcon := fmt.Sprintf("/api/desktop/docklabel/icon?id=%s", itemID)
 
@@ -618,6 +641,98 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 	}
 	slog.Info("[DOCKLABEL] 容器标签扫描完成", "containersCount", len(rawContainers), "matchedCount", len(results))
 	return results, nil
+}
+
+// DefaultIconForImage returns the homarr CDN icon URL for a given Docker image name.
+func DefaultIconForImage(image string) string {
+	parts := strings.Split(image, "/")
+	imageName := parts[len(parts)-1]
+	imageName = strings.Split(imageName, ":")[0]
+	imageName = strings.Split(imageName, "@")[0]
+	imageName = strings.ToLower(imageName)
+	return fmt.Sprintf("https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", imageName)
+}
+
+// StartDockerEventListener listens to docker container events and invokes onChange when container state changes.
+func StartDockerEventListener(ctx context.Context, onChange func()) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			sock := getDockerSocketPath()
+			if _, err := os.Stat(sock); err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+					continue
+				}
+			}
+
+			client := getDockLabelDockerClient()
+			// Filters for container events
+			reqURL := "http://localhost/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D"
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					continue
+				}
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					continue
+				}
+			}
+
+			slog.Info("[DOCKLABEL] 正在监听 Docker 实时事件流...")
+			reader := bufio.NewReader(resp.Body)
+			var debounceTimer *time.Timer
+			var debounceMu sync.Mutex
+
+			triggerChange := func() {
+				debounceMu.Lock()
+				defer debounceMu.Unlock()
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				debounceTimer = time.AfterFunc(1*time.Second, func() {
+					slog.Info("[DOCKLABEL] 触发容器状态变更自动同步")
+					if onChange != nil {
+						onChange()
+					}
+				})
+			}
+
+			for {
+				line, err := reader.ReadBytes('\n')
+				if err != nil {
+					resp.Body.Close()
+					slog.Warn("[DOCKLABEL] Docker 事件流断开，5秒后尝试重连...", "error", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(5 * time.Second):
+					}
+					break
+				}
+				if len(bytes.TrimSpace(line)) > 0 {
+					triggerChange()
+				}
+			}
+		}
+	}()
 }
 
 // ScanWatchcowItems is an alias for ScanDockLabelItems for backward compatibility.

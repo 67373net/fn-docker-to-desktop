@@ -459,7 +459,7 @@ function updateSettingsForm() {
 
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.23';
+    const ver = state.settings?.version || '1.1.24';
     titleEl.textContent = `v${ver} - 系统设置`;
   }
   document.title = `${portalName} - 容器与端口管理`;
@@ -581,10 +581,16 @@ function initEventSource() {
         }
         updatePortCountBadge();
       }
+      if (data && data.type === 'docklabel_update') {
+        fetchDesktopItems();
+      }
     } catch (err) {
       console.error('SSE parse error:', err);
     }
   };
+  state.eventSource.addEventListener('docklabel_update', () => {
+    fetchDesktopItems();
+  });
   state.eventSource.onerror = () => {
     // Retry on failure
   };
@@ -971,10 +977,11 @@ function renderDesktopTable() {
       }
 
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const openModeClass = item.ui_type === 'iframe' ? 'type-sub-iframe' : 'type-sub-tab';
       const typeColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+          <div class="${openModeClass}" style="font-size: 0.85rem; margin-top: 2px;">${escapeHtml(openModeText)}</div>
         </div>`;
 
       const hasIcon = !item.no_display;
@@ -990,10 +997,11 @@ function renderDesktopTable() {
         entryText = '-';
       }
       const permText = item.all_users ? '所有用户' : '仅管理员';
+      const permClass = item.all_users ? 'perm-sub-all' : 'perm-sub-admin';
       const entryColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+          <div class="${permClass}" style="font-size: 0.85rem; margin-top: 2px;">${permText}</div>
         </div>`;
 
       const toggleHtml = `
@@ -1053,7 +1061,7 @@ function renderDesktopTable() {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
         <td colspan="8" class="table-sink-divider-cell">
-          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签</span>
+          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新</span>
         </td>
       </tr>`;
 
@@ -1070,10 +1078,11 @@ function renderDesktopTable() {
       }
 
       const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+      const openModeClass = item.ui_type === 'iframe' ? 'type-sub-iframe' : 'type-sub-tab';
       const typeColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${escapeHtml(modeText)}</div>
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(openModeText)}</div>
+          <div class="${openModeClass}" style="font-size: 0.85rem; margin-top: 2px;">${escapeHtml(openModeText)}</div>
         </div>`;
 
       const hasIcon = !item.no_display;
@@ -1089,10 +1098,11 @@ function renderDesktopTable() {
         entryText = '-';
       }
       const permText = item.all_users ? '所有用户' : '仅管理员';
+      const permClass = item.all_users ? 'perm-sub-all' : 'perm-sub-admin';
       const entryColHtml = `
         <div>
           <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">${entryText}</div>
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 2px;">${permText}</div>
+          <div class="${permClass}" style="font-size: 0.85rem; margin-top: 2px;">${permText}</div>
         </div>`;
 
       const containerHint = item.container_name
@@ -1673,34 +1683,7 @@ function setIconModalTab(tabName) {
     p.classList.toggle('active', p.id === `icon-pane-${tabName}`);
   });
 
-  const previewImg = document.getElementById('icon-preview-img');
-
-  if (tabName === 'text') {
-    const text = document.getElementById('icon-text-input')?.value || '';
-    if (text.trim()) {
-      renderTextIconCanvas();
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-    }
-  } else if (tabName === 'url') {
-    const url = document.getElementById('icon-url-input')?.value.trim() || '';
-    if (url) {
-      if (previewImg) {
-        previewImg.src = url;
-        previewImg.onerror = () => {
-          previewImg.src = apiUrl('/default_item_icon.png');
-        };
-      }
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-    }
-  } else if (tabName === 'lib' || tabName === 'upload') {
-    const val = document.getElementById('item-icon')?.value.trim() || '';
-    if (val) {
-      if (previewImg) previewImg.src = getIconUrl(val);
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
-    }
+  if (tabName === 'lib' || tabName === 'upload') {
     renderIconLibraryGrid('modal');
   }
 }
@@ -2561,34 +2544,7 @@ function setSettingIconTab(tabName) {
     p.classList.toggle('active', p.id === `setting-icon-pane-${tabName}`);
   });
 
-  const previewImg = document.getElementById('setting-icon-preview-img');
-
-  if (tabName === 'text') {
-    const text = document.getElementById('setting-icon-text-input')?.value || '';
-    if (text.trim()) {
-      renderSettingTextIconCanvas();
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
-    }
-  } else if (tabName === 'url') {
-    const url = document.getElementById('setting-icon-url-input')?.value.trim() || '';
-    if (url) {
-      if (previewImg) {
-        previewImg.src = url;
-        previewImg.onerror = () => {
-          previewImg.src = apiUrl('/icon.png');
-        };
-      }
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
-    }
-  } else if (tabName === 'lib' || tabName === 'upload') {
-    const val = document.getElementById('setting-portal-icon')?.value.trim() || '';
-    if (val && val !== 'icon.png') {
-      if (previewImg) previewImg.src = getIconUrl(val);
-    } else {
-      if (previewImg) previewImg.src = apiUrl('/icon.png');
-    }
+  if (tabName === 'lib' || tabName === 'upload') {
     renderIconLibraryGrid('setting');
   }
 }
@@ -3784,7 +3740,7 @@ async function handleSaveSettingsManual() {
       document.title = `${savedName} - 容器与端口管理`;
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.23';
+        const ver = state.settings?.version || '1.1.24';
         titleEl.textContent = `v${ver} - 系统设置`;
       }
       document.getElementById('setting-portal-password').value = '';

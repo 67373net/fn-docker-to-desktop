@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.23"
+const appVersion = "1.1.24"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -337,6 +337,7 @@ func main() {
 
 	// fnOS installer
 	installer := desktop.NewInstaller(*dataDirFlag, *iconPathFlag)
+	installer.SetIconsDir(filepath.Join(*dataDirFlag, "icons"))
 
 	// Ensure put-port-on-desktop desktop icon is installed on fnOS (asynchronous)
 	go func() {
@@ -369,6 +370,11 @@ func main() {
 	systemSampler := monitor.NewSystemSampler(procPath)
 	watcher := monitor.NewWatcher(procPath, 1500*time.Millisecond)
 	watcher.Start()
+
+	// Start real-time Docker events listener for auto-refreshing watchcow / container desktop items
+	desktop.StartDockerEventListener(ctx, func() {
+		watcher.BroadcastDockLabelChange()
+	})
 
 	// API Handler
 	handler := api.NewHandler(api.Config{

@@ -24,6 +24,12 @@ var defaultIcon64Bytes []byte
 //go:embed assets/ICON_256.PNG
 var defaultIcon256Bytes []byte
 
+//go:embed assets/PRODUCT_ICON.PNG
+var productIcon64Bytes []byte
+
+//go:embed assets/PRODUCT_ICON_256.PNG
+var productIcon256Bytes []byte
+
 var cdnMirrors = []string{
 	"https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
 	"https://gcore.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
@@ -31,11 +37,26 @@ var cdnMirrors = []string{
 	"https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
 }
 
+// WriteProductIcons writes the official product icons (64x64 and 256x256) into the package.
+func WriteProductIcons(pkgDir string) error {
+	imagesDir := filepath.Join(pkgDir, "app", "ui", "images")
+	if err := os.MkdirAll(imagesDir, 0755); err != nil {
+		return err
+	}
+	return writeIconBytes(pkgDir, imagesDir, productIcon64Bytes, productIcon256Bytes)
+}
+
 // WritePackageIcons writes all required icons into the fnOS app directory.
 // customIconPathOrURL: user-provided icon path/URL/dataURI/base64
 // iconsDir: server icons cache directory
 // candidates: list of candidate names (image, container name, service name, title) to auto-resolve
 func WritePackageIcons(pkgDir string, customIconPathOrURL string, iconsDir string, candidates ...string) error {
+	// If this is our own product package or user requested icon.png, always write product icon
+	cleanCustom := strings.TrimPrefix(strings.TrimSpace(customIconPathOrURL), "/")
+	if cleanCustom == "icon.png" || filepath.Base(pkgDir) == "fn-docker-to-desktop" {
+		return WriteProductIcons(pkgDir)
+	}
+
 	imagesDir := filepath.Join(pkgDir, "app", "ui", "images")
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return err
@@ -47,9 +68,9 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, iconsDir strin
 	if strings.TrimSpace(customIconPathOrURL) != "" {
 		if img, err := loadIconImage(customIconPathOrURL, iconsDir); err == nil && img != nil {
 			iconImg = img
-			slog.Info("成功加载并解析自定义桌面图标", "source", summarizeIconSource(customIconPathOrURL))
+			slog.Info("成功加载并解析自定义桌面图标", "source", SummarizeIconSource(customIconPathOrURL))
 		} else {
-			slog.Warn("加载自定义图标失败，将尝试自动匹配官方图标", "source", summarizeIconSource(customIconPathOrURL), "error", err)
+			slog.Warn("加载自定义图标失败，将尝试自动匹配官方图标", "source", SummarizeIconSource(customIconPathOrURL), "error", err)
 		}
 	}
 
@@ -94,7 +115,8 @@ func WritePackageIcons(pkgDir string, customIconPathOrURL string, iconsDir strin
 	return writeIconBytes(pkgDir, imagesDir, defaultIcon64Bytes, defaultIcon256Bytes)
 }
 
-func summarizeIconSource(source string) string {
+// SummarizeIconSource returns a short readable summary of an icon source for logging.
+func SummarizeIconSource(source string) string {
 	s := strings.TrimSpace(source)
 	if strings.HasPrefix(s, "data:") {
 		idx := strings.Index(s, ",")
@@ -169,34 +191,61 @@ func getIconCandidates(raw string) []string {
 	return candidates
 }
 
-func fetchIconFromMirrors(name string) (image.Image, error) {
-	client := &http.Client{Timeout: 3 * time.Second}
-	var lastErr error
-	for _, tmpl := range cdnMirrors {
-		url := fmt.Sprintf(tmpl, name)
-		resp, err := client.Get(url)
-		if err != nil {
-			lastErr = err
-			continue
+// FetchIconBytesFromMirrors attempts to download an icon by candidate names (e.g. image name, service name) from Homarr CDN mirrors.
+func FetchIconBytesFromMirrors(candidates ...string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 4 * time.Second}
+	var allNames []string
+	for _, raw := range candidates {
+		if raw != "" {
+			allNames = append(allNames, getIconCandidates(raw)...)
 		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
-			continue
-		}
-		data, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		img, err := decodeAnyImage(data)
-		if err == nil && img != nil {
-			return img, nil
-		}
-		lastErr = err
 	}
-	return nil, fmt.Errorf("all mirrors failed: %v", lastErr)
+	seen := make(map[string]bool)
+	var lastErr error
+	for _, name := range allNames {
+		if seen[name] || name == "" {
+			continue
+		}
+		seen[name] = true
+		for _, tmpl := range cdnMirrors {
+			url := fmt.Sprintf(tmpl, name)
+			resp, err := client.Get(url)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+				continue
+			}
+			data, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if len(data) > 0 {
+				ct := resp.Header.Get("Content-Type")
+				if ct == "" {
+					ct = http.DetectContentType(data)
+				}
+				return data, ct, nil
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no matching candidates")
+	}
+	return nil, "", lastErr
+}
+
+func fetchIconFromMirrors(name string) (image.Image, error) {
+	data, _, err := FetchIconBytesFromMirrors(name)
+	if err != nil {
+		return nil, err
+	}
+	return decodeAnyImage(data)
 }
 
 func decodeAnyImage(data []byte) (image.Image, error) {
@@ -250,36 +299,78 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 
 	// 3. HTTP/HTTPS URL
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		// If it's a homarr icon url on jsdelivr, try all mirrors
-		if strings.Contains(source, "homarr-labs/dashboard-icons") {
-			parts := strings.Split(source, "/")
-			iconFilename := parts[len(parts)-1]
-			iconName := strings.TrimSuffix(iconFilename, ".png")
-			if img, err := fetchIconFromMirrors(iconName); err == nil {
+		// Build candidates for raw.githubusercontent.com
+		urlCandidates := []string{}
+		if strings.HasPrefix(source, "https://raw.githubusercontent.com/") {
+			cleanRaw := strings.TrimPrefix(source, "https://raw.githubusercontent.com/")
+			parts := strings.SplitN(cleanRaw, "/", 4)
+			if len(parts) == 4 {
+				jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+				fastlyURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+				urlCandidates = append(urlCandidates, fastlyURL, jsDelivrURL)
+			}
+			urlCandidates = append(urlCandidates, "https://ghproxy.net/"+source)
+		}
+		urlCandidates = append(urlCandidates, source)
+
+		client := &http.Client{Timeout: 6 * time.Second}
+		for _, targetURL := range urlCandidates {
+			resp, err := client.Get(targetURL)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				data, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err == nil && len(data) > 0 {
+					if img, err := decodeAnyImage(data); err == nil && img != nil {
+						return img, nil
+					}
+				}
+			} else if resp != nil {
+				resp.Body.Close()
+			}
+		}
+
+		// If URL fetch failed (e.g. 404 or connection error), extract candidate name from URL and try CDN mirrors
+		baseName := filepath.Base(source)
+		if idx := strings.Index(baseName, "?"); idx != -1 {
+			baseName = baseName[:idx]
+		}
+		cleanName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+		cleanName = strings.TrimRight(cleanName, "0123456789-_")
+		if cleanName != "" {
+			if img, err := fetchIconFromMirrors(cleanName); err == nil && img != nil {
 				return img, nil
 			}
 		}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(source)
-		if err != nil {
-			return nil, fmt.Errorf("fetch url %q failed: %w", source, err)
+		// Also check local host fallback for baseName
+		if baseName != "" {
+			for _, b := range []string{"/home", "/home/net67373", "/vol1", "/var/apps"} {
+				pats := []string{
+					filepath.Join(b, "*", "icons", baseName),
+					filepath.Join(b, "*", "README.assets", baseName),
+					filepath.Join(b, "*", baseName),
+				}
+				for _, pat := range pats {
+					matches, _ := filepath.Glob(pat)
+					for _, match := range matches {
+						if fi, err := os.Stat(match); err == nil && !fi.IsDir() {
+							if data, err := os.ReadFile(match); err == nil {
+								if img, err := decodeAnyImage(data); err == nil && img != nil {
+									return img, nil
+								}
+							}
+						}
+					}
+				}
+			}
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, source)
-		}
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		return decodeAnyImage(data)
 	}
 
 	// 4. Local file paths (check multiple possible locations)
 	cleanSource := strings.TrimPrefix(source, "file://")
 	cleanSource = strings.TrimPrefix(cleanSource, "/icons/")
 	cleanSource = strings.TrimPrefix(cleanSource, "icons/")
+	cleanSource = strings.TrimPrefix(cleanSource, "./")
 
 	var possiblePaths []string
 	if iconsDir != "" {
@@ -294,6 +385,19 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 	)
 	if dataShare := os.Getenv("TRIM_DATA_SHARE_PATHS"); dataShare != "" {
 		possiblePaths = append(possiblePaths, filepath.Join(dataShare, filepath.Base(cleanSource)))
+	}
+
+	baseName := filepath.Base(cleanSource)
+	for _, b := range []string{"/home", "/home/net67373", "/vol1", "/var/apps"} {
+		pats := []string{
+			filepath.Join(b, "*", "icons", baseName),
+			filepath.Join(b, "*", "README.assets", baseName),
+			filepath.Join(b, "*", baseName),
+		}
+		for _, pat := range pats {
+			matches, _ := filepath.Glob(pat)
+			possiblePaths = append(possiblePaths, matches...)
+		}
 	}
 
 	for _, p := range possiblePaths {
