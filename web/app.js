@@ -268,6 +268,7 @@ function scheduleReconcilePolling() {
 }
 
 async function fetchWatchcowItems() {
+  const fetchStart = Date.now();
   const seq = ++watchcowFetchSeq;
   try {
     let res = await fetch(apiUrl('/api/desktop/docklabel'));
@@ -310,10 +311,17 @@ async function fetchWatchcowItems() {
     console.error('Fetch docklabel items error:', err);
     state.watchcowItemsLoaded = true;
     renderDesktopTable();
+  } finally {
+    const dur = Date.now() - fetchStart;
+    if (dur > 1500) {
+      console.warn(`[PERF] fetchWatchcowItems 扫描耗时过长: ${dur}ms`);
+      reportClientLog('warn', 'fetchWatchcowItems 扫描耗时过长', `${dur}ms`);
+    }
   }
 }
 
 async function fetchDesktopItems() {
+  const fetchStart = Date.now();
   fetchWatchcowItems();
   try {
     const res = await fetch(apiUrl('/api/desktop/items'));
@@ -380,6 +388,12 @@ async function fetchDesktopItems() {
     console.error('Fetch desktop items error:', err);
     state.desktopItemsLoaded = true;
     renderDesktopTable();
+  } finally {
+    const dur = Date.now() - fetchStart;
+    if (dur > 1000) {
+      console.warn(`[PERF] fetchDesktopItems 响应耗时过长: ${dur}ms`);
+      reportClientLog('warn', 'fetchDesktopItems 响应耗时过长', `${dur}ms`);
+    }
   }
 }
 
@@ -492,7 +506,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.33';
+  const ver = state.settings?.version || '1.1.34';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1049,7 +1063,9 @@ function renderDesktopTable() {
 
   let html = '';
 
-  if (filtered.length === 0) {
+  if (!state.desktopItemsLoaded) {
+    html += '<tr><td colspan="7" class="empty-state" style="padding: 1.5rem 1rem; color: var(--text-muted);"><span class="spinner-small" style="margin-right: 8px;"></span>正在载入手动桌面图标...</td></tr>';
+  } else if (filtered.length === 0) {
     if (state.watchcowItemsLoaded && filteredWatchcow.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
       return;
@@ -1567,24 +1583,10 @@ function isDesktopItemFormDirty() {
     return false;
   }
 
-  const id = (document.getElementById('item-id')?.value || '').trim();
-
-  // If it's a new item creation dialog:
-  if (!id) {
-    const name = (cur.name || '').trim();
-    const localPort = (cur.localPort || '').trim();
-    const targetUrl = (cur.targetUrl || '').trim();
-    const shortcutUrl = (cur.shortcutUrl || '').trim();
-    const proxyPort = (cur.proxyPort || '').trim();
-    if (!name && !localPort && !targetUrl && !shortcutUrl && !proxyPort) {
-      return false;
-    }
-    return true;
-  }
-
-  // Editing existing item:
-  // Check common fields
+  // Check common fields against snapshot
   if ((cur.name || '').trim() !== (snap.name || '').trim()) return true;
+  if ((cur.appName || '').trim() !== (snap.appName || '').trim()) return true;
+  if ((cur.containerName || '').trim() !== (snap.containerName || '').trim()) return true;
   if (String(cur.allUsers) !== String(snap.allUsers)) return true;
   if ((cur.noticeContent || '').trim() !== (snap.noticeContent || '').trim()) return true;
   if (!!cur.noDisplay !== !!snap.noDisplay) return true;
@@ -4086,7 +4088,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.33';
+      const ver = state.settings?.version || '1.1.34';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

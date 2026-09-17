@@ -516,16 +516,29 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // /api/desktop/items
 func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 500*time.Millisecond {
+			slog.Warn("[PERF] handleGetDesktopItems 响应耗时过长", "duration", dur)
+		}
+	}()
+
 	if !h.checkAuth(r) {
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
 	items := h.storage.GetAllItems()
-	for idx := range items {
-		if desktop.PersistItemIcon(&items[idx], h.iconsDir) {
-			_ = h.storage.SaveItem(items[idx])
+
+	// Asynchronously heal any unpersisted icons without blocking the GET response
+	go func(itemsCopy []desktop.DesktopItem) {
+		for idx := range itemsCopy {
+			if desktop.PersistItemIcon(&itemsCopy[idx], h.iconsDir) {
+				_ = h.storage.SaveItem(itemsCopy[idx])
+			}
 		}
-	}
+	}(append([]desktop.DesktopItem(nil), items...))
+
 	if h.installer != nil {
 		for idx := range items {
 			appName := items[idx].AppName
@@ -2122,6 +2135,14 @@ func (h *Handler) invalidateDockLabelCache() {
 
 // /api/desktop/docklabel
 func (h *Handler) handleGetDockLabelItems(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 1000*time.Millisecond {
+			slog.Warn("[PERF] handleGetDockLabelItems 扫描耗时过长", "duration", dur)
+		}
+	}()
+
 	if !h.checkAuth(r) {
 		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
@@ -2334,6 +2355,14 @@ func (h *Handler) serveDefaultItemIcon(w http.ResponseWriter, r *http.Request) {
 
 // /api/desktop/docklabel/icon
 func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 1000*time.Millisecond {
+			slog.Warn("[PERF] handleGetDockLabelIcon 获取图标耗时过长", "duration", dur, "id", r.URL.Query().Get("id"))
+		}
+	}()
+
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		h.serveDefaultItemIcon(w, r)
@@ -2363,7 +2392,7 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 
 	var found *desktop.DockLabelItem
 	for i := range items {
-		if items[i].ID == id {
+		if items[i].ID == id || strings.TrimPrefix(items[i].ID, "docklabel-") == strings.TrimPrefix(id, "watchcow-") {
 			found = &items[i]
 			break
 		}
@@ -2373,133 +2402,19 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 1. If LocalIconPath exists, copy to cachePath and serve
-	if found.LocalIconPath != "" {
-		if info, err := os.Stat(found.LocalIconPath); err == nil && !info.IsDir() {
-			if data, err := os.ReadFile(found.LocalIconPath); err == nil && len(data) > 0 {
-				_ = os.WriteFile(cachePath, data, 0644)
-			}
-			w.Header().Set("Cache-Control", "public, max-age=86400")
-			http.ServeFile(w, r, found.LocalIconPath)
-			return
+	data, ct, err := desktop.ResolveDockLabelIconBytes(found, h.iconsDir)
+	if err == nil && len(data) > 0 {
+		if ct == "" {
+			ct = "image/png"
 		}
-	}
-
-	// 2. Check if Icon is a local/loopback icon URL (e.g. http://127.0.0.1:5900/icons/xxx or /icons/xxx)
-	if isLocal, baseName := desktop.IsLocalOrLoopbackIconURL(found.Icon); isLocal && baseName != "" {
-		target := filepath.Join(h.iconsDir, baseName)
-		if info, err := os.Stat(target); err == nil && !info.IsDir() {
-			if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
-				_ = os.WriteFile(cachePath, data, 0644)
-			}
-			w.Header().Set("Cache-Control", "public, max-age=86400")
-			http.ServeFile(w, r, target)
-			return
-		}
-		if resolved := desktop.ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
-			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
-				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
-					_ = os.WriteFile(target, data, 0644)
-					_ = os.WriteFile(cachePath, data, 0644)
-				}
-				w.Header().Set("Cache-Control", "public, max-age=86400")
-				http.ServeFile(w, r, resolved)
-				return
-			}
-		}
-	}
-
-	// 3. Try dynamic resolution on host if LocalIconPath was empty or moved
-	if found.Icon != "" {
-		resolved := desktop.ResolveWatchcowIconPath(found.Icon, "", nil)
-		if resolved != "" {
-			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
-				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
-					_ = os.WriteFile(cachePath, data, 0644)
-				}
-				w.Header().Set("Cache-Control", "public, max-age=86400")
-				http.ServeFile(w, r, resolved)
-				return
-			}
-		}
-	}
-
-	// 4. If Icon is a local icons directory reference
-	if found.Icon != "" {
-		if strings.HasPrefix(found.Icon, "/icons/") || strings.HasPrefix(found.Icon, "icons/") {
-			rel := strings.TrimPrefix(strings.TrimPrefix(found.Icon, "/icons/"), "icons/")
-			target := filepath.Join(h.iconsDir, filepath.Clean(rel))
-			if info, err := os.Stat(target); err == nil && !info.IsDir() {
-				if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
-					_ = os.WriteFile(cachePath, data, 0644)
-				}
-				w.Header().Set("Cache-Control", "public, max-age=86400")
-				http.ServeFile(w, r, target)
-				return
-			}
-		}
-	}
-
-	// 5. If Icon is an HTTP/HTTPS URL, proxy and cache (skip if loopback/local URL)
-	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
-		if isLocal, _ := desktop.IsLocalOrLoopbackIconURL(found.Icon); !isLocal {
-			// Build URL candidates
-			urlCandidates := []string{}
-			if strings.HasPrefix(found.Icon, "https://raw.githubusercontent.com/") {
-				cleanRaw := strings.TrimPrefix(found.Icon, "https://raw.githubusercontent.com/")
-				parts := strings.SplitN(cleanRaw, "/", 4)
-				if len(parts) == 4 {
-					jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
-					urlCandidates = append(urlCandidates, jsDelivrURL)
-				}
-				urlCandidates = append(urlCandidates, "https://ghproxy.net/"+found.Icon)
-			}
-			urlCandidates = append(urlCandidates, found.Icon)
-
-			client := &http.Client{Timeout: 2 * time.Second}
-			for _, targetURL := range urlCandidates {
-				req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-				if err != nil {
-					continue
-				}
-				req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; fn-docker-to-desktop)")
-				resp, err := client.Do(req)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-					resp.Body.Close()
-					if err == nil && len(data) > 0 {
-						_ = os.WriteFile(cachePath, data, 0644)
-						ct := resp.Header.Get("Content-Type")
-						if ct == "" {
-							ct = http.DetectContentType(data)
-						}
-						w.Header().Set("Content-Type", ct)
-						w.Header().Set("Cache-Control", "public, max-age=86400")
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write(data)
-						slog.Info("[DOCKLABEL-ICON] 远端图标下载并缓存成功", "id", id, "from", targetURL, "size", len(data))
-						return
-					}
-				} else if resp != nil {
-					resp.Body.Close()
-				}
-			}
-		}
-	}
-
-	// 6. Try resolving from Homarr dashboard icon mirrors using candidate names (bounded to 2s)
-	candidates := []string{found.Icon, found.ContainerName, found.Image, found.Name}
-	if data, ct, err := desktop.FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
-		_ = os.WriteFile(cachePath, data, 0644)
 		w.Header().Set("Content-Type", ct)
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
-		slog.Info("[DOCKLABEL-ICON] 从官方图标库镜像自动匹配并缓存图标成功", "id", id, "candidates", candidates, "size", len(data))
 		return
 	}
 
-	// 7. Fallback to default icon: cache default icon to cachePath to make future requests instant
+	// Fallback to default icon: cache default icon to cachePath to make future requests instant
 	slog.Debug("[DOCKLABEL-ICON] 容器标签未配置或未找到自定义图标，回退至系统默认图标",
 		"id", id,
 		"name", found.Name,

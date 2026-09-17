@@ -3622,4 +3622,66 @@ INFO
 2. **构建验证**：Docker 容器内执行 `go build ./cmd/server` 编译成功，无任何告警。
 3. **零 .fpk 残留**：本地工作树干净，通过 GitHub Actions 云端构建流水线发布。
 
+---
+
+## Turn 49 - v1.1.34 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **复制图标一致性根治**：点击复制后，有时候显示的图标是对的，但是有时候显示的是默认图标；有的图标是在程序第二次重装的时候才显示正确。
+2. **二次未保存提示误报根治**：点击复制后，什么都没改直接关闭窗口，会弹出二次提示未保存对话框。
+3. **加载慢、暂无手动图标闪烁与耗时警告治理**：重装加载很久，并且显示了一段时间的“暂无手动图标”，过了一会儿才显示正常。全面排查原因并在日志中记录加载时间，如果太长打上 WARN 标记。
+4. **全链路版本升级至 `v1.1.34`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **统一图标解析器与物理持久化时序解耦 (`ResolveDockLabelIconBytes`, `internal/desktop/docklabel.go`, `internal/desktop/icons.go`, `internal/api/handler.go`)**：
+   - **根因分析**：
+     - 用户点击“复制”时，前端填充表单的 `Icon` 为 `/api/desktop/docklabel/icon?id=...`。后端保存时调用 `PersistItemIcon` 试图物理生成 `copy_<id>.png`。
+     - 若此时浏览器尚未完成对该条目 `/api/desktop/docklabel/icon` 的异步 HTTP GET 请求，磁盘上尚无 `dock_cache_<hash>.png` 缓存；
+     - 之前的 `PersistItemIcon` 仅检查本地挂载路径，对 CDN/Homarr 官方镜像库匹配并未执行深度解析，导致 `PersistItemIcon` 在第一次保存时返回 `false`，安装程序只能打包系统默认图标；
+     - 随后浏览器请求到达，生成了 `dock_cache_<hash>.png`。当程序第二次重装或重启时，`ReconcileInstalledItems` 再次检测，由于磁盘已存在缓存，才成功持久化并修复为正确图标，完美解释了“为何第二次重装才变正确”的现象！
+   - **核心治理**：
+     - 在 `internal/desktop/docklabel.go` 中实现统一解析器 `ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, string, error)`，打通缓存命中、本地挂载、宿主机路径、本地引用、远端下载与 Homarr 镜像库智能匹配的全流程；
+     - 重构 `internal/api/handler.go` 的 `handleGetDockLabelIcon` 和 `internal/desktop/icons.go` 的 `PersistItemIcon`，均复用该统一解析函数；
+     - 在复制保存的第一时间，即使尚未产生浏览器缓存，`PersistItemIcon` 也会直接驱动 `ResolveDockLabelIconBytes` 将图标解析并写入 `copy_<id>.png` 与 `dock_cache_<hash>.png`，确保首次创建即 100% 拥有正确图标。
+
+2. **弹窗未保存脏检测逻辑修复 (`web/app.js`)**：
+   - **根因分析**：
+     - 在 `isDesktopItemFormDirty()` 中，存在一段残留的 `if (!id) { if (!name && !localPort ...) return false; return true; }` 逻辑；
+     - 无论是新建还是复制，表单中的 `id` 均为空。当从 Watchcow 复制条目时，`name` 和 `port` 已经被自动预填充，导致该判断无条件返回 `true`，完全跳过了快照比对！
+   - **核心治理**：
+     - 移除该 `if (!id)` 错误分支，使所有场景（空表单新建、Watchcow 复制预填、已有条目编辑）统一严格比对当前表单内容与打开弹窗时记录的快照 `state.desktopItemFormSnapshot`；
+     - 补充 `appName` 和 `containerName` 的快照比对项，彻底消除“点击复制什么都没改却提示未保存”的误报。
+
+3. **加载态隔离与“暂无手动图标”闪烁根治 (`web/app.js`, `internal/api/handler.go`)**：
+   - **根因分析**：
+     - 前端 `renderDesktopTable()` 在判定空状态时，原逻辑直接检查 `if (filtered.length === 0)`。当 Watchcow 列表加载完成而手动图标条目（`/api/desktop/items`）仍在网络传输或处理中时，`filtered` 为空数组，导致界面瞬间错误渲染“暂无手动添加的桌面图标”，待后端返回后才突然刷出真实条目；
+     - 后端 `handleGetDesktopItems` 过去在每次 GET 请求中同步遍历所有条目执行 `PersistItemIcon` 检查，阻塞了 HTTP 响应速度。
+   - **核心治理**：
+     - 在前端 `renderDesktopTable()` 中细化加载态判定：若 `!state.desktopItemsLoaded`，先显示骨架动画与“正在载入手动桌面图标...”，加载完成前绝不提前判定并渲染“暂无”空状态；
+     - 后端 `handleGetDesktopItems` 将图标自愈检查解耦至异步后台 goroutine，API 请求不再被磁盘/网络 I/O 阻塞，响应时间降至毫秒级。
+
+4. **全链路性能耗时监控与告警 (`internal/desktop/`, `internal/api/`, `web/app.js`)**：
+   - **后端耗时打标**：
+     - `ScanDockLabelItems`：执行耗时超过 1000ms 时触发 `slog.Warn("[PERF] ScanDockLabelItems 扫描耗时过长", ...)`；
+     - `handleGetDesktopItems`：响应耗时超过 500ms 时触发 `slog.Warn("[PERF] handleGetDesktopItems 响应耗时过长", ...)`；
+     - `handleGetDockLabelItems`：响应耗时超过 1000ms 时触发 `slog.Warn("[PERF] handleGetDockLabelItems 扫描耗时过长", ...)`；
+     - `handleGetDockLabelIcon`：请求耗时超过 1000ms 时触发 `slog.Warn("[PERF] handleGetDockLabelIcon 获取图标耗时过长", ...)`；
+     - `ReconcileInstalledItems`：状态对齐耗时超过 3000ms 时触发 `slog.Warn("[PERF] ReconcileInstalledItems 状态对齐耗时过长", ...)`；
+     - `PersistItemIcon`：持久化耗时超过 1000ms 时触发 `slog.Warn("[PERF] PersistItemIcon 图标持久化耗时过长", ...)`。
+   - **前端耗时监控**：
+     - `fetchDesktopItems` 超过 1000ms 时触发 `console.warn` 并上报审计日志；
+     - `fetchWatchcowItems` 超过 1500ms 时触发 `console.warn` 并上报审计日志。
+
+5. **全链路版本升级至 `v1.1.34`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.34`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过，`go build ./cmd/server` 编译成功。
+2. **零 .fpk 残留**：本地工作树干净，由 GitHub Actions 云端流水线统一构建发布。
+
+
 

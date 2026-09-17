@@ -794,6 +794,13 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 	if !i.HasCLI() {
 		return
 	}
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 3000*time.Millisecond {
+			slog.Warn("[PERF] ReconcileInstalledItems 状态对齐耗时过长", "duration", dur, "items_count", len(items))
+		}
+	}()
 
 	// 1. Identify missing items and stopped items
 	var missing []DesktopItem

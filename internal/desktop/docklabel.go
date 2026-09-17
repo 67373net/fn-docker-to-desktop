@@ -467,6 +467,14 @@ func getDockLabelDockerClient() *http.Client {
 
 // ScanDockLabelItems queries docker containers and parses any configured container labels (e.g. watchcow.* labels).
 func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool) ([]DockLabelItem, error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 1000*time.Millisecond {
+			slog.Warn("[PERF] ScanDockLabelItems 扫描耗时过长", "duration", dur)
+		}
+	}()
+
 	sock := getDockerSocketPath()
 	if _, err := os.Stat(sock); err != nil {
 		slog.Warn("[DOCKLABEL] Docker unix socket 不存在，跳过容器标签扫描", "sock", sock)
@@ -801,6 +809,167 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 	}
 	slog.Info("[DOCKLABEL] 容器标签扫描完成", "containersCount", len(rawContainers), "matchedCount", len(results))
 	return results, nil
+}
+
+// ResolveDockLabelIconBytes resolves the raw binary icon and content-type for a DockLabelItem.
+// It checks in order:
+// 1. Existing disk cache in iconsDir (dock_cache_<hash>.png or wc_cache_<hash>.png)
+// 2. LocalIconPath (if mounted in container)
+// 3. Local/loopback icon URL
+// 4. ResolveWatchcowIconPath on host
+// 5. Local /icons/ directory reference
+// 6. Remote HTTP/HTTPS URL download (with proxy mirrors if GitHub)
+// 7. Homarr dashboard icon mirrors by candidate names
+// If resolved, it writes to disk cache and returns the bytes and MIME type.
+func ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, string, error) {
+	if found == nil {
+		return nil, "", fmt.Errorf("item is nil")
+	}
+
+	idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.ID)))
+	var cacheHashes []string
+	cacheHashes = append(cacheHashes, idHash)
+	if strings.HasPrefix(found.ID, "docklabel-") {
+		legacyID := "watchcow-" + strings.TrimPrefix(found.ID, "docklabel-")
+		cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte(legacyID))))
+	} else if strings.HasPrefix(found.ID, "watchcow-") {
+		modernID := "docklabel-" + strings.TrimPrefix(found.ID, "watchcow-")
+		cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte(modernID))))
+	}
+
+	// 0. Fast-path disk cache check
+	if iconsDir != "" {
+		for _, h := range cacheHashes {
+			for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+				cp := filepath.Join(iconsDir, prefix+h+".png")
+				if info, err := os.Stat(cp); err == nil && info.Size() > 0 {
+					if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
+						return data, "image/png", nil
+					}
+				}
+			}
+		}
+	}
+
+	saveCache := func(data []byte) {
+		if iconsDir != "" && len(data) > 0 {
+			for _, h := range cacheHashes {
+				_ = os.WriteFile(filepath.Join(iconsDir, "dock_cache_"+h+".png"), data, 0644)
+			}
+		}
+	}
+
+	// 1. If LocalIconPath exists
+	if found.LocalIconPath != "" {
+		if info, err := os.Stat(found.LocalIconPath); err == nil && !info.IsDir() {
+			if data, err := os.ReadFile(found.LocalIconPath); err == nil && len(data) > 0 {
+				saveCache(data)
+				return data, "image/png", nil
+			}
+		}
+	}
+
+	// 2. Check if Icon is a local/loopback icon URL
+	if isLocal, baseName := IsLocalOrLoopbackIconURL(found.Icon); isLocal && baseName != "" {
+		if iconsDir != "" {
+			target := filepath.Join(iconsDir, baseName)
+			if info, err := os.Stat(target); err == nil && !info.IsDir() {
+				if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
+					saveCache(data)
+					return data, "image/png", nil
+				}
+			}
+		}
+		if resolved := ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
+			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+					if iconsDir != "" {
+						_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
+					}
+					saveCache(data)
+					return data, "image/png", nil
+				}
+			}
+		}
+	}
+
+	// 3. Try dynamic resolution on host if LocalIconPath was empty or moved
+	if found.Icon != "" {
+		if resolved := ResolveWatchcowIconPath(found.Icon, "", nil); resolved != "" {
+			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+					saveCache(data)
+					return data, "image/png", nil
+				}
+			}
+		}
+	}
+
+	// 4. If Icon is a local icons directory reference
+	if found.Icon != "" && iconsDir != "" {
+		if strings.HasPrefix(found.Icon, "/icons/") || strings.HasPrefix(found.Icon, "icons/") {
+			rel := strings.TrimPrefix(strings.TrimPrefix(found.Icon, "/icons/"), "icons/")
+			target := filepath.Join(iconsDir, filepath.Clean(rel))
+			if info, err := os.Stat(target); err == nil && !info.IsDir() {
+				if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
+					saveCache(data)
+					return data, "image/png", nil
+				}
+			}
+		}
+	}
+
+	// 5. If Icon is an HTTP/HTTPS URL, proxy and cache (skip if loopback/local URL)
+	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
+		if isLocal, _ := IsLocalOrLoopbackIconURL(found.Icon); !isLocal {
+			urlCandidates := []string{}
+			if strings.HasPrefix(found.Icon, "https://raw.githubusercontent.com/") {
+				cleanRaw := strings.TrimPrefix(found.Icon, "https://raw.githubusercontent.com/")
+				parts := strings.SplitN(cleanRaw, "/", 4)
+				if len(parts) == 4 {
+					jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+					urlCandidates = append(urlCandidates, jsDelivrURL)
+				}
+				urlCandidates = append(urlCandidates, "https://ghproxy.net/"+found.Icon)
+			}
+			urlCandidates = append(urlCandidates, found.Icon)
+
+			client := &http.Client{Timeout: 2 * time.Second}
+			for _, targetURL := range urlCandidates {
+				req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+				if err != nil {
+					continue
+				}
+				req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; fn-docker-to-desktop)")
+				resp, err := client.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+					resp.Body.Close()
+					if err == nil && len(data) > 0 {
+						saveCache(data)
+						ct := resp.Header.Get("Content-Type")
+						if ct == "" {
+							ct = http.DetectContentType(data)
+						}
+						slog.Info("[DOCKLABEL-ICON] 远端图标下载并缓存成功", "id", found.ID, "from", targetURL, "size", len(data))
+						return data, ct, nil
+					}
+				} else if resp != nil {
+					resp.Body.Close()
+				}
+			}
+		}
+	}
+
+	// 6. Try resolving from Homarr dashboard icon mirrors using candidate names (bounded to 2s)
+	candidates := []string{found.Icon, found.ContainerName, found.Image, found.Name}
+	if data, ct, err := FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
+		saveCache(data)
+		slog.Info("[DOCKLABEL-ICON] 从官方图标库镜像自动匹配并缓存图标成功", "id", found.ID, "candidates", candidates, "size", len(data))
+		return data, ct, nil
+	}
+
+	return nil, "", fmt.Errorf("icon not found for %s", found.ID)
 }
 
 // DefaultIconForImage returns the homarr CDN icon URL for a given Docker image name.

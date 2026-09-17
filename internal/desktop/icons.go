@@ -231,6 +231,14 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 	if item == nil || strings.TrimSpace(item.Icon) == "" || iconsDir == "" {
 		return false
 	}
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if dur > 1000*time.Millisecond {
+			slog.Warn("[PERF] PersistItemIcon 图标持久化耗时过长", "duration", dur, "id", item.ID, "icon", item.Icon)
+		}
+	}()
+
 	targetName := fmt.Sprintf("copy_%s.png", item.ID)
 	targetPath := filepath.Join(iconsDir, targetName)
 
@@ -250,8 +258,8 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 		}
 	}
 
-	// 1. If it's a docklabel icon URL (/api/desktop/docklabel/icon?id=...)
-	if strings.Contains(item.Icon, "/api/desktop/docklabel/icon") {
+	// 1. If it's a docklabel icon URL (/api/desktop/docklabel/icon?id=... or /api/desktop/watchcow/icon?id=...)
+	if strings.Contains(item.Icon, "/api/desktop/docklabel/icon") || strings.Contains(item.Icon, "/api/desktop/watchcow/icon") {
 		if u, err := url.Parse(item.Icon); err == nil {
 			id := u.Query().Get("id")
 			if id != "" {
@@ -266,26 +274,16 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 						}
 					}
 				}
-				// Also try to resolve via ScanDockLabelItems
+				// If not cached yet, resolve it directly via ResolveDockLabelIconBytes
 				if dItems, err := ScanDockLabelItems(nil); err == nil {
-					for _, dit := range dItems {
-						if dit.ID == id {
-							if dit.LocalIconPath != "" {
-								if data, err := os.ReadFile(dit.LocalIconPath); err == nil && len(data) > 0 {
-									if err := os.WriteFile(targetPath, data, 0644); err == nil {
-										item.Icon = targetName
-										slog.Info("从容器挂载路径物理持久化图标成功", "id", item.ID, "target", targetName)
-										return true
-									}
-								}
-							}
-							if resolved := ResolveWatchcowIconPath(dit.Icon, "", nil); resolved != "" {
-								if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
-									if err := os.WriteFile(targetPath, data, 0644); err == nil {
-										item.Icon = targetName
-										slog.Info("从宿主机路径物理持久化图标成功", "id", item.ID, "target", targetName)
-										return true
-									}
+					for i := range dItems {
+						if dItems[i].ID == id || strings.TrimPrefix(dItems[i].ID, "docklabel-") == strings.TrimPrefix(id, "watchcow-") {
+							data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir)
+							if err == nil && len(data) > 0 {
+								if err := os.WriteFile(targetPath, data, 0644); err == nil {
+									item.Icon = targetName
+									slog.Info("通过统一解析器物理持久化 DockLabel 图标成功", "id", item.ID, "target", targetName)
+									return true
 								}
 							}
 							break
