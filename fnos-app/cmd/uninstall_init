@@ -82,14 +82,17 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
         wait
         log_msg "所有子应用图标已在桌面瞬间隐藏"
 
-        # 核心优化 2：后台异步并发执行 uninstall，不阻塞应用中心卸载流程
-        (
-            for app in ${UNIQUE_APPS}; do
-                log_msg "后台注销应用: ${app}"
+        # 核心优化 2：完全脱离父进程会话的后台异步卸载，不阻塞应用中心卸载流程
+        nohup bash -c '
+            CLI="'"${CLI}"'"
+            LOG_FILE="'"${LOG_FILE}"'"
+            for app in '"${UNIQUE_APPS}"'; do
+                echo "$(date "+%Y-%m-%d %H:%M:%S") - [uninstall-worker] 后台注销应用: ${app}" >> "${LOG_FILE}" 2>&1
                 "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
             done
-            log_msg "后台子应用注销完成"
-        ) >/dev/null 2>&1 &
+            echo "$(date "+%Y-%m-%d %H:%M:%S") - [uninstall-worker] 后台子应用注销全部完成" >> "${LOG_FILE}" 2>&1
+        ' </dev/null >> "${LOG_FILE}" 2>&1 &
+        disown -a 2>/dev/null || true
     fi
 fi
 

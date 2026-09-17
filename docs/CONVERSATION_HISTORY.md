@@ -3331,3 +3331,52 @@ INFO
 1. **自动化单元测试**：Docker 容器 (`golang:1.22-alpine`) 内执行 `go test -v ./...` 全部 PASS。
 2. **服务端完整编译**：Docker 容器内执行 `go build -v ./cmd/server` 编译成功且退出码为 0，随后清理二进制保证仓库纯净。
 3. **零 .fpk 残留**：确认仓库内无任何 `.fpk` 或多余临时文件残留。
+
+---
+
+## Turn 42 - v1.1.27 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **应用卸载耗时过长优化**：在不改变现有功能逻辑（仍需完整且安全注销所有由本程序创建的子应用与桌面图标）的前提下，彻底优化卸载耗时。
+2. **列表视图 4 大排版规则严格落地**：
+   - 所有表头左对齐，列与列之间间隔 2 个中文字符（消除过大间距）；
+   - 所有内容尽量完全显示；
+   - 若完全显示导致宽度不够，则自动换行；
+   - 若宽度填不满容器，最右边的列右边留空（表格内容空白填充，表头宽度拉满），严禁在最左列右边拉宽。
+3. **系统设置项目仓库链接样式微调**：去除 `<a>` 标签上的 `class="form-input"`，改为朴素直接的行内链接展示。
+4. **全链路版本升级至 `v1.1.27`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **卸载性能瓶颈根因剖析与彻底解决 (`fnos-app/cmd/uninstall_init`, `fnos-app/cmd/uninstall_callback`)**：
+   - **根因分析**：
+     - fnOS 应用中心卸载时，依次调用 `uninstall_init` 与 `uninstall_callback`；
+     - 历史版本（v1.1.3）在 `uninstall_callback` 中加入了一个前台串行循环（`for app in $(cli list); do cli stop; cli uninstall; done`），在子应用较多时前台串行阻塞 60~120 秒；
+     - 后续版本虽优化了 `uninstall_init`，但 `uninstall_callback` 中的前台串行循环被遗漏，导致两个脚本同时执行注销并争抢 fnOS 应用中心数据库锁。
+   - **优化实现**：
+     - `uninstall_init`：采用并发 `stop`（`& wait`）在 0.5 秒内迅速停止所有子应用，使桌面图标瞬间消失；随后将完整的注销逻辑置入完全脱离父进程会话的后台 Worker 中（`nohup bash -c '...' </dev/null >> "${LOG_FILE}" 2>&1 & disown -a`），随后立即 `exit 0`；
+     - `uninstall_callback`：彻底移除阻塞性的前台串行循环，仅保留瞬时临时文件与套接字清理，直接 `exit 0`。整个卸载响应时间由近 2 分钟缩短至毫秒级。
+2. **表格 4 大排版规则核心引擎重构 (`web/index.html`, `web/style.css`)**：
+   - **清除硬编码**：彻底清除 `web/index.html` 中 `#desktop-table`、`#ports-table`、`#proc-table`、宿主机信息表、批量导入弹窗表等所有 `<th>` 标签上的行内 `style="width: ..."` 和 `style="min-width: ..."`；
+   - **统一列间距与对齐**：
+     - `table.data-table th, table.data-table td` 统一设置 `text-align: left !important; padding: 0.75rem 1em; width: 1%; white-space: nowrap;`；
+     - 相邻列之间的总间距为 `1em + 1em = 2em`，精确对应 2 个中文字符宽度；
+   - **长文本智能换行与防挤压**：
+     - 为桌面条目名称（140px~260px）、访问路径/目标 URL（200px~400px）以及进程/端口容器名等配置 `min-width`、`max-width` 和 `white-space: normal; word-break: break-all; overflow-wrap: anywhere;`；
+     - 既避免了浏览器将无固定宽度的换行列压缩成单字纵向排列，又保证了当容器宽度受限时自动平滑换行、内容完整显示；
+   - **最右侧留空 (`filler-col`) 机制**：
+     - `th.filler-col, td.filler-col` 设置为 `width: 100% !important; padding: 0 !important;`；
+     - 当表格总内容不足以填满屏幕宽度时，由最后一列空白吸收全部剩余空间，表头背景完整延伸至右侧边框，表体空白填充，最左侧列与各数据列紧凑自然排布，绝不拉伸左侧。
+3. **项目仓库链接样式微调 (`web/index.html`)**：
+   - 去除 `<a href="...">` 上的 `class="form-input"`，改为行内样式链接 `style="color: var(--primary); text-decoration: none; word-break: break-all; cursor: pointer; display: inline-block;"`，恢复自然利落的超链接表现。
+4. **全链路版本升级至 `v1.1.27`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.27`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **单元测试与编译构建**：Docker 容器（`golang:alpine`）中运行 `go test -v ./...` 全部通过，`go build -v ./cmd/server` 编译验证成功。
+2. **视觉渲染验证**：通过真实页面渲染核验桌面图标列表、端口列表、进程列表排版，确认列间距为 2 字符、右侧留空、长文本自动换行且无挤压变形。
+3. **零 .fpk 残留**：保持仓库文件纯净，不留存任何本地构建 `.fpk` 文件。
+

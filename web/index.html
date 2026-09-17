@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.26">
+  <link rel="stylesheet" href="style.css?v=1.1.27">
 </head>
 <body>
   <!-- Header Bar -->
@@ -82,13 +82,13 @@
         <table class="data-table minimal-mode" id="ports-table">
           <thead>
             <tr>
-              <th style="width: 140px;">端口</th>
-              <th class="col-hide-minimal" style="width: 100px;">协议</th>
-              <th class="col-hide-minimal" style="width: 180px;">监听地址</th>
-              <th style="width: 240px;">容器 / 进程</th>
-              <th class="col-hide-minimal" style="width: 140px;">资源消耗</th>
-              <th style="width: 140px;">桌面图标</th>
-              <th style="width: 160px;">操作</th>
+              <th>端口</th>
+              <th class="col-hide-minimal">协议</th>
+              <th class="col-hide-minimal">监听地址</th>
+              <th>容器 / 进程</th>
+              <th class="col-hide-minimal">资源消耗</th>
+              <th>桌面图标</th>
+              <th>操作</th>
               <th class="filler-col"></th>
             </tr>
           </thead>
@@ -118,12 +118,12 @@
         <table class="data-table" id="desktop-table">
           <thead>
             <tr>
-              <th style="min-width: 180px;">名称</th>
-              <th style="width: 110px;">类型</th>
-              <th style="width: 110px;">入口</th>
-              <th style="width: 240px;">目标 / 映射端口</th>
-              <th style="width: 100px;">运行状态</th>
-              <th style="width: 180px;">操作</th>
+              <th>名称</th>
+              <th>类型</th>
+              <th>入口</th>
+              <th>目标 / 映射端口</th>
+              <th>运行状态</th>
+              <th>操作</th>
               <th class="filler-col"></th>
             </tr>
           </thead>
@@ -149,15 +149,15 @@
         <table class="data-table" id="proc-table">
           <thead>
             <tr>
-              <th class="sortable-th" data-sort="pid" style="width: 90px;">PID <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="name" style="width: 200px;">进程名称 <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="user" style="width: 100px;">用户 <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="state" style="width: 80px;">状态 <span class="sort-icon"></span></th>
-              <th class="sortable-th sort-active" data-sort="cpu" style="width: 100px;">CPU <span class="sort-icon">▼</span></th>
-              <th class="sortable-th" data-sort="mem" style="width: 120px;">物理内存 (RSS) <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="io" style="width: 120px;">磁盘 I/O <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="net" style="width: 160px;">上下行网速 <span class="sort-icon"></span></th>
-              <th class="sortable-th" data-sort="docker" style="width: 160px;">所属容器 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="pid">PID <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="name">进程名称 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="user">用户 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="state">状态 <span class="sort-icon"></span></th>
+              <th class="sortable-th sort-active" data-sort="cpu">CPU <span class="sort-icon">▼</span></th>
+              <th class="sortable-th" data-sort="mem">物理内存 (RSS) <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="io">磁盘 I/O <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="net">上下行网速 <span class="sort-icon"></span></th>
+              <th class="sortable-th" data-sort="docker">所属容器 <span class="sort-icon"></span></th>
               <th class="filler-col"></th>
             </tr>
           </thead>
@@ -225,7 +225,7 @@
           <h3 class="section-title">项目仓库</h3>
           <div class="settings-card">
             <div class="form-group" style="margin-bottom: 0;">
-              <a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" class="form-input" style="display: block; text-decoration: none; color: var(--primary); background-color: var(--bg-surface); cursor: pointer; word-break: break-all;">https://github.com/67373net/fn-docker-to-desktop</a>
+              <a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; word-break: break-all; cursor: pointer; display: inline-block;">https://github.com/67373net/fn-docker-to-desktop</a>
             </div>
           </div>
         </div>
@@ -417,12 +417,12 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 180px;">主机名称</th>
-                  <th style="width: 180px;">操作系统</th>
-                  <th style="width: 180px;">内核版本</th>
-                  <th style="width: 120px;">架构</th>
-                  <th style="width: 160px;">主 IPv4 地址</th>
-                  <th style="width: 160px;">运行时间</th>
+                  <th>主机名称</th>
+                  <th>操作系统</th>
+                  <th>内核版本</th>
+                  <th>架构</th>
+                  <th>主 IPv4 地址</th>
+                  <th>运行时间</th>
                   <th class="filler-col"></th>
                 </tr>
               </thead>
@@ -448,11 +448,11 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 140px;">网卡名称</th>
-                  <th style="width: 140px;">类型</th>
-                  <th style="width: 180px;">MAC 地址</th>
-                  <th style="width: 220px;">IPv4 地址</th>
-                  <th style="width: 120px;">状态</th>
+                  <th>网卡名称</th>
+                  <th>类型</th>
+                  <th>MAC 地址</th>
+                  <th>IPv4 地址</th>
+                  <th>状态</th>
                   <th class="filler-col"></th>
                 </tr>
               </thead>
@@ -469,7 +469,7 @@
     <section class="tab-pane" id="pane-about">
       <div class="about-container">
         <div class="about-content">
-          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.26</span></h3>
+          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.27</span></h3>
           <p class="about-md-p">本项目灵感及代码参考了项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。</p>
           <p class="about-md-p">本项目还处于 beta 测试版，可能会有一些 bug 和功能调整。欢迎提 <a href="https://github.com/67373net/fn-docker-to-desktop/issues" target="_blank" rel="noopener noreferrer" class="about-link">issues</a></p>
           <hr class="about-md-hr">
@@ -487,12 +487,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.26" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.27" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.26" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.27" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -824,12 +824,12 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th style="width: 50px;">图标</th>
-                <th style="width: 160px;">名称</th>
-                <th style="width: 120px;">访问路径</th>
-                <th style="width: 120px;">打开方式</th>
-                <th style="width: 100px;">状态</th>
-                <th style="width: 150px;">操作</th>
+                <th>图标</th>
+                <th>名称</th>
+                <th>访问路径</th>
+                <th>打开方式</th>
+                <th>状态</th>
+                <th>操作</th>
                 <th class="filler-col"></th>
               </tr>
             </thead>
@@ -894,6 +894,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.26"></script>
+  <script src="app.js?v=1.1.27"></script>
 </body>
 </html>

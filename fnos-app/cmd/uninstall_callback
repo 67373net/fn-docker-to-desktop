@@ -10,34 +10,8 @@ log_msg() {
     chmod 0666 "${LOG_FILE}" 2>/dev/null || true
 }
 
-# 确保残留的 fndocker.* 和 put-port.* 应用被全部注销
-CLI=""
-for candidate in \
-    "/var/apps/appcenter/target/bin/appcenter-cli" \
-    "/usr/bin/appcenter-cli" \
-    "/usr/local/bin/appcenter-cli" \
-    "/host/root/usr/bin/appcenter-cli" \
-    "/host/root/var/apps/appcenter/target/bin/appcenter-cli"; do
-    if [ -x "${candidate}" ]; then
-        CLI="${candidate}"
-        break
-    fi
-done
-
-if [ -z "${CLI}" ] && command -v appcenter-cli >/dev/null 2>&1; then
-    CLI=$(command -v appcenter-cli)
-fi
-
-if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
-    matched_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
-    for app in ${matched_apps}; do
-        if [ -n "${app}" ]; then
-            log_msg "清理残留应用: ${app}"
-            "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 || true
-            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
-        fi
-    done
-fi
-
+log_msg "执行卸载后置清理 (瞬时完成)..."
 rm -rf /tmp/fndocker_* 2>/dev/null || true
+rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true
+log_msg "卸载后置清理完成"
 exit 0

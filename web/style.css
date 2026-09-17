@@ -523,7 +523,7 @@ table.data-table thead tr {
   background-color: var(--bg-surface-subtle);
 }
 
-/* Headers strictly left-aligned and frozen */
+/* Headers strictly left-aligned, frozen, natural content width by default */
 table.data-table th {
   text-align: left !important;
   font-weight: 600;
@@ -536,23 +536,78 @@ table.data-table th {
   z-index: 10;
   background-color: var(--bg-surface-subtle);
   box-shadow: 0 1px 0 var(--border-color);
+  width: 1%;
 }
 
-/* Data cells */
+/* Data cells: 2 Chinese character spacing between adjacent columns, natural content width */
 table.data-table td {
   text-align: left !important;
   padding: 0.75rem 1em;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-main);
   vertical-align: middle;
-  word-break: break-all;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  width: 1%;
+  white-space: nowrap;
 }
 
 table.data-table th:first-child,
 table.data-table td:first-child {
   padding-left: 1.25rem;
+}
+
+/* Columns with potentially long content that wrap when width is exceeded */
+#desktop-table th:nth-child(1),
+#desktop-table td:nth-child(1) {
+  min-width: 140px;
+  max-width: 260px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#desktop-table th:nth-child(4),
+#desktop-table td:nth-child(4) {
+  min-width: 200px;
+  max-width: 400px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#ports-table th:nth-child(3),
+#ports-table td:nth-child(3) {
+  min-width: 120px;
+  max-width: 200px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#ports-table th:nth-child(4),
+#ports-table td:nth-child(4) {
+  min-width: 160px;
+  max-width: 300px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#proc-table th:nth-child(2),
+#proc-table td:nth-child(2) {
+  min-width: 140px;
+  max-width: 260px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#proc-table th:nth-child(9),
+#proc-table td:nth-child(9) {
+  min-width: 120px;
+  max-width: 220px;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .name-with-icon {
@@ -566,24 +621,34 @@ table.data-table td:first-child {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 table.data-table tr:hover td {
   background-color: var(--bg-hover);
 }
 
-/* Right filler column leaves empty space if width is not full */
+/* Right filler column: absorbs all remaining table width on the right */
 table.data-table th.filler-col,
 table.data-table td.filler-col {
-  width: auto !important;
+  width: 100% !important;
   padding: 0 !important;
 }
 
-.empty-state {
+.empty-state,
+table.data-table td.empty-state {
   text-align: center !important;
   padding: 3rem 1rem !important;
   color: var(--text-muted);
   font-size: 0.9rem;
+  width: auto !important;
+  white-space: normal !important;
+}
+
+table.data-table td.table-sink-divider-cell {
+  width: auto !important;
+  white-space: normal !important;
 }
 
 /* Table elements */
