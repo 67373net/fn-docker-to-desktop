@@ -3,6 +3,7 @@ package desktop
 import (
 	_ "embed"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -218,15 +219,130 @@ func getIconCandidates(raw string) []string {
 	return candidates
 }
 
+// LoadIconImage loads and decodes an icon from source (proxy URL, local URL, base64, HTTP, or local file).
+func LoadIconImage(source string, iconsDir string) (image.Image, error) {
+	return loadIconImage(source, iconsDir)
+}
+
+// PersistItemIcon ensures that an item's icon is physically saved to iconsDir
+// as "copy_<itemID>.png" and updates item.Icon to that filename.
+// Returns true if the item was modified.
+func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
+	if item == nil || strings.TrimSpace(item.Icon) == "" || iconsDir == "" {
+		return false
+	}
+	targetName := fmt.Sprintf("copy_%s.png", item.ID)
+	targetPath := filepath.Join(iconsDir, targetName)
+
+	// If already pointing to copy_<id>.png and file exists on disk with content, nothing to do
+	if item.Icon == targetName {
+		if fi, err := os.Stat(targetPath); err == nil && fi.Size() > 0 {
+			return false
+		}
+	}
+
+	// If icon is already a clean local file in iconsDir and NOT a proxy URL or remote URL, keep it!
+	cleanName := strings.TrimPrefix(strings.TrimPrefix(item.Icon, "/icons/"), "icons/")
+	if !strings.Contains(cleanName, "/") && !strings.Contains(cleanName, "?") && !strings.Contains(cleanName, ":") {
+		localPath := filepath.Join(iconsDir, cleanName)
+		if fi, err := os.Stat(localPath); err == nil && !fi.IsDir() && fi.Size() > 0 {
+			return false
+		}
+	}
+
+	// 1. If it's a docklabel icon URL (/api/desktop/docklabel/icon?id=...)
+	if strings.Contains(item.Icon, "/api/desktop/docklabel/icon") {
+		if u, err := url.Parse(item.Icon); err == nil {
+			id := u.Query().Get("id")
+			if id != "" {
+				idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
+				for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+					cp := filepath.Join(iconsDir, prefix+idHash+".png")
+					if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
+						if err := os.WriteFile(targetPath, data, 0644); err == nil {
+							item.Icon = targetName
+							slog.Info("从 DockLabel 缓存物理持久化图标成功", "id", item.ID, "target", targetName)
+							return true
+						}
+					}
+				}
+				// Also try to resolve via ScanDockLabelItems
+				if dItems, err := ScanDockLabelItems(nil); err == nil {
+					for _, dit := range dItems {
+						if dit.ID == id {
+							if dit.LocalIconPath != "" {
+								if data, err := os.ReadFile(dit.LocalIconPath); err == nil && len(data) > 0 {
+									if err := os.WriteFile(targetPath, data, 0644); err == nil {
+										item.Icon = targetName
+										slog.Info("从容器挂载路径物理持久化图标成功", "id", item.ID, "target", targetName)
+										return true
+									}
+								}
+							}
+							if resolved := ResolveWatchcowIconPath(dit.Icon, "", nil); resolved != "" {
+								if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+									if err := os.WriteFile(targetPath, data, 0644); err == nil {
+										item.Icon = targetName
+										slog.Info("从宿主机路径物理持久化图标成功", "id", item.ID, "target", targetName)
+										return true
+									}
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Try loading via loadIconImage
+	if img, err := loadIconImage(item.Icon, iconsDir); err == nil && img != nil {
+		buf := new(bytes.Buffer)
+		if err := png.Encode(buf, img); err == nil && buf.Len() > 0 {
+			if err := os.WriteFile(targetPath, buf.Bytes(), 0644); err == nil {
+				item.Icon = targetName
+				slog.Info("成功加载并物理持久化桌面图标文件", "id", item.ID, "target", targetName)
+				return true
+			}
+		}
+	}
+
+	// 3. Fallback: try fetching from candidate names (bounded to 2s)
+	candidates := []string{item.Icon, item.ContainerName, item.Name}
+	if data, _, err := FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
+		if err := os.WriteFile(targetPath, data, 0644); err == nil {
+			item.Icon = targetName
+			slog.Info("从镜像匹配并物理持久化桌面图标文件", "id", item.ID, "target", targetName)
+			return true
+		}
+	}
+
+	return false
+}
+
 // FetchIconBytesFromMirrors attempts to download an icon by candidate names (e.g. image name, service name) from Homarr CDN mirrors.
+// It is hard-bounded to 2 seconds total timeout to prevent browser connection starvation.
 func FetchIconBytesFromMirrors(candidates ...string) ([]byte, string, error) {
-	client := &http.Client{Timeout: 4 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	client := &http.Client{Timeout: 1200 * time.Millisecond}
 	var allNames []string
 	for _, raw := range candidates {
 		if raw != "" {
 			allNames = append(allNames, getIconCandidates(raw)...)
 		}
 	}
+	if len(allNames) > 3 {
+		allNames = allNames[:3]
+	}
+
+	fastMirrors := []string{
+		"https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+		"https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png",
+	}
+
 	seen := make(map[string]bool)
 	var lastErr error
 	for _, name := range allNames {
@@ -234,9 +350,18 @@ func FetchIconBytesFromMirrors(candidates ...string) ([]byte, string, error) {
 			continue
 		}
 		seen[name] = true
-		for _, tmpl := range cdnMirrors {
+		for _, tmpl := range fastMirrors {
+			select {
+			case <-ctx.Done():
+				return nil, "", ctx.Err()
+			default:
+			}
 			url := fmt.Sprintf(tmpl, name)
-			resp, err := client.Get(url)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
 			if err != nil {
 				lastErr = err
 				continue
@@ -246,7 +371,7 @@ func FetchIconBytesFromMirrors(candidates ...string) ([]byte, string, error) {
 				lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 				continue
 			}
-			data, err := io.ReadAll(resp.Body)
+			data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 			resp.Body.Close()
 			if err != nil {
 				lastErr = err
@@ -343,13 +468,16 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 			id := u.Query().Get("id")
 			if id != "" {
 				idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
-				cachedPath := filepath.Join(iconsDir, "dock_cache_"+idHash+".png")
-				if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
-					if img, err := decodeAnyImage(data); err == nil && img != nil {
-						return img, nil
+				for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+					cachedPath := filepath.Join(iconsDir, prefix+idHash+".png")
+					if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
+						if img, err := decodeAnyImage(data); err == nil && img != nil {
+							return img, nil
+						}
 					}
 				}
 				cleanID := strings.TrimPrefix(id, "docklabel-")
+				cleanID = strings.TrimPrefix(cleanID, "watchcow-")
 				if resolved := ResolveWatchcowIconPath(cleanID, "", nil); resolved != "" {
 					if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
 						if img, err := decodeAnyImage(data); err == nil && img != nil {
@@ -431,7 +559,7 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 			}
 			urlCandidates = append(urlCandidates, source)
 
-			client := &http.Client{Timeout: 6 * time.Second}
+			client := &http.Client{Timeout: 2 * time.Second}
 			for _, targetURL := range urlCandidates {
 				resp, err := client.Get(targetURL)
 				if err == nil && resp.StatusCode == http.StatusOK {

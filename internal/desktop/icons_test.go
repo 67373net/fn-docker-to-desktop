@@ -107,3 +107,46 @@ func TestLoadIconImageDocklabelProxy(t *testing.T) {
 		t.Fatalf("expected non-nil image for docklabel proxy URL")
 	}
 }
+
+func TestPersistItemIcon(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "icons-persist-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 1. Setup a cached docklabel icon in tempDir
+	testID := "docklabel-copyme"
+	idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(testID)))
+	createTestPNG(t, tempDir, "dock_cache_"+idHash+".png")
+
+	item := &DesktopItem{
+		ID:   "item-copied-1",
+		Name: "Copied App",
+		Icon: "/api/desktop/docklabel/icon?id=" + testID,
+	}
+
+	// 2. Run PersistItemIcon
+	modified := PersistItemIcon(item, tempDir)
+	if !modified {
+		t.Fatalf("expected PersistItemIcon to return true for modified item")
+	}
+
+	expectedIcon := "copy_item-copied-1.png"
+	if item.Icon != expectedIcon {
+		t.Fatalf("expected item.Icon to be %q, got %q", expectedIcon, item.Icon)
+	}
+
+	// Verify file was written to disk
+	persistedPath := filepath.Join(tempDir, expectedIcon)
+	fi, err := os.Stat(persistedPath)
+	if err != nil || fi.Size() == 0 {
+		t.Fatalf("expected persisted icon file to exist with size > 0: %v", err)
+	}
+
+	// 3. Running again should return false (already persisted)
+	modified2 := PersistItemIcon(item, tempDir)
+	if modified2 {
+		t.Fatalf("expected PersistItemIcon to return false when already persisted")
+	}
+}

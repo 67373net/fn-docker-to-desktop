@@ -492,7 +492,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.32';
+  const ver = state.settings?.version || '1.1.33';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1047,14 +1047,13 @@ function renderDesktopTable() {
       String(item.port || '').includes(query);
   });
 
-  if (filtered.length === 0 && filteredWatchcow.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
-    return;
-  }
-
   let html = '';
 
-  if (filtered.length === 0 && filteredWatchcow.length > 0) {
+  if (filtered.length === 0) {
+    if (state.watchcowItemsLoaded && filteredWatchcow.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' + (query ? '未找到匹配的桌面图标' : '暂无已创建的桌面图标') + '</td></tr>';
+      return;
+    }
     html += '<tr><td colspan="7" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
   } else {
     for (const item of filtered) {
@@ -1153,7 +1152,19 @@ function renderDesktopTable() {
     }
   }
 
-  if (filteredWatchcow.length > 0) {
+  if (!state.watchcowItemsLoaded) {
+    html += `
+      <tr class="table-sink-divider-row" aria-hidden="true">
+        <td colspan="7" class="table-sink-divider-cell">
+          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新</span>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="7" class="empty-state" style="padding: 1.5rem 1rem; color: var(--text-muted);">
+          <span class="spinner-small" style="margin-right: 8px;"></span>正在扫描 Watchcow 标签条目...
+        </td>
+      </tr>`;
+  } else if (filteredWatchcow.length > 0) {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
         <td colspan="7" class="table-sink-divider-cell">
@@ -3340,66 +3351,26 @@ function openCreateDesktopModalFromWatchcow(id) {
     btnDel.onclick = null;
   }
 
-  // Pre-fill icon: prioritize real icon source (item.icon) or local icon path over internal proxy URL
-  const realIcon = item.icon || item.local_icon_path || '';
-  const displayIcon = item.display_icon || realIcon;
+  // Pre-fill icon: prioritize display_icon (which is already rendered and fast-cached in Watchcow table)
+  // or real icon source / local icon path.
+  const iconSource = item.display_icon || item.icon || item.local_icon_path || '';
   const previewImg = document.getElementById('icon-preview-img');
   const elIcon = document.getElementById('item-icon');
 
-  if (realIcon && (realIcon.startsWith('http://') || realIcon.startsWith('https://'))) {
-    setIconModalTab('url');
-    const urlInput = document.getElementById('icon-url-input');
-    if (urlInput) urlInput.value = realIcon;
-    if (elIcon) elIcon.value = realIcon;
-    if (previewImg) {
-      previewImg.src = getIconUrl(realIcon);
-      previewImg.onerror = () => {
-        previewImg.src = apiUrl('/default_item_icon.png');
-      };
-    }
-  } else if (realIcon && !realIcon.startsWith('/api/')) {
-    setIconModalTab('lib');
-    if (elIcon) elIcon.value = realIcon;
-    if (previewImg) {
-      previewImg.src = getIconUrl(displayIcon || realIcon);
-      previewImg.onerror = () => {
-        previewImg.src = apiUrl('/default_item_icon.png');
-      };
-    }
-  } else {
-    // If realIcon is empty or internal API, auto-resolve CDN icon from container/image
-    let iconCandidate = '';
-    if (item.image) {
-      let imgPart = item.image.split('/').pop().split(':')[0].split('@')[0];
-      iconCandidate = imgPart;
-    }
-    if (!iconCandidate) {
-      iconCandidate = item.container_name || item.name;
-    }
-    let foundCdn = false;
-    if (iconCandidate) {
-      const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
-      if (cleanName) {
-        const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
-        setIconModalTab('url');
-        const urlInput = document.getElementById('icon-url-input');
-        if (urlInput) urlInput.value = cdnUrl;
-        if (previewImg) previewImg.src = cdnUrl;
-        if (elIcon) elIcon.value = cdnUrl;
-        foundCdn = true;
-        if (previewImg) {
-          previewImg.onerror = () => {
-            previewImg.src = apiUrl('/default_item_icon.png');
-            if (urlInput) urlInput.value = '';
-            if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
-          };
-        }
-      }
-    }
-    if (!foundCdn && displayIcon) {
+  if (iconSource) {
+    if (iconSource.startsWith('http://') || iconSource.startsWith('https://')) {
+      setIconModalTab('url');
+      const urlInput = document.getElementById('icon-url-input');
+      if (urlInput) urlInput.value = iconSource;
+    } else {
       setIconModalTab('lib');
-      if (elIcon) elIcon.value = displayIcon;
-      if (previewImg) previewImg.src = getIconUrl(displayIcon);
+    }
+    if (elIcon) elIcon.value = iconSource;
+    if (previewImg) {
+      previewImg.src = getIconUrl(iconSource);
+      previewImg.onerror = () => {
+        previewImg.src = apiUrl('/default_item_icon.png');
+      };
     }
   }
 
@@ -4115,7 +4086,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.32';
+      const ver = state.settings?.version || '1.1.33';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

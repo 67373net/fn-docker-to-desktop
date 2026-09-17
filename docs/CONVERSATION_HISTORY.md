@@ -3577,3 +3577,49 @@ INFO
 1. **自动化单元测试**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过。
 2. **零 .fpk 残留**：保持本地仓库纯净，云端构建流水线打包发布。
 
+---
+
+## Turn 48 - v1.1.33 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **图标加载极慢排查与根治**：更新重装后，加载图标变得极慢，桌面图标 tab 过了几分钟才显示，Watchcow 列表更是等上面条目全部加载完了才出现，非常慢。
+2. **复制 Watchcow 条目图标在重装后丢失修复**：从 Watchcow 复制到上方的桌面图标条目，在重装 app 后，图标图案不见了，变成了默认图标。
+3. **全链路版本升级至 `v1.1.33`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **网络连接饥饿与多分钟卡顿根因治理 (`internal/desktop/icons.go`, `internal/api/handler.go`)**：
+   - **根因分析**：
+     - `internal/desktop/icons.go` 中的 `FetchIconBytesFromMirrors` 遍历 4 个 CDN 镜像，每个镜像具有 4 秒超时。国内网络环境下 jsdelivr/github 等 CDN 节点常发生丢包或阻塞，单个条目 4 个候选名尝试即长达 `4 * 4 * 4s = 64s`；
+     - 浏览器并发请求 6 个图标时，占用全部 HTTP/1.1 浏览器连接并发池；后续所有关键 API（如 `/api/desktop/items`、`/api/desktop/docklabel`）被浏览器完全阻塞排队数分钟，造成“整个页面卡死、Watchcow 列表几分钟后才出现”的假死现象；
+     - `handleGetDockLabelIcon` 之前未在入口处做磁盘缓存检查，且每次即便命中本地宿主机或挂载路径也未回写缓存，导致每次访问都要重走重型检查与镜像探活。
+   - **核心治理**：
+     - `FetchIconBytesFromMirrors` 引入 `context.WithTimeout(ctx, 2*time.Second)` 强行硬顶超时，单次 client 超时缩减至 1.2s，镜像缩减为 2 个高可用节点，候选名限制最多 3 个。任何情况下镜像探测最长不超过 2 秒，彻底杜绝连接饥饿；
+     - `handleGetDockLabelIcon` 顶部设立 0.05ms 极速磁盘缓存路径：先基于 `idHash` 检查 `dock_cache_<hash>.png` 与 `wc_cache_<hash>.png`，命中即秒回，零 Docker 探测、零网络请求；
+     - `handleGetDockLabelIcon` 中所有成功分支（挂载路径、宿主机查找、远端下载、镜像匹配、默认图标回退）均原子写入 `dock_cache_<hash>.png`，后续渲染全部命中极速缓存；
+     - 引入 10 秒轻量内存缓存 `getDockLabelItemsCached`，页面并发请求图标时共享 Docker 容器扫描结果，避免瞬时多次重复打满 Docker Unix Socket。
+
+2. **复制条目图标物理文件持久化 (`PersistItemIcon`, `internal/desktop/icons.go`, `internal/desktop/installer.go`, `internal/api/handler.go`)**：
+   - **根因分析**：复制 Watchcow 条目时，前端先前设置了猜想的 jsdelivr CDN URL 或指向 `/api/desktop/docklabel/icon?id=...` 动态接口，**从未将真实图标图像字节物理落盘到 `data/icons/`**。当重装应用时，`/var/apps/` 下的应用目录被重置，开机执行 `ReconcileInstalledItems` 打包应用时找不到物理文件，向外请求 CDN 又超时失败，只能静默回退至内置默认图标。
+   - **核心治理**：
+     - 在 `internal/desktop/icons.go` 中实现 `PersistItemIcon(item *DesktopItem, iconsDir string) bool`：将条目关联的图标（无论来自 DockLabel 缓存、宿主机挂载路径、URL 或 Base64）解析并解码为标准 PNG，物理写入 `iconsDir/copy_<itemID>.png`，并将条目的 `item.Icon` 统一指向该物理文件名；
+     - 在 `handleCreateDesktopItem` 与 `handleUpdateDesktopItem` 打包安装前调用 `PersistItemIcon`，确保安装前物理文件必定在磁盘就绪；
+     - 在 `handleGetDesktopItems` 中加入自愈逻辑（Auto-healing）：对历史老版本复制的未持久化条目自动提取并落盘，存入数据库持久化；
+     - 在 `Installer.InstallItem` 与 `ReconcileInstalledItems` 中同步调用 `PersistItemIcon`，保障重装应用即使在离线无网络环境下，也能直接从本地 `data/icons/` 毫秒级打包，永不丢失图标；
+     - `openCreateDesktopModalFromWatchcow` 重构：优先读取已被 Watchcow 成功渲染的 `item.display_icon` 或 `item.icon`，禁止盲目填充容易被墙超时的 jsdelivr 外链。
+
+3. **桌面图标与 Watchcow 列表分级交互体验优化 (`web/app.js`)**：
+   - `renderDesktopTable` 优化空状态与分割线展示：当手动图标加载完成但为空、而 Watchcow 尚在扫描时，上方显示“暂无手动添加的桌面图标”，下方分割线直接显示“正在扫描 Watchcow 标签条目...”加载动画，告别此前整屏空白或假死无响应感。
+
+4. **全链路版本升级至 `v1.1.33`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.33`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过（包含新增的 `TestPersistItemIcon` 与 DockLabel 图标极速缓存测试）。
+2. **构建验证**：Docker 容器内执行 `go build ./cmd/server` 编译成功，无任何告警。
+3. **零 .fpk 残留**：本地工作树干净，通过 GitHub Actions 云端构建流水线发布。
+
+

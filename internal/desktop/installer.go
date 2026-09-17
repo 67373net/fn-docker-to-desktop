@@ -662,6 +662,9 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		uiType = "url"
 	}
 
+	// Ensure physical icon file exists in iconsDir before building package
+	PersistItemIcon(&item, i.iconsDir)
+
 	slog.Info("开始构建飞牛应用安装包", "appName", appName, "title", item.Name, "port", port, "id", item.ID, "mode", item.Mode, "path", path)
 
 	pkgDir, err := i.BuildPackage(AppcenterPackageConfig{
@@ -818,6 +821,7 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		if !item.Enabled {
 			continue
 		}
+		PersistItemIcon(&item, i.iconsDir)
 		appName := item.AppName
 		if appName == "" {
 			appName = i.DeriveAppName(item)

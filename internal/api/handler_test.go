@@ -3,7 +3,9 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -483,7 +485,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.32",
+		AppVersion: "1.1.33",
 	})
 
 	mux := http.NewServeMux()
@@ -543,6 +545,23 @@ func TestWatchcowEndpoints(t *testing.T) {
 	if storage.GetDockLabelState(testID, false) != true {
 		t.Errorf("Expected storage state to be persisted as true")
 	}
+
+	// 3. GET /api/desktop/docklabel/icon (cached fast-path)
+	idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(testID)))
+	iconsDir := filepath.Join(tempDir, "icons")
+	_ = os.MkdirAll(iconsDir, 0755)
+	testIconData := []byte("fast-cache-icon-bytes")
+	_ = os.WriteFile(filepath.Join(iconsDir, "dock_cache_"+idHash+".png"), testIconData, 0644)
+
+	reqIcon := httptest.NewRequest("GET", "/api/desktop/docklabel/icon?id="+testID, nil)
+	recIcon := httptest.NewRecorder()
+	mux.ServeHTTP(recIcon, reqIcon)
+	if recIcon.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for GET /api/desktop/docklabel/icon, got %d", recIcon.Code)
+	}
+	if !bytes.Equal(recIcon.Body.Bytes(), testIconData) {
+		t.Errorf("Expected icon body to match cached icon data")
+	}
 }
 
 func TestDeleteIcon(t *testing.T) {
@@ -581,7 +600,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.32",
+		AppVersion: "1.1.33",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
