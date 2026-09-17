@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,13 +290,79 @@ func decodeAnyImage(data []byte) (image.Image, error) {
 	return img, err
 }
 
+// IsLocalOrLoopbackIconURL checks if a URL is pointing to a local/loopback icon endpoint
+// such as http://127.0.0.1:5900/icons/images.png or http://localhost/icons/danmu.png or /icons/xxx.png.
+// If so, it returns true and the extracted icon base filename.
+func IsLocalOrLoopbackIconURL(urlStr string) (bool, string) {
+	s := strings.TrimSpace(urlStr)
+	if s == "" {
+		return false, ""
+	}
+	if strings.HasPrefix(s, "/icons/") || strings.HasPrefix(s, "icons/") {
+		clean := strings.TrimPrefix(strings.TrimPrefix(s, "/icons/"), "icons/")
+		base := filepath.Base(clean)
+		if idx := strings.Index(base, "?"); idx != -1 {
+			base = base[:idx]
+		}
+		if base != "" && base != "." && base != "/" {
+			return true, base
+		}
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		u, err := url.Parse(s)
+		if err == nil {
+			host := strings.ToLower(u.Hostname())
+			isLoopback := host == "127.0.0.1" || host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "ip6-localhost" || host == "ip6-loopback"
+			if strings.HasPrefix(u.Path, "/icons/") {
+				base := filepath.Base(u.Path)
+				if idx := strings.Index(base, "?"); idx != -1 {
+					base = base[:idx]
+				}
+				if base != "" && base != "." && base != "/" {
+					if isLoopback || u.Port() == "5900" || u.Port() == "" {
+						return true, base
+					}
+					return true, base
+				}
+			}
+		}
+	}
+	return false, ""
+}
+
 func loadIconImage(source string, iconsDir string) (image.Image, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return nil, fmt.Errorf("empty icon source")
 	}
 
-	// 1. Data URI: data:image/png;base64,...
+	// 1. Check if it's a local/loopback icon URL (e.g. http://127.0.0.1:5900/icons/xxx, /icons/xxx)
+	if isLocal, baseName := IsLocalOrLoopbackIconURL(source); isLocal && baseName != "" {
+		// A. Check in iconsDir
+		if iconsDir != "" {
+			target := filepath.Join(iconsDir, baseName)
+			if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+				if data, err := os.ReadFile(target); err == nil {
+					if img, err := decodeAnyImage(data); err == nil && img != nil {
+						return img, nil
+					}
+				}
+			}
+		}
+		// B. Check via ResolveWatchcowIconPath on host
+		if resolved := ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
+			if data, err := os.ReadFile(resolved); err == nil {
+				if img, err := decodeAnyImage(data); err == nil && img != nil {
+					if iconsDir != "" {
+						_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
+					}
+					return img, nil
+				}
+			}
+		}
+	}
+
+	// 2. Data URI: data:image/png;base64,...
 	if strings.HasPrefix(source, "data:") {
 		idx := strings.Index(source, ",")
 		if idx == -1 {
@@ -313,7 +380,7 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 		return decodeAnyImage(raw)
 	}
 
-	// 2. Raw Base64 string without data: prefix
+	// 3. Raw Base64 string without data: prefix
 	if len(source) > 64 && !strings.Contains(source, " ") && !strings.Contains(source, "/") && !strings.Contains(source, ":") {
 		if raw, err := base64.StdEncoding.DecodeString(source); err == nil {
 			if img, err := decodeAnyImage(raw); err == nil {
@@ -322,35 +389,37 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 		}
 	}
 
-	// 3. HTTP/HTTPS URL
+	// 4. HTTP/HTTPS URL
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		// Build candidates for raw.githubusercontent.com
-		urlCandidates := []string{}
-		if strings.HasPrefix(source, "https://raw.githubusercontent.com/") {
-			cleanRaw := strings.TrimPrefix(source, "https://raw.githubusercontent.com/")
-			parts := strings.SplitN(cleanRaw, "/", 4)
-			if len(parts) == 4 {
-				jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
-				fastlyURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
-				urlCandidates = append(urlCandidates, fastlyURL, jsDelivrURL)
-			}
-			urlCandidates = append(urlCandidates, "https://ghproxy.net/"+source)
-		}
-		urlCandidates = append(urlCandidates, source)
-
-		client := &http.Client{Timeout: 6 * time.Second}
-		for _, targetURL := range urlCandidates {
-			resp, err := client.Get(targetURL)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				data, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err == nil && len(data) > 0 {
-					if img, err := decodeAnyImage(data); err == nil && img != nil {
-						return img, nil
-					}
+		if isLocal, _ := IsLocalOrLoopbackIconURL(source); !isLocal {
+			// Build candidates for raw.githubusercontent.com
+			urlCandidates := []string{}
+			if strings.HasPrefix(source, "https://raw.githubusercontent.com/") {
+				cleanRaw := strings.TrimPrefix(source, "https://raw.githubusercontent.com/")
+				parts := strings.SplitN(cleanRaw, "/", 4)
+				if len(parts) == 4 {
+					jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+					fastlyURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+					urlCandidates = append(urlCandidates, fastlyURL, jsDelivrURL)
 				}
-			} else if resp != nil {
-				resp.Body.Close()
+				urlCandidates = append(urlCandidates, "https://ghproxy.net/"+source)
+			}
+			urlCandidates = append(urlCandidates, source)
+
+			client := &http.Client{Timeout: 6 * time.Second}
+			for _, targetURL := range urlCandidates {
+				resp, err := client.Get(targetURL)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					data, err := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					if err == nil && len(data) > 0 {
+						if img, err := decodeAnyImage(data); err == nil && img != nil {
+							return img, nil
+						}
+					}
+				} else if resp != nil {
+					resp.Body.Close()
+				}
 			}
 		}
 
@@ -369,6 +438,16 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 
 		// Also check local host fallback for baseName
 		if baseName != "" {
+			if resolved := ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
+				if data, err := os.ReadFile(resolved); err == nil {
+					if img, err := decodeAnyImage(data); err == nil && img != nil {
+						if iconsDir != "" {
+							_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
+						}
+						return img, nil
+					}
+				}
+			}
 			for _, b := range []string{"/home", "/home/net67373", "/vol1", "/var/apps"} {
 				pats := []string{
 					filepath.Join(b, "*", "icons", baseName),

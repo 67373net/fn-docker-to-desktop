@@ -3248,3 +3248,86 @@ INFO
 1. **自动化单元测试**：Docker 容器内执行 `go test -v ./...` 全部 PASS。
 2. **零 .fpk 残留**：确认无任何 `.fpk` 文件残留。
 3. **Git 提交与发布**：打上 Git Tag `v1.1.25` 并推送至 GitHub 远程仓库。
+
+---
+
+## Turn 41 - v1.1.26 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **桌面图标加载态**：刚重装时，桌面图标应先显示“正在载入桌面图标...”加载状态，而非“暂无已创建的桌面图标”。
+2. **列表视图统一规则**：
+   - 所有表头左对齐，列与列之间间隔 2 个中文字符；
+   - 所有内容尽量完全显示，宽度不够时启用自动折行；
+   - 宽度填不满时，最右侧列右边留空（表格内容空白填充，表头宽度拉满）；
+   - 列表中空内容直接留空，不显示短横线 `-`。
+3. **工具栏按钮字重与大小统一**：所有 tab 中搜索框同一高度的按钮与下拉选择控件文字字重和字号统一（font-weight: 500, font-size: 0.88rem）。
+4. **“关于”界面简化为纯 Markdown 样式**：
+   - 移除原有花哨卡片、边框、阴影与 Logo 修饰，采用质朴清晰的 Markdown 标题、正文与有序列表排版；
+   - 外部链接均配置新窗口打开（`target="_blank"`）；
+   - 版本号由 JS 动态获取并同步更新；
+   - 保留原有二维码打赏投喂模块。
+5. **根本解决两大 Warning 告警（非简单降级日志，而是从根源彻底根治）**：
+   - **图标加载失败告警根治**：深入排查发现 Watchcow 容器标签内硬编码的 `http://127.0.0.1:5900/icons/...` 指向已停用的 TCP 5900 端口，fnOS 统一网关下无法通过回环 HTTP 访问，但实际图标文件存放在宿主机 Watchcow 目录或 icons 目录中。新增 `IsLocalOrLoopbackIconURL` 识别本地/回环图标请求，直接免网络走宿主机磁盘读取并自动迁移旧版 Watchcow 图标（`MigrateLegacyWatchcowIcons`），彻底根除图标加载失败告警。
+   - **Docker 事件流断开告警根治**：`StartDockerEventListener` 增加 KeepAlive=30s，校验 HTTP 200，过滤高频后台健康检查 `exec_*` 事件避免事件流抖动；并在服务优雅关闭与上下文取消（ctx.Done()）时安全退出，不再误报断开警告，真正异常断开保留标准 `slog.Warn`。
+6. **图标库悬浮角标与删除功能**：
+   - “选择或上传”图标库中，鼠标悬浮在已有图标上时：
+     - 若图标正在被使用（桌面条目或管理面板入口），显示不可点击的“使用中”角标；
+     - 若图标未被使用，显示右上角红色“删除”按钮，点击二次确认后调用 `DELETE /api/icons/{filename}` 删除，内置图标受保护不可删除。
+7. **编辑桌面图标弹窗未修改误报未保存 Bug 根治**：
+   - 深入剖析问题本质：此前将模式标签（mode-tab）与图标选择标签（icon-tab）的点击导航行为视作数据实质修改；
+   - 彻底重构 `isDesktopItemFormDirty()` 与 `isIconModified()`：区分“导航浏览”与“实质内容修改”，仅切换标签但未录入或变更有效字段时坚决不判定为脏状态，杜绝误报。
+8. **系统设置中的“项目仓库”样式统一**：
+   - 标题样式与系统设置其他各区块（`<h3 class="section-title">`）完全一致；
+   - 链接置于独立白色背景框（`.form-input` 风格），与下方各输入框对齐，点击新窗口打开项目仓库。
+9. **全链路版本升级至 `v1.1.26`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **桌面图标加载态 (`web/index.html`, `web/app.js`)**：
+   - `state` 新增 `desktopItemsLoaded: false`；
+   - HTML 中 `#desktop-tbody` 初始内容设为 `.spinner-small` 与“正在载入桌面图标...”；
+   - `fetchDesktopItems()` 完成后置 `desktopItemsLoaded = true`；
+   - `renderDesktopTable()` 在未加载完成时优先保持加载动画与提示。
+2. **列表视图统一与空值留空 (`web/style.css`, `web/app.js`, `web/index.html`)**：
+   - `table.data-table td` 配置 `word-break: break-all; overflow-wrap: anywhere; white-space: normal; padding: 0.75rem 1em;`，保证列间距正好为 2 个中文字符并支持智能折行；
+   - 清除 `.proc-tag` 与 `.proc-container-name` 上的截断省略属性（`max-width`, `text-overflow: ellipsis`, `nowrap`）；
+   - 所有表格右侧配置 `th.filler-col` 与 `td.filler-col`，未撑满时自动吸纳多余空间；
+   - 清除 `renderPortsTable`、`renderDesktopTable`、`renderHostInfo`、`openPortDetailModal` 中的短横线 `-` 占位，空内容一律留空。
+3. **工具栏控件字重与字号统一 (`web/style.css`)**：
+   - `.toolbar-select` 补齐 `font-size: 0.88rem; font-weight: 500;`；
+   - 为 `.toolbar .btn, .toolbar .toolbar-select, .toolbar select, .toolbar button` 统一指定 `font-weight: 500; font-size: 0.88rem;`。
+4. **“关于” Markdown 排版与动态版本 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 移除 `.about-card` 容器，替换为 `.about-content` 及 `.about-md-h3`, `.about-md-p`, `.about-md-ol`, `.about-md-hr`, `.about-link`；
+   - 在 `updateSettingsForm` 和 `handleSaveSettingsManual` 中实时将 `state.settings.version` 写入 `#about-app-version`。
+5. **根治两大 Warning 告警（保留 slog.Warn，彻底消除触发诱因） (`internal/desktop/icons.go`, `internal/desktop/docklabel.go`, `internal/api/handler.go`)**：
+   - **Watchcow 图标无法加载告警根治**：
+     - 分析：旧版 Watchcow 容器内硬编码 `http://127.0.0.1:5900/icons/...` 指向已停用的 TCP 5900 端口，fnOS 统一网关下无法通过回环网络发起 HTTP 访问，导致频繁打印未能找到图标告警并回退；
+     - 解决：新增 `IsLocalOrLoopbackIconURL` 识别 `127.0.0.1:5900`、`localhost` 及相对 `/icons/` 路径，完全绕开 HTTP 请求；
+     - 直接在宿主机已知 Watchcow 数据目录（`/usr/local/apps/@appdata/watchcow/...`, `/vol1/@appdata/watchcow/...` 等）及 `iconsDir` 读取文件；
+     - 启动时执行 `MigrateLegacyWatchcowIcons(iconsDir)` 自动将旧版 Watchcow 图标导入本 App 图标库；
+     - 保留真实的 `slog.Warn`，仅在文件真正不存在时告警。
+   - **Docker 事件流断开告警根治**：
+     - 分析：`StartDockerEventListener` 此前使用短超时客户端，导致每隔数秒即产生 `context deadline exceeded`；此外容器后台健康检查频繁产生 `exec_*` 事件导致事件流抖动；
+     - 解决：为事件流 DialContext 开启 `KeepAlive: 30 * time.Second`，设置 `Timeout: 0`；
+     - 校验 `resp.StatusCode == http.StatusOK`；过滤高频无用的 `exec_*` 内部事件；
+     - 在系统退出或上下文取消（`ctx.Err() != nil` / `ctx.Done()`）时正常退出而不误报断连警告；真正网络/套接字异常断开时保留 `slog.Warn` 并于 5 秒后安全重试。
+6. **图标删除与 InUse 角标 API 及 UI (`internal/api/handler.go`, `internal/api/handler_test.go`, `web/app.js`, `web/style.css`)**：
+   - 后端 `IconInfo` 增加 `InUse bool` 字段，服务端通过查询条目与设置动态标记是否在使用；
+   - 后端新增 `DELETE /api/icons` 和 `DELETE /api/icons/{filename...}` 端点，保护 `icon.png` 与 `default_item_icon.png` 内置图标，若在使用中返回 400，未使用则安全删除文件并记录审计日志；
+   - 补充 `TestDeleteIcon` 单元测试，全面覆盖内置保护、使用中拦截与未用删除三类用例；
+   - 前端卡片悬浮时，根据 `isInUse` 显示 `.badge-in-use`（“使用中”）或 `.btn-delete-icon`（“删除”按钮，带确认对话框并即时刷新图标库）。
+7. **精准弹窗脏状态检测 (`web/app.js`)**：
+   - 重构 `isIconModified(scope)`：当前标签为 text 时仅在文本有内容且变更时报脏，url 标签仅在 URL 有内容且变更时报脏，lib 标签仅在图标值变更时报脏；单纯切换标签不判定为脏；
+   - 重构 `isDesktopItemFormDirty()`：区分新建与编辑；编辑模式下，若切换了模式标签但并未在新模式下输入任何有效内容（如切换到 local 但端口为空），视为导航浏览而不判定为脏；严格比对当前模式下的有效语义字段。
+8. **项目仓库模块样式对齐 (`web/index.html`)**：
+   - 在设置页首部采用 `<div class="info-section">` 与 `<h3 class="section-title">项目仓库</h3>`，链接包裹在 `.form-input` 白色卡片框内，与全局输入框规整对齐。
+9. **全链路版本升级至 `v1.1.26`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.26`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器 (`golang:1.22-alpine`) 内执行 `go test -v ./...` 全部 PASS。
+2. **服务端完整编译**：Docker 容器内执行 `go build -v ./cmd/server` 编译成功且退出码为 0，随后清理二进制保证仓库纯净。
+3. **零 .fpk 残留**：确认仓库内无任何 `.fpk` 或多余临时文件残留。

@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.25"
+const appVersion = "1.1.26"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -337,7 +337,9 @@ func main() {
 
 	// fnOS installer
 	installer := desktop.NewInstaller(*dataDirFlag, *iconPathFlag)
-	installer.SetIconsDir(filepath.Join(*dataDirFlag, "icons"))
+	iconsDir := filepath.Join(*dataDirFlag, "icons")
+	installer.SetIconsDir(iconsDir)
+	desktop.MigrateLegacyWatchcowIcons(iconsDir)
 
 	// Ensure put-port-on-desktop desktop icon is installed on fnOS (asynchronous)
 	go func() {

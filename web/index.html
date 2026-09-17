@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.25">
+  <link rel="stylesheet" href="style.css?v=1.1.26">
 </head>
 <body>
   <!-- Header Bar -->
@@ -128,7 +128,7 @@
             </tr>
           </thead>
           <tbody id="desktop-tbody">
-            <tr><td colspan="7" class="empty-state">暂无已创建的桌面图标</td></tr>
+            <tr><td colspan="7" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在载入桌面图标...</td></tr>
           </tbody>
         </table>
       </div>
@@ -221,9 +221,13 @@
     <!-- ==================== TAB 5: 设置 ==================== -->
     <section class="tab-pane" id="pane-settings">
       <div class="settings-container">
-        <!-- 关于与开源地址 -->
-        <div style="margin-bottom: 1.25rem; font-size: 13px; color: var(--text-muted);">
-          项目仓库：<a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">https://github.com/67373net/fn-docker-to-desktop</a>
+        <div class="info-section" style="margin-bottom: 1.5rem;">
+          <h3 class="section-title">项目仓库</h3>
+          <div class="settings-card">
+            <div class="form-group" style="margin-bottom: 0;">
+              <a href="https://github.com/67373net/fn-docker-to-desktop" target="_blank" rel="noopener noreferrer" class="form-input" style="display: block; text-decoration: none; color: var(--primary); background-color: var(--bg-surface); cursor: pointer; word-break: break-all;">https://github.com/67373net/fn-docker-to-desktop</a>
+            </div>
+          </div>
         </div>
 
         <div class="info-section">
@@ -424,13 +428,13 @@
               </thead>
               <tbody>
                 <tr>
-                  <td id="host-name">-</td>
-                  <td id="host-os">-</td>
-                  <td id="host-kernel">-</td>
-                  <td id="host-arch">-</td>
-                  <td id="host-ip">-</td>
-                  <td id="host-uptime">-</td>
-                  <td></td>
+                  <td id="host-name"></td>
+                  <td id="host-os"></td>
+                  <td id="host-kernel"></td>
+                  <td id="host-arch"></td>
+                  <td id="host-ip"></td>
+                  <td id="host-uptime"></td>
+                  <td class="filler-col"></td>
                 </tr>
               </tbody>
             </table>
@@ -464,71 +468,31 @@
     <!-- ==================== TAB 6: 关于 ==================== -->
     <section class="tab-pane" id="pane-about">
       <div class="about-container">
-        <div class="about-card">
-          <div class="about-header">
-            <img src="icon.png" alt="Logo" class="about-logo">
-            <div class="about-header-text">
-              <h2 class="about-title">把 Docker 放到桌面 <span class="about-ver">v1.1.25</span></h2>
-              <p class="about-desc">fn-docker-to-desktop · 飞牛 OS 原生桌面快捷方式与反向代理工具</p>
-            </div>
-          </div>
-
-          <div class="about-alert beta-alert">
-            <span class="alert-icon">💡</span>
-            <div class="alert-content">
-              <strong>灵感参考与 Beta 说明</strong>
-              <p>本项目灵感及代码参考了优秀开源项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。当前应用处于 Beta 测试阶段，持续迭代中。可能会有一些 Bug 或功能调整，非常欢迎前往 GitHub 提交反馈与建议。</p>
-            </div>
-          </div>
-
-          <div class="about-section">
-            <h3 class="about-section-title">四大核心功能</h3>
-            <div class="feature-grid">
-              <div class="feature-item">
-                <div class="feature-num">1</div>
-                <div class="feature-body">
-                  <strong>Docker 一键放桌面</strong>
-                  <p>自动识别已运行容器端口与协议，一键在飞牛 OS 桌面生成专属原生应用图标。</p>
-                </div>
-              </div>
-              <div class="feature-item">
-                <div class="feature-num">2</div>
-                <div class="feature-body">
-                  <strong>局域网 / 公网服务反向代理</strong>
-                  <p>将内网其他主机或公网 Web 服务反向代理至 NAS，免配端口生成独立桌面入口。</p>
-                </div>
-              </div>
-              <div class="feature-item">
-                <div class="feature-num">3</div>
-                <div class="feature-body">
-                  <strong>网页快捷方式一键放置</strong>
-                  <p>将任意常用网页快速生成桌面轻量级快捷方式图标，支持自定义窗口与可见权限。</p>
-                </div>
-              </div>
-              <div class="feature-item">
-                <div class="feature-num">4</div>
-                <div class="feature-body">
-                  <strong>自动读取 Watchcow 配置</strong>
-                  <p>无缝兼容并只读读取 docker compose 中的 Watchcow 标签配置，一键启用放置到桌面。</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="about-divider"></div>
-
+        <div class="about-content">
+          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.26</span></h3>
+          <p class="about-md-p">本项目灵感及代码参考了项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。</p>
+          <p class="about-md-p">本项目还处于 beta 测试版，可能会有一些 bug 和功能调整。欢迎提 <a href="https://github.com/67373net/fn-docker-to-desktop/issues" target="_blank" rel="noopener noreferrer" class="about-link">issues</a></p>
+          <hr class="about-md-hr">
+          <h3 class="about-md-h3">四大核心功能</h3>
+          <ol class="about-md-ol">
+            <li><strong>Docker 一键放桌面</strong>：自动识别容器，一键在飞牛桌面生成图标。</li>
+            <li><strong>局域网/公网服务反向代理</strong>：可将内网服务或公网服务代理至本机，并生成桌面图标。</li>
+            <li>将任意<strong>网页快捷方式</strong>放置到飞牛桌面。</li>
+            <li><strong>自动读取 Watchcow 配置</strong>：无缝兼容并只读读取 docker compose 中的 Watchcow 标签配置，一键启用放置到桌面。</li>
+          </ol>
+          <hr class="about-md-hr">
           <div class="donate-section">
             <h3 class="donate-title">🙇🏻 请作者吃顿外卖 🥺</h3>
             <p class="donate-subtitle">「把 Docker 放到桌面」是一款开源免费应用。如果它为您带来了便利与价值，欢迎扫描下方二维码投喂支持，感谢您的认可与鼓励！☕</p>
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.25" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.26" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.25" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.26" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -866,6 +830,7 @@
                 <th style="width: 120px;">打开方式</th>
                 <th style="width: 100px;">状态</th>
                 <th style="width: 150px;">操作</th>
+                <th class="filler-col"></th>
               </tr>
             </thead>
             <tbody id="port-desktop-list-tbody">
@@ -929,6 +894,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.25"></script>
+  <script src="app.js?v=1.1.26"></script>
 </body>
 </html>

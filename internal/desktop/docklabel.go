@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -143,13 +144,45 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 			}
 		}
 
-		// 4. Common host storage locations
+		// 4. Known Watchcow directories
+		legacyDirs := []string{
+			"/usr/local/apps/@appdata/watchcow/icons",
+			"/usr/local/apps/@appdata/watchcow/data/icons",
+			"/usr/local/apps/@appdata/watchcow/target/icons",
+			"/usr/local/apps/@appcenter/watchcow/icons",
+			"/usr/local/apps/@appcenter/watchcow/ui/images",
+			"/var/apps/watchcow/icons",
+			"/var/apps/watchcow/data/icons",
+			"/var/apps/watchcow/target/icons",
+			"/var/apps/watchcow/target/ui/images",
+			"/vol1/@appdata/watchcow/icons",
+			"/vol1/@appdata/watchcow/data/icons",
+			"/vol2/@appdata/watchcow/icons",
+			"/vol2/@appdata/watchcow/data/icons",
+			"/vol3/@appdata/watchcow/icons",
+			"/vol4/@appdata/watchcow/icons",
+			"/vol1/1000/docker",
+			"/vol1/docker",
+		}
+		for _, d := range legacyDirs {
+			cand := filepath.Join(d, baseName)
+			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+				return cand
+			}
+		}
+
+		// 5. Common host storage locations
 		commonBases := []string{
+			"/usr/local/apps",
+			"/var/apps",
+			"/vol1",
+			"/vol1/@appdata",
+			"/vol2",
+			"/vol3",
+			"/vol4",
 			"/home",
 			"/home/net67373",
-			"/vol1",
-			"/vol1/1000/docker",
-			"/var/apps",
+			"/var/lib/docker/volumes",
 		}
 		for _, b := range commonBases {
 			globPatterns := []string{
@@ -210,15 +243,44 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 					}
 				}
 
-				// 3. Common host storage locations
+				// 3. Known Watchcow directories
+				legacyDirs := []string{
+					"/usr/local/apps/@appdata/watchcow/icons",
+					"/usr/local/apps/@appdata/watchcow/data/icons",
+					"/usr/local/apps/@appdata/watchcow/target/icons",
+					"/usr/local/apps/@appcenter/watchcow/icons",
+					"/usr/local/apps/@appcenter/watchcow/ui/images",
+					"/var/apps/watchcow/icons",
+					"/var/apps/watchcow/data/icons",
+					"/var/apps/watchcow/target/icons",
+					"/var/apps/watchcow/target/ui/images",
+					"/vol1/@appdata/watchcow/icons",
+					"/vol1/@appdata/watchcow/data/icons",
+					"/vol2/@appdata/watchcow/icons",
+					"/vol2/@appdata/watchcow/data/icons",
+					"/vol3/@appdata/watchcow/icons",
+					"/vol4/@appdata/watchcow/icons",
+					"/vol1/1000/docker",
+					"/vol1/docker",
+				}
+				for _, d := range legacyDirs {
+					cand := filepath.Join(d, baseName)
+					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+						return cand
+					}
+				}
+
+				// 4. Common host storage locations
 				commonBases := []string{
-					"/home",
-					"/home/net67373",
+					"/usr/local/apps",
+					"/var/apps",
 					"/vol1",
+					"/vol1/@appdata",
 					"/vol2",
 					"/vol3",
 					"/vol4",
-					"/var/apps",
+					"/home",
+					"/home/net67373",
 					"/var/lib/docker/volumes",
 				}
 				for _, b := range commonBases {
@@ -249,6 +311,60 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 
 func resolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
 	return ResolveWatchcowIconPath(iconVal, workingDir, mounts)
+}
+
+// MigrateLegacyWatchcowIcons scans known Watchcow directories on fnOS and copies any image files to iconsDir
+func MigrateLegacyWatchcowIcons(iconsDir string) {
+	if iconsDir == "" {
+		return
+	}
+	_ = os.MkdirAll(iconsDir, 0755)
+
+	legacyDirs := []string{
+		"/usr/local/apps/@appdata/watchcow/icons",
+		"/usr/local/apps/@appdata/watchcow/data/icons",
+		"/usr/local/apps/@appdata/watchcow/target/icons",
+		"/usr/local/apps/@appcenter/watchcow/icons",
+		"/usr/local/apps/@appcenter/watchcow/ui/images",
+		"/var/apps/watchcow/icons",
+		"/var/apps/watchcow/data/icons",
+		"/var/apps/watchcow/target/icons",
+		"/var/apps/watchcow/target/ui/images",
+		"/vol1/@appdata/watchcow/icons",
+		"/vol1/@appdata/watchcow/data/icons",
+		"/vol2/@appdata/watchcow/icons",
+		"/vol2/@appdata/watchcow/data/icons",
+		"/vol3/@appdata/watchcow/icons",
+		"/vol4/@appdata/watchcow/icons",
+		"/vol1/1000/docker",
+		"/vol1/docker",
+	}
+
+	for _, d := range legacyDirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".svg" && ext != ".ico" {
+				continue
+			}
+			srcPath := filepath.Join(d, e.Name())
+			dstPath := filepath.Join(iconsDir, e.Name())
+			if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+				data, err := os.ReadFile(srcPath)
+				if err == nil && len(data) > 0 {
+					if err := os.WriteFile(dstPath, data, 0644); err == nil {
+						slog.Info("[DOCKLABEL] 自动导入旧版 Watchcow 图标", "name", e.Name(), "from", srcPath)
+					}
+				}
+			}
+		}
+	}
 }
 
 // DeriveDockLabelAppName generates an isolated fnOS package name within our app's namespace (fndocker.dock-*)
@@ -721,9 +837,12 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 				Transport: &http.Transport{
 					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 						var d net.Dialer
+						d.KeepAlive = 30 * time.Second
 						return d.DialContext(ctx, "unix", sock)
 					},
-					DisableKeepAlives: false,
+					DisableKeepAlives:     false,
+					IdleConnTimeout:       0,
+					ResponseHeaderTimeout: 0,
 				},
 				Timeout: 0, // NO timeout for persistent streaming event reader!
 			}
@@ -731,6 +850,9 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 			reqURL := "http://localhost/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D"
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				select {
 				case <-ctx.Done():
 					return
@@ -741,6 +863,22 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 
 			resp, err := client.Do(req)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Warn("[DOCKLABEL] 连接 Docker 事件流失败，5秒后重试...", "error", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					continue
+				}
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+				resp.Body.Close()
+				slog.Warn("[DOCKLABEL] Docker 事件流返回非 200 状态码，5秒后重试...", "status", resp.StatusCode, "body", string(bodyBytes))
 				select {
 				case <-ctx.Done():
 					return
@@ -772,6 +910,10 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 				line, err := reader.ReadBytes('\n')
 				if err != nil {
 					resp.Body.Close()
+					if ctx.Err() != nil {
+						// Normal context cancellation / server shutdown, exit cleanly without warning
+						return
+					}
 					slog.Warn("[DOCKLABEL] Docker 事件流断开，5秒后尝试重连...", "error", err)
 					select {
 					case <-ctx.Done():
@@ -780,7 +922,18 @@ func StartDockerEventListener(ctx context.Context, onChange func()) {
 					}
 					break
 				}
-				if len(bytes.TrimSpace(line)) > 0 {
+				trimmed := bytes.TrimSpace(line)
+				if len(trimmed) > 0 {
+					var ev struct {
+						Type   string `json:"Type"`
+						Action string `json:"Action"`
+					}
+					if err := json.Unmarshal(trimmed, &ev); err == nil {
+						// Ignore frequent background exec events (e.g. container health checks)
+						if strings.HasPrefix(ev.Action, "exec_") {
+							continue
+						}
+					}
 					triggerChange()
 				}
 			}

@@ -483,7 +483,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.25",
+		AppVersion: "1.1.26",
 	})
 
 	mux := http.NewServeMux()
@@ -544,3 +544,73 @@ func TestWatchcowEndpoints(t *testing.T) {
 		t.Errorf("Expected storage state to be persisted as true")
 	}
 }
+
+func TestDeleteIcon(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-test-icon-del-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	iconsDir := filepath.Join(tempDir, "icons")
+	if err := os.MkdirAll(iconsDir, 0755); err != nil {
+		t.Fatalf("Failed to create icons dir: %v", err)
+	}
+
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to init storage: %v", err)
+	}
+
+	// 1. Create test icons: one unused, one in-use, one protected
+	unusedIcon := "unused.png"
+	inUseIcon := "inuse.png"
+	os.WriteFile(filepath.Join(iconsDir, unusedIcon), []byte("fake-png-data"), 0644)
+	os.WriteFile(filepath.Join(iconsDir, inUseIcon), []byte("fake-png-data"), 0644)
+	os.WriteFile(filepath.Join(iconsDir, "icon.png"), []byte("fake-png-data"), 0644)
+
+	// Add an item using inUseIcon
+	storage.SaveItem(desktop.DesktopItem{
+		ID:   "item-1",
+		Name: "Item 1",
+		Icon: "/icons/" + inUseIcon,
+		Port: 8080,
+	})
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.26",
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Case 1: Try deleting protected icon -> 403 Forbidden
+	reqProtected := httptest.NewRequest("DELETE", "/api/icons/icon.png", nil)
+	recProtected := httptest.NewRecorder()
+	mux.ServeHTTP(recProtected, reqProtected)
+	if recProtected.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for protected icon, got %d", recProtected.Code)
+	}
+
+	// Case 2: Try deleting in-use icon -> 400 Bad Request
+	reqInUse := httptest.NewRequest("DELETE", "/api/icons/"+inUseIcon, nil)
+	recInUse := httptest.NewRecorder()
+	mux.ServeHTTP(recInUse, reqInUse)
+	if recInUse.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for in-use icon, got %d", recInUse.Code)
+	}
+
+	// Case 3: Try deleting unused icon -> 200 OK and file removed
+	reqUnused := httptest.NewRequest("DELETE", "/api/icons/"+unusedIcon, nil)
+	recUnused := httptest.NewRecorder()
+	mux.ServeHTTP(recUnused, reqUnused)
+	if recUnused.Code != http.StatusOK {
+		t.Errorf("Expected 200 for unused icon, got %d. Body: %s", recUnused.Code, recUnused.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(iconsDir, unusedIcon)); !os.IsNotExist(err) {
+		t.Errorf("Expected file %s to be removed", unusedIcon)
+	}
+}
+

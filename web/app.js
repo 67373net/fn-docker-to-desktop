@@ -130,6 +130,7 @@ let state = {
   currentTab: 'ports',
   ports: [],
   desktopItems: [],
+  desktopItemsLoaded: false,
   watchcowItems: [],
   processes: [],
   system: null,
@@ -336,6 +337,7 @@ async function fetchDesktopItems() {
 
       state.desktopItems = merged;
       await watchcowPromise.catch(() => {});
+      state.desktopItemsLoaded = true;
       renderDesktopTable();
       updateDesktopCountBadge();
 
@@ -351,6 +353,8 @@ async function fetchDesktopItems() {
     }
   } catch (err) {
     console.error('Fetch desktop items error:', err);
+    state.desktopItemsLoaded = true;
+    renderDesktopTable();
   }
 }
 
@@ -463,10 +467,14 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
+  const ver = state.settings?.version || '1.1.26';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
-    const ver = state.settings?.version || '1.1.25';
     titleEl.textContent = `v${ver} - 系统设置`;
+  }
+  const aboutVerEl = document.getElementById('about-app-version');
+  if (aboutVerEl) {
+    aboutVerEl.textContent = `v${ver}`;
   }
   document.title = `${portalName} - 容器与端口管理`;
 
@@ -656,11 +664,11 @@ function updateSystemMetrics(sys) {
 
 function renderHostInfo(host) {
   if (!host) return;
-  document.getElementById('host-name').textContent = host.hostname || '-';
-  document.getElementById('host-os').textContent = host.os_pretty || host.os_name || '-';
-  document.getElementById('host-kernel').textContent = host.kernel || '-';
-  document.getElementById('host-arch').textContent = host.arch || '-';
-  document.getElementById('host-ip').textContent = host.primary_ip || '-';
+  document.getElementById('host-name').textContent = host.hostname || '';
+  document.getElementById('host-os').textContent = host.os_pretty || host.os_name || '';
+  document.getElementById('host-kernel').textContent = host.kernel || '';
+  document.getElementById('host-arch').textContent = host.arch || '';
+  document.getElementById('host-ip').textContent = host.primary_ip || '';
 
   if (host.uptime_seconds) {
     const days = Math.floor(host.uptime_seconds / 86400);
@@ -677,13 +685,13 @@ function renderHostInfo(host) {
 
   let html = '';
   for (const iface of host.interfaces) {
-    const ips = (iface.ipv4 || []).join(', ') || '-';
+    const ips = (iface.ipv4 || []).join(', ') || '';
     const status = iface.is_up ? '<span class="status-badge active">活跃</span>' : '<span class="status-badge paused">未激活</span>';
     html += `<tr>
       <td><code>${escapeHtml(iface.name)}</code></td>
       <td>${escapeHtml(iface.type_label || iface.type)}</td>
-      <td><code>${escapeHtml(iface.mac || '-')}</code></td>
-      <td><code>${escapeHtml(ips)}</code></td>
+      <td>${iface.mac ? `<code>${escapeHtml(iface.mac)}</code>` : ''}</td>
+      <td>${ips ? `<code>${escapeHtml(ips)}</code>` : ''}</td>
       <td>${status}</td>
       <td class="filler-col"></td>
     </tr>`;
@@ -765,9 +773,16 @@ function renderPortRowHtml(p) {
       </button>`;
   }
 
-  const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '-';
-  const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '-';
-  const resText = (cpuText === '-' && rssText === '-') ? '-' : `${cpuText} / ${rssText}`;
+  const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '';
+  const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '';
+  let resText = '';
+  if (cpuText && rssText) {
+    resText = `${cpuText} / ${rssText}`;
+  } else if (cpuText) {
+    resText = cpuText;
+  } else if (rssText) {
+    resText = rssText;
+  }
 
   const protoUpper = (p.protocol || 'TCP').toUpperCase();
   const isPureUdp = protoUpper === 'UDP';
@@ -945,6 +960,11 @@ function renderDesktopTable() {
   const tbody = document.getElementById('desktop-tbody');
   if (!tbody) return;
 
+  if (!state.desktopItemsLoaded) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在载入桌面图标...</td></tr>';
+    return;
+  }
+
   const query = state.desktopSearch.trim().toLowerCase();
   const filtered = state.desktopItems.filter(item => {
     if (!query) return true;
@@ -1000,7 +1020,7 @@ function renderDesktopTable() {
       } else if (!hasIcon && hasContextMenu) {
         entryText = '右键';
       } else {
-        entryText = '-';
+        entryText = '';
       }
       const permText = item.all_users ? '所有用户' : '仅管理员';
       const permClass = item.all_users ? 'perm-sub-all' : 'perm-sub-admin';
@@ -1105,7 +1125,7 @@ function renderDesktopTable() {
       } else if (!hasIcon && hasContextMenu) {
         entryText = '右键';
       } else {
-        entryText = '-';
+        entryText = '';
       }
       const permText = item.all_users ? '所有用户' : '仅管理员';
       const permClass = item.all_users ? 'perm-sub-all' : 'perm-sub-admin';
@@ -1440,21 +1460,74 @@ function isDesktopItemFormDirty() {
   const isIconDirty = isIconModified('modal');
   if (isIconDirty) return true;
 
-  const id = document.getElementById('item-id')?.value || '';
-  // If it's a new item creation dialog, and user hasn't typed anything into any text inputs
+  if (!state.desktopItemFormSnapshot) return false;
+  let snap = {};
+  let cur = {};
+  try {
+    snap = JSON.parse(state.desktopItemFormSnapshot || '{}');
+    cur = JSON.parse(getDesktopItemFormSnapshot() || '{}');
+  } catch (_) {
+    return false;
+  }
+
+  const id = (document.getElementById('item-id')?.value || '').trim();
+
+  // If it's a new item creation dialog:
   if (!id) {
-    const name = (document.getElementById('item-name')?.value || '').trim();
-    const localPort = (document.getElementById('item-local-port')?.value || '').trim();
-    const targetUrl = (document.getElementById('item-target-url')?.value || '').trim();
-    const shortcutUrl = (document.getElementById('item-shortcut-url')?.value || '').trim();
-    const proxyPort = (document.getElementById('item-proxy-port')?.value || '').trim();
+    const name = (cur.name || '').trim();
+    const localPort = (cur.localPort || '').trim();
+    const targetUrl = (cur.targetUrl || '').trim();
+    const shortcutUrl = (cur.shortcutUrl || '').trim();
+    const proxyPort = (cur.proxyPort || '').trim();
     if (!name && !localPort && !targetUrl && !shortcutUrl && !proxyPort) {
       return false;
     }
+    return true;
   }
 
-  if (!state.desktopItemFormSnapshot) return false;
-  return getDesktopItemFormSnapshot() !== state.desktopItemFormSnapshot;
+  // Editing existing item:
+  // Check common fields
+  if ((cur.name || '').trim() !== (snap.name || '').trim()) return true;
+  if (String(cur.allUsers) !== String(snap.allUsers)) return true;
+  if ((cur.noticeContent || '').trim() !== (snap.noticeContent || '').trim()) return true;
+  if (!!cur.noDisplay !== !!snap.noDisplay) return true;
+
+  // Mode check:
+  if (cur.mode !== snap.mode) {
+    // User switched mode tab. Check if user actually entered/modified content for the new mode!
+    if (cur.mode === 'local') {
+      const p = (cur.localPort || '').trim();
+      if (p && p !== (snap.localPort || '').trim()) return true;
+    } else if (cur.mode === 'proxy') {
+      const u = (cur.targetUrl || '').trim();
+      if (u && u !== (snap.targetUrl || '').trim()) return true;
+    } else if (cur.mode === 'shortcut') {
+      const s = (cur.shortcutUrl || '').trim();
+      if (s && s !== (snap.shortcutUrl || '').trim()) return true;
+    }
+    // If no meaningful content entered for new mode, switching mode tab was just navigation!
+    return false;
+  }
+
+  // cur.mode === snap.mode: check mode-specific fields
+  if (cur.mode === 'local') {
+    if ((cur.localPort || '').trim() !== (snap.localPort || '').trim()) return true;
+    if (cur.protocol !== snap.protocol) return true;
+    if ((cur.path || '').trim() !== (snap.path || '').trim()) return true;
+    if (cur.uiType !== snap.uiType) return true;
+    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) return true;
+  } else if (cur.mode === 'proxy') {
+    if ((cur.targetUrl || '').trim() !== (snap.targetUrl || '').trim()) return true;
+    if ((cur.proxyPort || '').trim() !== (snap.proxyPort || '').trim()) return true;
+    if (!!cur.skipTls !== !!snap.skipTls) return true;
+    if ((cur.path || '').trim() !== (snap.path || '').trim()) return true;
+    if (cur.uiType !== snap.uiType) return true;
+    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) return true;
+  } else if (cur.mode === 'shortcut') {
+    if ((cur.shortcutUrl || '').trim() !== (snap.shortcutUrl || '').trim()) return true;
+  }
+
+  return false;
 }
 
 function tryCloseDesktopItemModal() {
@@ -2128,8 +2201,8 @@ async function renderIconLibraryGrid(scope) {
 
   // 1. Prepend built-in app icons (default container icon and product icon)
   const builtInIcons = [
-    { name: '默认图标', url: 'default_item_icon.png', title: '系统默认图标' },
-    { name: '产品图标', url: 'icon.png', title: '把 Docker 放到桌面 产品图标' },
+    { name: '默认图标', url: 'default_item_icon.png', title: '系统默认图标', in_use: true, isBuiltIn: true },
+    { name: '产品图标', url: 'icon.png', title: '把 Docker 放到桌面 产品图标', in_use: true, isBuiltIn: true },
   ];
 
   const allIcons = [...builtInIcons, ...state.iconLibrary];
@@ -2166,6 +2239,44 @@ async function renderIconLibraryGrid(scope) {
     img.alt = icon.name;
     img.loading = 'lazy';
     card.appendChild(img);
+
+    const isBuiltIn = !!icon.isBuiltIn || icon.url === 'default_item_icon.png' || icon.url === 'icon.png';
+    const isInUse = isBuiltIn || !!icon.in_use;
+
+    if (isInUse) {
+      const badge = document.createElement('span');
+      badge.className = 'icon-card-badge badge-in-use';
+      badge.textContent = '使用中';
+      card.appendChild(badge);
+    } else {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'icon-card-badge btn-delete-icon';
+      delBtn.textContent = '删除';
+      delBtn.title = '删除此图标';
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!confirm(`确定要删除图标 "${icon.name}" 吗？`)) return;
+        try {
+          const res = await fetch(apiUrl('/api/icons/' + encodeURIComponent(icon.name)), {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          if (res.ok) {
+            showToast('图标已删除', 'success');
+            await fetchIconLibrary(true);
+            renderIconLibraryGrid('modal');
+            renderIconLibraryGrid('setting');
+          } else {
+            showToast(data.error || '删除图标失败', 'error');
+          }
+        } catch (err) {
+          showToast('删除请求失败: ' + err.message, 'error');
+        }
+      });
+      card.appendChild(delBtn);
+    }
 
     card.addEventListener('click', () => {
       selectLibraryIcon(scope, icon.url, card);
@@ -2359,67 +2470,50 @@ function isIconModified(scope) {
   const snap = scope === 'setting' ? state.initialSettingIcon : state.initialModalIcon;
   if (!snap) return false;
 
-  if (scope === 'setting') {
-    const curTab = state.activeSettingIconTab || 'lib';
-    if (curTab !== snap.tab) {
-      const previewImg = document.getElementById('setting-icon-preview-img');
-      if (previewImg && previewImg.src !== snap.previewSrc) return true;
-      if (curTab === 'text') {
-        const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
-        if (curText !== snap.text) return true;
-      } else if (curTab === 'url') {
-        const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
-        if (curUrl !== snap.url) return true;
-      } else if (curTab === 'lib') {
-        const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
-        if (curIcon !== snap.iconVal) return true;
+  const isSetting = scope === 'setting';
+  const curTab = isSetting ? (state.activeSettingIconTab || 'lib') : (state.activeIconTab || 'text');
+
+  if (curTab === 'text') {
+    const textInputId = isSetting ? 'setting-icon-text-input' : 'icon-text-input';
+    const textColorId = isSetting ? 'setting-icon-text-color-hex' : 'icon-text-color-hex';
+    const bgColorId = isSetting ? 'setting-icon-bg-color-hex' : 'icon-bg-color-hex';
+    const curText = (document.getElementById(textInputId)?.value || '').trim();
+    const curTextColor = (document.getElementById(textColorId)?.value || '#ffffff').trim().toLowerCase();
+    const curBgColor = (document.getElementById(bgColorId)?.value || '#1e293b').trim().toLowerCase();
+
+    if (curText) {
+      if (curText !== (snap.text || '') || curTextColor !== (snap.textColor || '#ffffff') || curBgColor !== (snap.bgColor || '#1e293b')) {
+        return true;
       }
     } else {
-      if (curTab === 'text') {
-        const curText = (document.getElementById('setting-icon-text-input')?.value || '').trim();
-        const curTextColor = (document.getElementById('setting-icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
-        const curBgColor = (document.getElementById('setting-icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
-        if (curText !== snap.text || curTextColor !== snap.textColor || curBgColor !== snap.bgColor) return true;
-      } else if (curTab === 'url') {
-        const curUrl = (document.getElementById('setting-icon-url-input')?.value || '').trim();
-        if (curUrl !== snap.url) return true;
-      } else if (curTab === 'lib') {
-        const curIcon = (document.getElementById('setting-portal-icon')?.value || '').trim();
-        if (curIcon !== snap.iconVal) return true;
-      }
-    }
-    return false;
-  } else {
-    const curTab = state.activeIconTab || 'text';
-    if (curTab !== snap.tab) {
-      const previewImg = document.getElementById('icon-preview-img');
-      if (previewImg && previewImg.src !== snap.previewSrc) return true;
-      if (curTab === 'text') {
-        const curText = (document.getElementById('icon-text-input')?.value || '').trim();
-        if (curText !== snap.text) return true;
-      } else if (curTab === 'url') {
-        const curUrl = (document.getElementById('icon-url-input')?.value || '').trim();
-        if (curUrl !== snap.url) return true;
-      } else if (curTab === 'lib') {
-        const curIcon = (document.getElementById('item-icon')?.value || '').trim();
-        if (curIcon !== snap.iconVal) return true;
-      }
-    } else {
-      if (curTab === 'text') {
-        const curText = (document.getElementById('icon-text-input')?.value || '').trim();
-        const curTextColor = (document.getElementById('icon-text-color-hex')?.value || '#ffffff').trim().toLowerCase();
-        const curBgColor = (document.getElementById('icon-bg-color-hex')?.value || '#1e293b').trim().toLowerCase();
-        if (curText !== snap.text || curTextColor !== snap.textColor || curBgColor !== snap.bgColor) return true;
-      } else if (curTab === 'url') {
-        const curUrl = (document.getElementById('icon-url-input')?.value || '').trim();
-        if (curUrl !== snap.url) return true;
-      } else if (curTab === 'lib') {
-        const curIcon = (document.getElementById('item-icon')?.value || '').trim();
-        if (curIcon !== snap.iconVal) return true;
+      if (snap.tab === 'text' && snap.text) {
+        return true;
       }
     }
     return false;
   }
+
+  if (curTab === 'url') {
+    const urlInputId = isSetting ? 'setting-icon-url-input' : 'icon-url-input';
+    const curUrl = (document.getElementById(urlInputId)?.value || '').trim();
+    if (curUrl) {
+      if (curUrl !== (snap.url || '')) return true;
+    } else {
+      if (snap.tab === 'url' && snap.url) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (curTab === 'lib' || curTab === 'upload') {
+    const iconInputId = isSetting ? 'setting-portal-icon' : 'item-icon';
+    const curIcon = (document.getElementById(iconInputId)?.value || '').trim();
+    if (curIcon !== (snap.iconVal || '')) return true;
+    return false;
+  }
+
+  return false;
 }
 
 function revertIcon(scope) {
@@ -3289,6 +3383,7 @@ function openPortDesktopListModal(port, procName, items) {
           </button>
         </div>
       </td>
+      <td class="filler-col"></td>
     </tr>`;
   }
   tbody.innerHTML = html;
@@ -3803,10 +3898,14 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
+      const ver = state.settings?.version || '1.1.26';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
-        const ver = state.settings?.version || '1.1.25';
         titleEl.textContent = `v${ver} - 系统设置`;
+      }
+      const aboutVerEl = document.getElementById('about-app-version');
+      if (aboutVerEl) {
+        aboutVerEl.textContent = `v${ver}`;
       }
       document.getElementById('setting-portal-password').value = '';
       document.getElementById('setting-portal-password-confirm').value = '';
@@ -3854,7 +3953,8 @@ function openPortDetailModal(portNum) {
       <td>${escapeHtml(addr.protocol)}</td>
       <td><code>${escapeHtml(addr.ip)}:${addr.port}</code></td>
       <td>${escapeHtml(addr.state)}</td>
-      <td>${addr.pid > 0 ? addr.pid : '-'}</td>
+      <td>${addr.pid > 0 ? addr.pid : ''}</td>
+      <td class="filler-col"></td>
     </tr>`;
   }
 
@@ -3869,7 +3969,7 @@ function openPortDetailModal(portNum) {
 
     <div style="margin-bottom: 1rem;">
       <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.3rem;">关联容器 / 进程</div>
-      <div><strong>${escapeHtml(port.process_name || '-')}</strong> (PID: ${port.pid || '-'})</div>
+      <div><strong>${escapeHtml(port.process_name || '')}</strong>${port.pid ? ` (PID: ${port.pid})` : ''}</div>
       <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.2rem;">属主: ${escapeHtml(port.user || 'root')}</div>
       ${port.cmdline ? `<div style="font-size: 0.8rem; font-family: monospace; background: var(--bg-surface-subtle); padding: 0.4rem; border-radius: 4px; margin-top: 0.4rem; word-break: break-all;">${escapeHtml(port.cmdline)}</div>` : ''}
     </div>
@@ -3883,10 +3983,11 @@ function openPortDetailModal(portNum) {
             <th>端点地址</th>
             <th>状态</th>
             <th>PID</th>
+            <th class="filler-col"></th>
           </tr>
         </thead>
         <tbody>
-          ${endpointsHtml || '<tr><td colspan="4">无详细端点</td></tr>'}
+          ${endpointsHtml || '<tr><td colspan="5">无详细端点</td></tr>'}
         </tbody>
       </table>
     </div>

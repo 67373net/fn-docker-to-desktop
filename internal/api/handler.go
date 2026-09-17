@@ -124,6 +124,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/icons", h.handleGetIcons)
 	mux.HandleFunc("POST /api/icons/upload", h.handleUploadIcon)
+	mux.HandleFunc("DELETE /api/icons", h.handleDeleteIcon)
+	mux.HandleFunc("DELETE /api/icons/{filename...}", h.handleDeleteIcon)
 	mux.HandleFunc("GET /icons/{filename}", h.handleServeIcon)
 
 	mux.HandleFunc("GET /redirect", h.handleRedirect)
@@ -298,6 +300,10 @@ func (h *Handler) jsonResponse(w http.ResponseWriter, r *http.Request, data inte
 
 	w.WriteHeader(status)
 	_, _ = w.Write(bytes)
+}
+
+func (h *Handler) jsonError(w http.ResponseWriter, r *http.Request, msg string, status int) {
+	h.jsonResponse(w, r, map[string]string{"error": msg}, status)
 }
 
 func (h *Handler) serveHTMLBytes(w http.ResponseWriter, r *http.Request, content []byte) {
@@ -1247,6 +1253,7 @@ type IconInfo struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
 	LastUsed int64  `json:"last_used"`
+	InUse    bool   `json:"in_use"`
 }
 
 // /api/icons
@@ -1294,8 +1301,10 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var lastUsed int64
+		inUse := false
 		if ts, ok := usageMap[name]; ok && ts > 0 {
 			lastUsed = ts
+			inUse = true
 		} else if info, err := f.Info(); err == nil {
 			lastUsed = info.ModTime().Unix()
 		}
@@ -1304,6 +1313,7 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 			Name:     name,
 			URL:      "/icons/" + name,
 			LastUsed: lastUsed,
+			InUse:    inUse,
 		})
 	}
 
@@ -1318,6 +1328,64 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 		list = []IconInfo{}
 	}
 	h.jsonResponse(w, r, list, http.StatusOK)
+}
+
+// DELETE /api/icons or /api/icons/{filename}
+func (h *Handler) handleDeleteIcon(w http.ResponseWriter, r *http.Request) {
+	filename := r.PathValue("filename")
+	if filename == "" {
+		filename = r.URL.Query().Get("filename")
+	}
+	filename = filepath.Base(strings.TrimSpace(filename))
+	if filename == "" || filename == "." || filename == "/" {
+		h.jsonError(w, r, "缺少图标文件名", http.StatusBadRequest)
+		return
+	}
+
+	// Protect built-in icons
+	if filename == "default_item_icon.png" || filename == "icon.png" {
+		h.jsonError(w, r, "系统内置图标禁止删除", http.StatusForbidden)
+		return
+	}
+
+	// Check if in use
+	if h.storage != nil {
+		items := h.storage.GetAllItems()
+		for _, it := range items {
+			clean := strings.TrimPrefix(it.Icon, "/icons/")
+			clean = strings.TrimPrefix(clean, "icons/")
+			if clean == filename || it.Icon == filename {
+				h.jsonError(w, r, "该图标正在被桌面图标条目使用中，无法删除", http.StatusBadRequest)
+				return
+			}
+		}
+		sett := h.storage.GetSettings()
+		cleanSett := strings.TrimPrefix(sett.PortalIcon, "/icons/")
+		cleanSett = strings.TrimPrefix(cleanSett, "icons/")
+		if cleanSett == filename || sett.PortalIcon == filename {
+			h.jsonError(w, r, "该图标正在作为管理面板图标使用中，无法删除", http.StatusBadRequest)
+			return
+		}
+	}
+
+	targetPath := filepath.Join(h.iconsDir, filename)
+	if _, err := os.Stat(targetPath); err != nil {
+		if os.IsNotExist(err) {
+			h.jsonError(w, r, "图标文件不存在", http.StatusNotFound)
+			return
+		}
+		h.jsonError(w, r, "访问图标文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.Remove(targetPath); err != nil {
+		slog.Error("[AUDIT] 删除图标失败", "filename", filename, "error", err)
+		h.jsonError(w, r, "删除图标失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("[AUDIT] 成功删除图标", "filename", filename)
+	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
 }
 
 // ResizeIconImage pads and scales an image to fit targetSize x targetSize square (e.g. 256x256)
@@ -2092,6 +2160,17 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 		targetItem.AppName = appName
 
 		iconToUse := targetItem.LocalIconPath
+		if isLocal, baseName := desktop.IsLocalOrLoopbackIconURL(targetItem.Icon); isLocal && baseName != "" {
+			target := filepath.Join(h.iconsDir, baseName)
+			if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+				iconToUse = target
+			} else if resolved := desktop.ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
+				if data, err := os.ReadFile(resolved); err == nil {
+					_ = os.WriteFile(target, data, 0644)
+				}
+				iconToUse = resolved
+			}
+		}
 		if iconToUse == "" && targetItem.Icon != "" {
 			iconToUse = desktop.ResolveWatchcowIconPath(targetItem.Icon, "", nil)
 		}
@@ -2220,7 +2299,27 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 2. Try dynamic resolution on host if LocalIconPath was empty or moved
+	// 2. Check if Icon is a local/loopback icon URL (e.g. http://127.0.0.1:5900/icons/xxx or /icons/xxx)
+	if isLocal, baseName := desktop.IsLocalOrLoopbackIconURL(found.Icon); isLocal && baseName != "" {
+		target := filepath.Join(h.iconsDir, baseName)
+		if info, err := os.Stat(target); err == nil && !info.IsDir() {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			http.ServeFile(w, r, target)
+			return
+		}
+		if resolved := desktop.ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
+			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+					_ = os.WriteFile(target, data, 0644)
+				}
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				http.ServeFile(w, r, resolved)
+				return
+			}
+		}
+	}
+
+	// 3. Try dynamic resolution on host if LocalIconPath was empty or moved
 	if found.Icon != "" {
 		resolved := desktop.ResolveWatchcowIconPath(found.Icon, "", nil)
 		if resolved != "" {
@@ -2232,7 +2331,7 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 3. If Icon is a local icons directory reference
+	// 4. If Icon is a local icons directory reference
 	if found.Icon != "" {
 		if strings.HasPrefix(found.Icon, "/icons/") || strings.HasPrefix(found.Icon, "icons/") {
 			rel := strings.TrimPrefix(strings.TrimPrefix(found.Icon, "/icons/"), "icons/")
@@ -2245,8 +2344,11 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// 4. If Icon is an HTTP/HTTPS URL, proxy and cache
+	// 5. If Icon is an HTTP/HTTPS URL, proxy and cache (skip if loopback/local URL)
 	if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
+		if isLocal, _ := desktop.IsLocalOrLoopbackIconURL(found.Icon); isLocal {
+			// Skip remote HTTP fetch for loopback/local icon URLs
+		} else {
 		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.Icon)))
 		ext := filepath.Ext(found.Icon)
 		if ext == "" || len(ext) > 5 {
@@ -2302,6 +2404,7 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 					return
 				}
 			}
+		}
 		}
 	}
 
