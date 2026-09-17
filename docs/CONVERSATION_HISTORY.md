@@ -3380,3 +3380,42 @@ INFO
 2. **视觉渲染验证**：通过真实页面渲染核验桌面图标列表、端口列表、进程列表排版，确认列间距为 2 字符、右侧留空、长文本自动换行且无挤压变形。
 3. **零 .fpk 残留**：保持仓库文件纯净，不留存任何本地构建 `.fpk` 文件。
 
+---
+
+## Turn 43 - v1.1.28 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **彻底解决目标/映射端口异常折行与右侧空间浪费**：桌面图标列表中，右侧明明有很大空白，但“目标/映射端口”列依然被折行，且无论窗口怎么拉宽都依然折行。要求所有内容尽量完全显示、尽量单行不折行，杜绝右侧空白浪费。
+2. **严格保持 4 大列表排版规则**：
+   - 所有表头左对齐，列与列之间间隔 2 个中文字符；
+   - 所有内容尽量完全显示，有空间时单行不折行；
+   - 仅当完全显示导致容器宽度不足时，才进行自动折行；
+   - 宽度未填满时，最右边的列右边留空（表格内容空白填充，表头宽度拉满），严禁左侧拉宽。
+3. **全链路版本升级至 `v1.1.28`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **根因深度剖析**：
+   - 根据 CSS 2.1 表格自动布局规范（Section 17.5.2.2）：当表格存在 `width: 100%` 的百分比列（`filler-col`）时，浏览器引擎会将所有非百分比且可折行（`white-space: normal`）的列强行压缩至其 `min-content` 最小宽度；
+   - v1.1.27 中在 CSS 中静态对 `#desktop-table td:nth-child(4)` 设置了 `min-width: 200px; max-width: 400px; white-space: normal;`，导致无论窗口拉伸多宽，浏览器都始终将其压死在 200px 最小宽度强制折行，而把所有多余宽度（数百甚至上千像素）全部交给了右侧 `filler-col`；同时 `max-width: 400px` 也从根本上阻断了其进一步舒展。
+2. **智能动态自适应排版引擎 (`web/style.css`, `web/app.js`)**：
+   - **清除静态宽度压制**：彻底移除 `style.css` 中对桌面列表、端口列表、进程列表指定列的硬编码 `min-width`、`max-width` 与 `white-space: normal`；
+   - **默认自然单行完全展示**：单元格与表头均默认采用 `white-space: nowrap; width: 1%`，列间距精确保持 2 个中文字符（`padding: 0.75rem 1em`）；
+   - **智能溢出检测与自适应换行 (`adjustTableWrapping`)**：
+     - 当容器宽度充裕（`table.scrollWidth <= container.clientWidth`）时，所有列完全展示在单行中，绝对不折行，多余空间由最右侧 `filler-col` 优雅吸收，表头背景完整拉至右侧边框；
+     - 仅当整体内容总宽度确实超过容器可视宽度（`table.scrollWidth > container.clientWidth`）时，动态激活 `.table-wrap` 模式，解除长文本列的 nowrap 限制，使其在当前可用容器宽度内平滑折行，杜绝横向滚动条；
+   - **响应式监听 (`ResizeObserver`)**：
+     - 使用现代浏览器的 `ResizeObserver` 实时监听 `.table-container` 尺寸变化及窗口缩放，当用户拉伸窗口变宽时即时恢复单行完整展示，彻底解决“无论怎么改变整体宽度都一样”的痛点。
+3. **全链路版本升级至 `v1.1.28`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.28`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:alpine`）内执行 `go test -v ./...` 全部 PASS。
+2. **服务端编译校验**：Docker 容器内执行 `go build -v ./cmd/server` 编译验证通过。
+3. **全分辨率渲染测试**：在 1920px、1600px、1400px、1200px、1000px、800px、600px 共 7 个不同视口宽度下进行真实 Headless Chrome 自动化渲染与测绘，验证宽屏下单行完全展示且 filler 吸收右侧空白，窄屏下平滑折行无横向溢出。
+4. **零 .fpk 残留**：保持本地仓库纯净。
+
+

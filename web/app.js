@@ -230,6 +230,8 @@ function switchTab(tab) {
     fetchSettings();
     fetchHost();
   }
+
+  requestAnimationFrame(adjustAllTableWrapping);
 }
 
 // --- Data Fetching ---
@@ -467,7 +469,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.27';
+  const ver = state.settings?.version || '1.1.28';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -824,6 +826,43 @@ function renderPortRowHtml(p) {
   </tr>`;
 }
 
+// --- Table Layout Auto-Wrapping ---
+function adjustTableWrapping(table) {
+  if (!table) return;
+  const container = table.closest('.table-container');
+  if (!container || container.clientWidth <= 0) return;
+
+  table.classList.remove('table-wrap');
+  if (table.scrollWidth > container.clientWidth) {
+    table.classList.add('table-wrap');
+  }
+}
+
+function adjustAllTableWrapping() {
+  document.querySelectorAll('.table-container table.data-table').forEach(table => {
+    adjustTableWrapping(table);
+  });
+}
+
+function initTableAutoWrapObservers() {
+  if (typeof ResizeObserver === 'undefined') {
+    window.addEventListener('resize', adjustAllTableWrapping);
+    return;
+  }
+  const ro = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const table = entry.target.querySelector('table.data-table');
+      if (table) {
+        adjustTableWrapping(table);
+      }
+    }
+  });
+  document.querySelectorAll('.table-container').forEach(container => {
+    ro.observe(container);
+  });
+  window.addEventListener('resize', adjustAllTableWrapping);
+}
+
 // --- Render Ports Table ---
 function renderPortsTable() {
   const tbody = document.getElementById('ports-tbody');
@@ -953,6 +992,8 @@ function renderPortsTable() {
       openPortDetailModal(port);
     });
   });
+
+  adjustTableWrapping(document.getElementById('ports-table'));
 }
 
 // --- Render Desktop Items Table ---
@@ -1305,6 +1346,8 @@ function renderDesktopTable() {
       openEditDesktopModal(id);
     });
   });
+
+  adjustTableWrapping(document.getElementById('desktop-table'));
 }
 
 // --- Render Processes Table ---
@@ -1400,6 +1443,7 @@ function renderProcessesTable() {
     </tr>`;
   }
   tbody.innerHTML = html;
+  adjustTableWrapping(document.getElementById('proc-table'));
 }
 
 function initProcTableSort() {
@@ -3898,7 +3942,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.27';
+      const ver = state.settings?.version || '1.1.28';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4030,6 +4074,7 @@ async function handleAuthLogin(e) {
 function initApp() {
   initNavigation();
   initModals();
+  initTableAutoWrapObservers();
 
   // Dropdown filters in Ports tab (Docker 容器/系统原生, TCP/UDP)
   const portFilterSource = document.getElementById('port-filter-source');
@@ -4210,7 +4255,9 @@ function initApp() {
       const active = toggleMinimal.checked;
       portsTable.classList.toggle('minimal-mode', active);
       localStorage.setItem('fn_ports_minimal_mode', active);
+      adjustTableWrapping(portsTable);
     });
+    adjustTableWrapping(portsTable);
   }
 
   fetchPorts();
