@@ -132,6 +132,7 @@ let state = {
   desktopItems: [],
   desktopItemsLoaded: false,
   watchcowItems: [],
+  watchcowItemsLoaded: false,
   processes: [],
   system: null,
   host: null,
@@ -249,13 +250,35 @@ async function fetchPorts() {
   }
 }
 
+let watchcowFetchSeq = 0;
+
+function scheduleReconcilePolling() {
+  if (state.reconcilePollTimer) {
+    clearTimeout(state.reconcilePollTimer);
+    state.reconcilePollTimer = null;
+  }
+  const hasDesktopActive = (state.desktopItems || []).some(item => item && (item.reconciling || item._updating));
+  const hasWatchcowActive = (state.watchcowItems || []).some(item => item && (item.reconciling || item._updating));
+  if (hasDesktopActive || hasWatchcowActive) {
+    state.reconcilePollTimer = setTimeout(() => {
+      if (hasDesktopActive) fetchDesktopItems();
+      if (hasWatchcowActive) fetchWatchcowItems();
+    }, 2000);
+  }
+}
+
 async function fetchWatchcowItems() {
+  const seq = ++watchcowFetchSeq;
   try {
     let res = await fetch(apiUrl('/api/desktop/docklabel'));
     if (!res.ok && res.status !== 401) {
       res = await fetch(apiUrl('/api/desktop/watchcow'));
     }
     if (res.status === 401) return;
+    if (seq < watchcowFetchSeq) {
+      // Discard outdated response
+      return;
+    }
     if (res.ok) {
       const serverItems = await res.json();
       const pendingMap = new Map();
@@ -275,16 +298,23 @@ async function fetchWatchcowItems() {
         }
         return item;
       });
+      state.watchcowItemsLoaded = true;
       renderDesktopTable();
       updateDesktopCountBadge();
+      scheduleReconcilePolling();
+    } else {
+      state.watchcowItemsLoaded = true;
+      renderDesktopTable();
     }
   } catch (err) {
     console.error('Fetch docklabel items error:', err);
+    state.watchcowItemsLoaded = true;
+    renderDesktopTable();
   }
 }
 
 async function fetchDesktopItems() {
-  const watchcowPromise = fetchWatchcowItems();
+  fetchWatchcowItems();
   try {
     const res = await fetch(apiUrl('/api/desktop/items'));
     if (res.status === 401) return showAuthModal();
@@ -338,20 +368,13 @@ async function fetchDesktopItems() {
       });
 
       state.desktopItems = merged;
-      await watchcowPromise.catch(() => {});
       state.desktopItemsLoaded = true;
       renderDesktopTable();
       updateDesktopCountBadge();
-
-      // If any item is reconciling or updating, poll again in 3s to live-update status
-      if (state.reconcilePollTimer) {
-        clearTimeout(state.reconcilePollTimer);
-        state.reconcilePollTimer = null;
-      }
-      const hasActive = merged.some(item => item.reconciling || item._updating);
-      if (hasActive) {
-        state.reconcilePollTimer = setTimeout(fetchDesktopItems, 3000);
-      }
+      scheduleReconcilePolling();
+    } else {
+      state.desktopItemsLoaded = true;
+      renderDesktopTable();
     }
   } catch (err) {
     console.error('Fetch desktop items error:', err);
@@ -469,7 +492,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.31';
+  const ver = state.settings?.version || '1.1.32';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -599,6 +622,7 @@ function initEventSource() {
       }
       if (data && data.type === 'docklabel_update') {
         fetchDesktopItems();
+        fetchWatchcowItems();
       }
     } catch (err) {
       console.error('SSE parse error:', err);
@@ -606,6 +630,7 @@ function initEventSource() {
   };
   state.eventSource.addEventListener('docklabel_update', () => {
     fetchDesktopItems();
+    fetchWatchcowItems();
   });
   state.eventSource.onerror = () => {
     // Retry on failure
@@ -1001,7 +1026,7 @@ function renderDesktopTable() {
   const tbody = document.getElementById('desktop-tbody');
   if (!tbody) return;
 
-  if (!state.desktopItemsLoaded) {
+  if (!state.desktopItemsLoaded && !state.watchcowItemsLoaded) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在载入桌面图标...</td></tr>';
     return;
   }
@@ -1314,11 +1339,15 @@ function renderDesktopTable() {
           if (targetItem) {
             targetItem.enabled = updated.enabled;
             targetItem._updating = false;
+            targetItem.reconciling = false;
+            targetItem.status_text = null;
             targetItem._statusText = null;
           }
           showToast(`已成功${updated.enabled ? '启用' : '停用'}桌面图标`, 'success');
           renderDesktopTable();
           fetchPorts();
+          await fetchWatchcowItems();
+          scheduleReconcilePolling();
         } else {
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.error || res.statusText;
@@ -1326,6 +1355,7 @@ function renderDesktopTable() {
           const targetItem = (state.watchcowItems || []).find(i => i.id === id);
           if (targetItem) {
             targetItem._updating = false;
+            targetItem.reconciling = false;
             targetItem._error = true;
             targetItem._statusText = errMsg;
           }
@@ -1336,6 +1366,7 @@ function renderDesktopTable() {
         const targetItem = (state.watchcowItems || []).find(i => i.id === id);
         if (targetItem) {
           targetItem._updating = false;
+          targetItem.reconciling = false;
           targetItem._error = true;
           targetItem._statusText = e.message;
         }
@@ -3148,7 +3179,7 @@ function resetDesktopForm() {
   document.getElementById('item-protocol').value = 'http';
   document.getElementById('item-path').value = '/';
   document.getElementById('item-ui-type').value = 'url';
-  document.getElementById('item-all-users').value = 'true';
+  document.getElementById('item-all-users').value = 'false';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
@@ -3290,7 +3321,7 @@ function openCreateDesktopModalFromWatchcow(id) {
   document.getElementById('item-protocol').value = item.protocol || 'http';
   document.getElementById('item-path').value = item.path || '/';
   document.getElementById('item-ui-type').value = item.ui_type || 'url';
-  document.getElementById('item-all-users').value = item.all_users !== false ? 'true' : 'false';
+  document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
 
   const elFileTypes = document.getElementById('item-file-types');
   if (elFileTypes) elFileTypes.value = Array.isArray(item.file_types) ? item.file_types.join(', ') : '';
@@ -4084,7 +4115,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.31';
+      const ver = state.settings?.version || '1.1.32';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

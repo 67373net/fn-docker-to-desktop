@@ -796,6 +796,20 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 	var missing []DesktopItem
 	var stopped []DesktopItem
 
+	installedSet := make(map[string]bool)
+	if i.cliPath != "" {
+		if out, err := exec.Command(i.cliPath, "list").CombinedOutput(); err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				if strings.HasPrefix(line, "│") {
+					parts := strings.Split(line, "│")
+					if len(parts) >= 2 {
+						installedSet[strings.TrimSpace(parts[1])] = true
+					}
+				}
+			}
+		}
+	}
+
 	i.mu.Lock()
 	if i.reconcileStatus == nil {
 		i.reconcileStatus = make(map[string]string)
@@ -808,7 +822,7 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		if appName == "" {
 			appName = i.DeriveAppName(item)
 		}
-		if !i.isAppInstalled(appName) {
+		if !installedSet[appName] {
 			missing = append(missing, item)
 			i.reconcileStatus[item.ID] = "排队中..."
 			if appName != "" {

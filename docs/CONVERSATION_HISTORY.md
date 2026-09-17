@@ -3541,3 +3541,39 @@ INFO
 ### 验证与产物清单 (Artifacts & Verification)
 1. **自动化单元测试**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过（包含新增的防误伤测试与图标解析测试）。
 2. **零 .fpk 残留**：保持本地仓库纯净，构建由 GitHub Actions 云端流水线打包发布。
+
+---
+
+## Turn 47 - v1.1.32 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **Watchcow 列表重装/启动时加载状态假死修复**：重装时 Watchcow 列表一直显示加载中/恢复中，实际上后台已经恢复就绪，但前端不会自动退出加载态，必须手动点击刷新按钮才正常。
+2. **Watchcow 列表启用/切换时一直显示更新中修复**：启用条目时一直显示“更新中...”，实际上桌面上已经有了图标，但前端状态卡住，必须手动点击刷新按钮才恢复正常。
+3. **可见权限默认策略调整**：不将全链路设为默认“所有用户可见”，保持全局默认“仅管理员可见”；如果是点击复制 Watchcow 条目，则与其原始的 `all_users` 设置严格保持一致。
+4. **全链路版本升级至 `v1.1.32`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **Watchcow 状态轮询与前端假死根因彻底修复 (`scheduleReconcilePolling`, `web/app.js`)**：
+   - **根因 1（轮询未覆盖 Watchcow）**：此前前端 `scheduleReconcilePolling` 仅遍历了 `state.desktopItems`（手动添加的图标），从未检查 `state.watchcowItems`。当重装后服务在后台执行 `ReconcileInstalledItems`，条目返回 `reconciling: true`（恢复中.../排队中...）时，前端因检测不到手动图标处于活跃态而完全不调度轮询定时器，导致 Watchcow 条目永久停留在加载中。
+   - **根因 2（切换状态请求竞态与残留标记）**：在用户切换启用 Watchcow 复选框时，前端将 `item._updating = true`；但切换完成后未清空从服务端先前接收到的 `reconciling` 标记；且 Docker 事件流广播 `docklabel_update` 时引发的旧响应慢于切态完成到达，将 stale 的 `reconciling: true` 覆盖到本地数据中。
+   - **全面治理**：
+     - 在前端引入请求时序计数器 `watchcowFetchSeq`，丢弃过期的旧响应，防止竞态覆盖；
+     - 统一重构 `scheduleReconcilePolling`：同时深度检测 `desktopItems` 与 `watchcowItems` 的 `reconciling` 与 `_updating` 活跃标记；一旦检测到任一列表存在中间态，每 2 秒自动同步拉取最新状态，直至全部就绪后自动停表；
+     - 切换 Watchcow 状态成功后，立即彻底清理 `_updating`、`reconciling` 与 `status_text`，并主动触发拉取与轮询调度；
+     - 细化 `state.watchcowItemsLoaded` 状态，`renderDesktopTable` 支持任一列表就绪即行渲染，杜绝整表无限等待。
+2. **开机与重装对齐性能优化 (`ReconcileInstalledItems`, `internal/desktop/installer.go`)**：
+   - 将原先在循环内逐项执行 `appcenter-cli list`（O(N) 外部进程消耗）优化为单次查询并构建内存哈希集合 `installedSet`，将应用存在性检查从数秒缩短至毫秒级，大幅降低开机/重装对齐的系统开销与竞争窗口。
+3. **可见权限恢复为默认仅管理员可见 (`AllUsers: false`)**：
+   - **新建表单与后端默认值**：`internal/desktop/docklabel.go` 将 `AllUsers` 恢复为缺省 `false`（仅当明确配置 `all_users=true` 时为 true）；`internal/api/handler.go` 在 `handleCreateDesktopItem` 中缺省设置为 `false`；`web/index.html` 下拉框恢复为 `<option value="false" selected>仅管理员可见（默认）</option>`；`resetDesktopForm` 重置表单时设定为 `'false'`；
+   - **Watchcow 复制精准继承**：在 `openCreateDesktopModalFromWatchcow` 中，严格按照源条目的实际设置赋值（`item.all_users ? 'true' : 'false'`），源条目若为所有用户可见则复制后仍为所有用户可见，源条目若为仅管理员则复制后仍为仅管理员。
+4. **全链路版本升级至 `v1.1.32`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.32`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过。
+2. **零 .fpk 残留**：保持本地仓库纯净，云端构建流水线打包发布。
+

@@ -752,7 +752,7 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		item.Path = "/"
 	}
 	if _, hasAllUsers := rawMap["all_users"]; !hasAllUsers {
-		item.AllUsers = true
+		item.AllUsers = false
 	}
 	item.Enabled = true
 
@@ -2248,6 +2248,7 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 	}
 
 	slog.Info("<=== [DOCKLABEL] 切换容器标签条目状态成功", "id", id, "name", targetItem.Name, "enabled", targetItem.Enabled)
+	h.inFlightOps.Delete(id)
 	h.jsonResponse(w, r, targetItem, http.StatusOK)
 }
 

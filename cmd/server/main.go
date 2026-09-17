@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.31"
+const appVersion = "1.1.32"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
