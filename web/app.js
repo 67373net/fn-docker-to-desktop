@@ -469,7 +469,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.29';
+  const ver = state.settings?.version || '1.1.30';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1225,7 +1225,11 @@ function renderDesktopTable() {
         <td><code>${escapeHtml(targetText)}</code></td>
         <td>${statusColHtml}</td>
         <td>
-          <span style="color: var(--text-muted); font-size: 0.82rem; user-select: none;">只读</span>
+          <div class="table-actions">
+            <button class="btn btn-sm btn-secondary btn-copy-watchcow" data-id="${escapeHtml(item.id)}" title="基于此配置新建桌面图标">
+              <span>复制</span>
+            </button>
+          </div>
         </td>
         <td class="filler-col"></td>
       </tr>`;
@@ -1344,6 +1348,13 @@ function renderDesktopTable() {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
       openEditDesktopModal(id);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-copy-watchcow').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      openCreateDesktopModalFromWatchcow(id);
     });
   });
 
@@ -3236,6 +3247,129 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   saveDesktopItemFormSnapshot();
 }
 
+function openCreateDesktopModalFromWatchcow(id) {
+  const item = (state.watchcowItems || []).find(i => i.id === id);
+  if (!item) return;
+
+  resetDesktopForm();
+  document.getElementById('desktop-modal-title').textContent = '新建桌面图标';
+  document.getElementById('item-id').value = '';
+  document.getElementById('item-name').value = item.name || '';
+
+  const elContainer = document.getElementById('item-container-name');
+  if (elContainer) elContainer.value = item.container_name || '';
+
+  const formEl = document.getElementById('form-desktop-item');
+  if (formEl && item.image) {
+    formEl.dataset.image = item.image;
+  }
+
+  // Pre-generate unique package identifier for fnOS
+  state.appShortId = Math.floor(100000 + Math.random() * 900000).toString();
+  const baseCandidate = (item.container_name || item.name || 'app').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 14);
+  const defaultAppName = ('fndocker.' + (baseCandidate || 'app') + '-' + state.appShortId).slice(0, 32);
+  const elAppName = document.getElementById('item-app-name');
+  if (elAppName) elAppName.value = defaultAppName;
+  state.appNameDirty = false;
+  checkAppNameDuplicate();
+
+  const mode = item.mode || 'local';
+  if (mode === 'local') {
+    document.getElementById('item-local-port').value = item.port || '';
+    setDesktopModalMode('local');
+  } else if (mode === 'proxy') {
+    document.getElementById('item-target-url').value = item.target_url || '';
+    document.getElementById('item-proxy-port').value = item.port || '';
+    document.getElementById('item-skip-tls').checked = !!item.skip_tls_verify;
+    setDesktopModalMode('proxy');
+  } else if (mode === 'shortcut') {
+    document.getElementById('item-shortcut-url').value = item.target_url || item.redirect || '';
+    setDesktopModalMode('shortcut');
+  }
+
+  document.getElementById('item-protocol').value = item.protocol || 'http';
+  document.getElementById('item-path').value = item.path || '/';
+  document.getElementById('item-ui-type').value = item.ui_type || 'url';
+  document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
+
+  const elFileTypes = document.getElementById('item-file-types');
+  if (elFileTypes) elFileTypes.value = Array.isArray(item.file_types) ? item.file_types.join(', ') : '';
+  const helpFileTypes = document.getElementById('item-file-types-help');
+  if (helpFileTypes) helpFileTypes.style.display = 'none';
+  const chkNoDisplay = document.getElementById('item-no-display');
+  if (chkNoDisplay) chkNoDisplay.checked = !!item.no_display;
+
+  const btnSaveAsNew = document.getElementById('btn-save-as-new');
+  if (btnSaveAsNew) btnSaveAsNew.style.display = 'none';
+  const btnSave = document.getElementById('btn-save-desktop-item');
+  if (btnSave) btnSave.textContent = '保存并放到桌面';
+  const btnDel = document.getElementById('btn-delete-from-modal');
+  if (btnDel) {
+    btnDel.style.display = 'none';
+    btnDel.onclick = null;
+  }
+
+  // Pre-fill icon
+  const itemIcon = item.display_icon || item.icon || '';
+  const previewImg = document.getElementById('icon-preview-img');
+  const elIcon = document.getElementById('item-icon');
+
+  if (itemIcon && (itemIcon.startsWith('http://') || itemIcon.startsWith('https://'))) {
+    setIconModalTab('url');
+    const urlInput = document.getElementById('icon-url-input');
+    if (urlInput) urlInput.value = itemIcon;
+    if (elIcon) elIcon.value = itemIcon;
+    if (previewImg) {
+      previewImg.src = getIconUrl(itemIcon);
+      previewImg.onerror = () => {
+        previewImg.src = apiUrl('/default_item_icon.png');
+      };
+    }
+  } else if (itemIcon) {
+    setIconModalTab('lib');
+    if (elIcon) elIcon.value = itemIcon;
+    if (previewImg) {
+      previewImg.src = getIconUrl(itemIcon);
+      previewImg.onerror = () => {
+        previewImg.src = apiUrl('/default_item_icon.png');
+      };
+    }
+  } else {
+    // Auto-resolve or recommend official icon from Homarr CDN for Docker containers
+    let iconCandidate = '';
+    if (item.image) {
+      let imgPart = item.image.split('/').pop().split(':')[0].split('@')[0];
+      iconCandidate = imgPart;
+    }
+    if (!iconCandidate) {
+      iconCandidate = item.container_name || item.name;
+    }
+    if (iconCandidate) {
+      const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
+      if (cleanName) {
+        const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
+        setIconModalTab('url');
+        const urlInput = document.getElementById('icon-url-input');
+        if (urlInput) urlInput.value = cdnUrl;
+        if (previewImg) previewImg.src = cdnUrl;
+        if (elIcon) elIcon.value = cdnUrl;
+        if (previewImg) {
+          previewImg.onerror = () => {
+            previewImg.src = apiUrl('/default_item_icon.png');
+            if (urlInput) urlInput.value = '';
+            if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
+          };
+        }
+      }
+    }
+  }
+
+  collapseIconPicker('modal');
+  saveIconSnapshot('modal');
+  openModal('modal-desktop-item');
+  saveDesktopItemFormSnapshot();
+}
+
 function openEditDesktopModal(id) {
   const item = state.desktopItems.find(i => i.id === id);
   if (!item) return;
@@ -3942,7 +4076,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.29';
+      const ver = state.settings?.version || '1.1.30';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

@@ -3467,5 +3467,43 @@ INFO
 3. **Headless Chrome 真实渲染测绘**：通过 `test_ports.py` 测绘验证“容器 / 进程”列在 1400px/1200px 下无任何折行，宽度由 80px 扩展到 209px，行高从 137px 恢复为 69px，filler 列完美吸收 975px 右侧空间。
 4. **零 .fpk 残留**：保持本地仓库纯净。
 
+---
+
+## Turn 45 - v1.1.30 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **公开仓库安全性与泄密风险全面审计**：检测如果将项目设为公开，会不会有数据和信息泄露的风险；经全面安全排查确认安全后，将 GitHub 仓库设为公开。
+2. **设置界面项目仓库链接更新**：将设置界面中的项目仓库链接改为 `https://github.com/67373net/fn-docker-to-desktop/releases`。
+3. **桌面图标页 Watchcow 列表操作升级为“复制”并预填新建弹窗**：在“桌面图标”Tab 中，将下方 Watchcow 列表中的操作项从静态的“只读”文字升级为“复制”按钮。点击后弹出一个“新建桌面图标”界面，并自动预填好该 Watchcow 条目所有的配置（名称、容器名、模式、端口/URL、协议、路径、打开方式、权限、图标等），方便用户快速以自定义方式派生和生成独立桌面图标。
+4. **全链路版本升级至 `v1.1.30`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **开源安全性深度审计与仓库公开 (`67373net/fn-docker-to-desktop`)**：
+   - **全面安全扫描**：对全部 Git 提交历史（包含所有分支历史提交、Blob 及 Diff）进行了全量深度安全审计，核查包括 GitHub Token（`ghp_*`、`github_pat_*`）、云服务密钥（AWS/AccessKey）、硬编码凭证、私钥文件（RSA/SSH）、真实敏感 IP 及电子邮箱；
+   - **零敏感数据确认**：确认项目内无任何敏感信息或私密数据，提交邮箱均为 GitHub 官方匿名保护后缀（`users.noreply.github.com`），数据目录仅留存 `.gitkeep`，无真实用户数据；
+   - **仓库转为公开**：通过 GitHub CLI 安全执行并确认转为公开（`gh repo edit --visibility public`），全球开发者可直接访问与下载。
+2. **设置界面仓库链接指向 Releases (`web/index.html`)**：
+   - 将设置页面中的项目仓库超链接地址与文本统一更新为 `https://github.com/67373net/fn-docker-to-desktop/releases`，便于用户点击直接访问发布页下载最新版本。
+3. **Watchcow 条目“复制”新建桌面图标能力 (`web/app.js`)**：
+   - **UI 替换**：在 `renderDesktopTable()` 的 Watchcow 列表渲染中，将原本灰色的“只读”静态文字替换为统一规范的 `.btn.btn-sm.btn-secondary.btn-copy-watchcow` “复制”按钮；
+   - **复制预填弹窗 (`openCreateDesktopModalFromWatchcow`)**：
+     - 点击“复制”按钮时，精准抓取目标 Watchcow 条目；
+     - 重置表单并将 `item-id` 置空（确保保存时作为全新的独立桌面应用创建）；
+     - 自动预填并映射该条目的名称、容器名、镜像、运行模式（本机端口/端口映射/网页快捷方式）、目标 URL/端口、协议、路径、打开方式（弹窗/新标签页）、用户权限以及图标（自动识别 URL/本地库或自动匹配 Homarr CDN 高清图标）；
+     - 自动为新应用生成独立的唯一包标识（`fndocker.<name>-<randomId>`），防止与原生 Dock 标签命名空间冲突；
+     - 弹窗标题更新为“新建桌面图标”，保存按钮文案为“保存并放到桌面”，取消编辑弹窗特有的“移出桌面”与“保存为新图标”多余控件。
+4. **全链路版本升级至 `v1.1.30`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.30`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:alpine`）内执行 `go test -v ./...` 全部通过。
+2. **服务端编译校验**：Docker 容器内编译二进制成功。
+3. **零 .fpk 残留**：保持本地仓库纯净。
+
+
 
 
