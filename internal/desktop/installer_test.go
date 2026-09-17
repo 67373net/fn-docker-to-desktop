@@ -166,3 +166,10 @@ func TestReconcileInstalledItems(t *testing.T) {
 	installer.ReconcileInstalledItems(items)
 }
 
+func TestGetAppStatus(t *testing.T) {
+	installer := &Installer{}
+	if status := installer.getAppStatus("any-app"); status != "" {
+		t.Errorf("expected empty status when cliPath is empty, got %q", status)
+	}
+}
+

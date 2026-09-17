@@ -82,17 +82,12 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
         wait
         log_msg "所有子应用图标已在桌面瞬间隐藏"
 
-        # 核心优化 2：完全脱离父进程会话的后台异步卸载，不阻塞应用中心卸载流程
-        nohup bash -c '
-            CLI="'"${CLI}"'"
-            LOG_FILE="'"${LOG_FILE}"'"
-            for app in '"${UNIQUE_APPS}"'; do
-                echo "$(date "+%Y-%m-%d %H:%M:%S") - [uninstall-worker] 后台注销应用: ${app}" >> "${LOG_FILE}" 2>&1
-                "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
-            done
-            echo "$(date "+%Y-%m-%d %H:%M:%S") - [uninstall-worker] 后台子应用注销全部完成" >> "${LOG_FILE}" 2>&1
-        ' </dev/null >> "${LOG_FILE}" 2>&1 &
-        disown -a 2>/dev/null || true
+        # 核心优化 2：在前台同步逐个注销子应用，确保被彻底注销，杜绝后台子进程被 cgroup 提前杀除导致应用残留在“未启用”状态
+        for app in ${UNIQUE_APPS}; do
+            log_msg "正在注销子应用: ${app}"
+            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+        done
+        log_msg "所有子应用注销完成"
     fi
 fi
 
@@ -100,5 +95,5 @@ fi
 rm -rf /tmp/fndocker_* 2>/dev/null || true
 rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true
 
-log_msg "=== 卸载清理完成 (瞬间隐藏完成) ==="
+log_msg "=== 卸载清理完成 ==="
 exit 0

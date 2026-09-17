@@ -3418,4 +3418,54 @@ INFO
 3. **全分辨率渲染测试**：在 1920px、1600px、1400px、1200px、1000px、800px、600px 共 7 个不同视口宽度下进行真实 Headless Chrome 自动化渲染与测绘，验证宽屏下单行完全展示且 filler 吸收右侧空白，窄屏下平滑折行无横向溢出。
 4. **零 .fpk 残留**：保持本地仓库纯净。
 
+---
+
+## Turn 44 - v1.1.29 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **进程列表界面容器/进程列异常狭窄与过度折行彻底修复**：修改后，进程列表界面（端口/进程页与主机进程页）中，“容器 / 进程”一列变得异常狭窄（被压缩至表头宽度约 80px），所有容器名称被强制断词折成 5~7 行，而右侧却浪费了上千像素的巨大空白。要求容器列完全舒展单行展示，不换行。
+2. **重装后桌面图标全无但在应用中心“已安装”为未启用（停用）状态彻底根治**：
+   - 卸载后重装本应用，桌面上一个快捷方式图标都没有；
+   - 打开飞牛“应用中心” -> “已安装”，此前创建的子快捷应用全部都在，但均处于“未启用（停用）”状态；
+   - 要求修复卸载清理逻辑与开机启动对齐逻辑，确保重装或开机时自动唤醒已安装但处于停用状态的应用，桌面图标立刻正常恢复呈现。
+3. **卸载耗时优化且保持功能逻辑无副作用**：避免卸载后台异步子进程被 systemd cgroup 强杀留存僵尸停用应用，确保卸载过程干净无残留。
+4. **全链路版本升级至 `v1.1.29`**。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **容器与进程列宽度压制根因与修复 (`web/style.css`)**：
+   - **深层根因**：根据 CSS 表格自动布局规范，当右侧 `filler-col` 拥有 `width: 100% !important;` 时，任何包含可折行（`white-space: normal; word-break: break-all;`）子元素的单元格都会被浏览器强行压缩到 `min-content` 最小宽度。在此前版本中，`.proc-tag`（端口表）和 `.proc-container-name`（进程表）被设置了 `white-space: normal;`，导致其最小宽度退化为单个字符或表头宽度（~80px），从而被死死压扁并产生严重的多行折行，而右侧 `filler-col` 却占满了 900+ 像素。
+   - **修复方案**：
+     - 将 `.proc-tag` 和 `.proc-container-name` 的默认 `white-space` 恢复为 `nowrap`；
+     - 将 `.name-with-icon-text` 的默认 `white-space` 明确设为 `nowrap`；
+     - 仅当容器整体宽度确实不足、触发 `.table-wrap` 动态类名时，才在 `.table-wrap .proc-tag`、`.table-wrap .proc-container-name` 和 `.table-wrap .name-with-icon-text` 上允许换行；
+     - 经真实 Headless Chrome 自动化测绘：容器列自然宽度由 80px 完整恢复至 209px，整行高度由 137px 恢复至标准单行 69px，右侧 filler 优雅吸收 975px 空白，完全单行平铺展示。
+2. **桌面应用开机对齐与状态唤醒恢复 (`internal/desktop/installer.go`)**：
+   - **深层根因**：此前在卸载或某些异常状态下，子应用在飞牛系统中处于 `stopped`（未启用/停用）状态。在服务启动运行 `ReconcileInstalledItems` 时，原代码仅判断 `!isAppInstalled(appName)`。由于已停用应用依然列在 `appcenter-cli list` 表格中，`isAppInstalled` 返回 `true`，导致启动对齐流程直接将其跳过，从未执行 `appcenter-cli start <appName>`。而在飞牛 OS 中，停用状态的应用在桌面上是隐藏不显示的！
+   - **修复方案**：
+     - 新增 `getAppStatus(appName string) string` 方法，通过 `appcenter-cli status <appName>` 获取精准运行状态（`running`、`stopped`、`starting` 等）；
+     - 重构 `ReconcileInstalledItems`：
+       1. 对于未安装的应用：放入 `missing` 队列执行完整打包与 `appcenter-cli install-local`；
+       2. 对于已安装但处于 `stopped`（或非 `running`/`starting`）状态的已启用应用：放入 `stopped` 队列，自动调用 `appcenter-cli start <appName>` 恢复启动，桌面图标立刻重新出现在桌面上；
+       3. 若 `start` 执行失败（如磁盘底层应用文件破损），自动回退并调用 `InstallItem(item)` 重新完整安装；
+       4. 对于已正常运行的应用：零干扰、零重启，确保桌面图标顺序与系统状态绝对稳定。
+3. **卸载脚本可靠性与同步清理保障 (`fnos-app/cmd/uninstall_init`)**：
+   - **深层根因**：在 Turn 42 中，为了优化卸载耗时，使用了 `nohup bash -c '... ${CLI} uninstall ...' & disown -a` 后台异步执行注销。然而飞牛 OS 的卸载流程受 systemd cgroup 统一管理，当 `uninstall_init` 主进程退出时，systemd 依据 cgroup 生命周期策略直接将该 cgroup 下的所有进程（包含后台 worker）全数强制终止。这导致 `stop` 执行后子应用全部停用，但后续的 `uninstall` 还未跑完甚至未启动就被强杀，遗留下大量“未启用”状态的僵尸快捷应用。
+   - **修复方案**：
+     - 保留并发 `stop`（`"${CLI}" stop "${app}" & ... wait`），确保在 0.5 秒内桌面图标瞬间隐藏；
+     - 移除不稳定的后台子 shell，改回前台同步逐个执行 `"${CLI}" uninstall "${app}"`，依托已去重的 `UNIQUE_APPS` 列表，确保每个子应用被彻底卸载且不被 systemd 强杀；
+     - 杜绝后台异步操作与后续重装流程发生 SQLite 锁碰撞。
+4. **全链路版本升级至 `v1.1.29`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.29`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:alpine`）内执行 `go test -v ./...` 全部 PASS，覆盖 `TestReconcileInstalledItems`、`TestGetAppStatus` 等全量测试。
+2. **服务端编译校验**：Docker 容器内执行 `go build -v ./cmd/server` 验证成功。
+3. **Headless Chrome 真实渲染测绘**：通过 `test_ports.py` 测绘验证“容器 / 进程”列在 1400px/1200px 下无任何折行，宽度由 80px 扩展到 209px，行高从 137px 恢复为 69px，filler 列完美吸收 975px 右侧空间。
+4. **零 .fpk 残留**：保持本地仓库纯净。
+
+
 

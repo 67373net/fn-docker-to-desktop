@@ -587,6 +587,14 @@ table.data-table.table-wrap th.col-wrap-text,
   width: auto !important;
 }
 
+table.data-table.table-wrap .proc-tag,
+table.data-table.table-wrap .proc-container-name,
+table.data-table.table-wrap .name-with-icon-text {
+  white-space: normal !important;
+  word-break: break-all !important;
+  overflow-wrap: anywhere !important;
+}
+
 .name-with-icon {
   display: inline-flex;
   align-items: center;
@@ -600,6 +608,7 @@ table.data-table.table-wrap th.col-wrap-text,
   min-width: 0;
   word-break: break-all;
   overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 table.data-table tr:hover td {
@@ -678,7 +687,7 @@ table.data-table td.table-sink-divider-cell {
   border: none !important;
   word-break: break-all;
   overflow-wrap: anywhere;
-  white-space: normal;
+  white-space: nowrap;
   vertical-align: middle;
 }
 
@@ -2182,7 +2191,7 @@ tr.row-updating {
   color: var(--primary-text);
   word-break: break-all;
   overflow-wrap: anywhere;
-  white-space: normal;
+  white-space: nowrap;
   vertical-align: middle;
 }
 
