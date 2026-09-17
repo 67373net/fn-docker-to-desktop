@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -83,5 +85,25 @@ func TestLoadIconImageLocalLoopback(t *testing.T) {
 	}
 	if img2 == nil {
 		t.Fatalf("expected non-nil image")
+	}
+}
+
+func TestLoadIconImageDocklabelProxy(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "icons-docklabel-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	testID := "docklabel-testapp"
+	idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(testID)))
+	createTestPNG(t, tempDir, "dock_cache_"+idHash+".png")
+
+	img, err := loadIconImage("/api/desktop/docklabel/icon?id="+testID, tempDir)
+	if err != nil {
+		t.Fatalf("loadIconImage with docklabel proxy URL failed: %v", err)
+	}
+	if img == nil {
+		t.Fatalf("expected non-nil image for docklabel proxy URL")
 	}
 }

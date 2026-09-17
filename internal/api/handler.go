@@ -752,7 +752,7 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		item.Path = "/"
 	}
 	if _, hasAllUsers := rawMap["all_users"]; !hasAllUsers {
-		item.AllUsers = false
+		item.AllUsers = true
 	}
 	item.Enabled = true
 
@@ -2220,8 +2220,15 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 		if targetState {
 			_ = h.installer.InstallItem(dItem)
 		} else {
-			_ = h.installer.UninstallItem(dItem)
-			// Defensively uninstall legacy package names
+			// Collect active app names from custom desktop items to protect them
+			var protected []string
+			for _, exist := range h.storage.GetAllItems() {
+				if exist.Enabled && exist.AppName != "" {
+					protected = append(protected, exist.AppName)
+				}
+			}
+			_ = h.installer.UninstallItem(dItem, protected...)
+			// Defensively uninstall legacy package names, protecting any active desktop items
 			legacyPrefixes := []string{
 				"fndocker.wc-" + targetItem.ContainerName,
 				"watchcow." + targetItem.ContainerName,
@@ -2235,7 +2242,7 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 			for _, pfx := range legacyPrefixes {
 				legacyItem := dItem
 				legacyItem.AppName = pfx
-				_ = h.installer.UninstallItem(legacyItem)
+				_ = h.installer.UninstallItem(legacyItem, protected...)
 			}
 		}
 	}

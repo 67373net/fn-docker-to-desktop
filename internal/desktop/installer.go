@@ -709,18 +709,18 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 	// Wait briefly for fnOS appcenter daemon to register state
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify installation
-	if i.isAppInstalled(appName) {
-		slog.Info("成功注册桌面应用并上线", "appName", appName, "volume", volume)
-	} else {
-		slog.Warn("应用已执行安装，但在 appcenter-cli list 中未立即发现，尝试检查并触发启动...", "appName", appName)
+	// Verify installation and ensure app is started so its desktop icon is visible immediately
+	status := i.getAppStatus(appName)
+	if status == "stopped" || (status != "running" && status != "starting") {
+		slog.Info("新应用安装后当前处于未运行状态，执行 appcenter-cli start 启动以在桌面展示图标...", "appName", appName, "status", status)
 		startOut, startErr := exec.Command(i.cliPath, "start", appName).CombinedOutput()
 		if startErr != nil {
-			slog.Debug("appcenter-cli start 输出", "appName", appName, "output", cleanCliOutput(startOut))
+			slog.Warn("appcenter-cli start 启动输出异常", "appName", appName, "error", startErr, "output", cleanCliOutput(startOut))
+		} else {
+			slog.Info("桌面应用现已成功启动上线", "appName", appName)
 		}
-		if i.isAppInstalled(appName) {
-			slog.Info("桌面应用现已就绪并上线", "appName", appName)
-		}
+	} else {
+		slog.Info("成功注册桌面应用并上线", "appName", appName, "volume", volume, "status", status)
 	}
 
 	return nil
@@ -893,10 +893,17 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 	}
 }
 
-// UninstallItem unregisters a DesktopItem from fnOS.
-func (i *Installer) UninstallItem(item DesktopItem) error {
+// UninstallItem unregisters a DesktopItem from fnOS, protecting any active packages.
+func (i *Installer) UninstallItem(item DesktopItem, protectedAppNames ...string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+
+	protected := make(map[string]bool)
+	for _, p := range protectedAppNames {
+		if p != "" {
+			protected[p] = true
+		}
+	}
 
 	var candidates []string
 	if item.AppName != "" {
@@ -906,16 +913,23 @@ func (i *Installer) UninstallItem(item DesktopItem) error {
 	if derived != item.AppName {
 		candidates = append(candidates, derived)
 	}
-	if item.Port > 0 {
-		candidates = append(candidates, fmt.Sprintf("fndocker.port-%d", item.Port))
+	// Only add legacy/port candidates for non-namespaced or legacy packages
+	if !strings.HasPrefix(item.AppName, "fndocker.dock-") && !strings.HasPrefix(item.AppName, "fndocker.") {
+		if item.Port > 0 {
+			candidates = append(candidates, fmt.Sprintf("fndocker.port-%d", item.Port))
+		}
+		legacy := "put-port." + sanitizeAppName(item.ID)
+		candidates = append(candidates, legacy)
 	}
-	legacy := "put-port." + sanitizeAppName(item.ID)
-	candidates = append(candidates, legacy)
 
 	seen := make(map[string]bool)
 	for _, appName := range candidates {
 		if !seen[appName] {
 			seen[appName] = true
+			if protected[appName] {
+				slog.Info("应用包名正被其他已启用桌面图标使用，跳过卸载保护", "appName", appName)
+				continue
+			}
 			_ = i.uninstallSingleApp(appName)
 		}
 	}

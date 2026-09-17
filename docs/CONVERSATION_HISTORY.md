@@ -3504,6 +3504,40 @@ INFO
 2. **服务端编译校验**：Docker 容器内编译二进制成功。
 3. **零 .fpk 残留**：保持本地仓库纯净。
 
+---
 
+## Turn 46 - v1.1.31 发布记录
 
+### 用户需求总结 (User Requirements)
+1. **复制 Watchcow 条目后双图标共存且互不影响**：
+   - 用户点击下方 Watchcow 列表的“复制”并保存后，上方桌面图标列表增加了新条目，但桌面刷新后图标数量未增加（疑似新图标把旧图标顶掉，或新图标未在桌面正常显示）；
+   - 在下方 Watchcow 列表中将原有条目停用后，桌面上原有的图标也随之消失；
+   - 用户明确要求：复制后桌面上必须同时出现两个独立图标，且修改或停用其中任意一个均互不干扰、互不影响。
+2. **全链路版本升级至 `v1.1.31`**。
 
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **桌面快捷方式权限机制根因修复 (`AllUsers` 默认全量可见)**：
+   - **问题定位**：飞牛 OS（fnOS）对桌面快捷方式严格遵循用户权限隔离机制——当桌面应用的 `ui/config` 中 `allUsers` 为 `false` 时，该图标仅对系统最高管理员账户在桌面展示，对非管理员或常规桌面登录用户（如用户宿主系统账户 `net67373`）完全不可见！
+   - 原代码中 `internal/desktop/docklabel.go` 的 `buildDesktopItem` 对 `allUsers` 仅在显式配置 `"true"` 时才置为 true，导致缺省时变成 false；前端 `resetDesktopForm` 与 `openCreateDesktopModalFromWatchcow`、后端 `handleSaveDesktopItem` 新建时也曾默认为 false。
+   - **全面修复**：在后端协议层（`docklabel.go`）、API 处理层（`handler.go`）、前端界面与弹窗预设层（`index.html`, `app.js`）全面将 `allUsers` 默认值修正为 `true`（所有用户可见），确保新建及复制的桌面快捷方式对所有桌面登录账户立即可见。
+2. **应用在线运行状态保证机制 (`InstallItem` 自动唤醒 `appcenter-cli start`)**：
+   - **问题定位**：fnOS 本地安装应用后（`appcenter-cli install-local`），新创建的独立应用若未被标记或注册为运行中，其状态可能处于 `stopped`（停用）。fnOS 桌面管理器会自动隐藏处于停用状态的应用图标，导致应用中心“已安装”可见但桌面无法显示。
+   - **全面修复**：在 `internal/desktop/installer.go` 的 `InstallItem` 流程中，安装完成后立即调用 `getAppStatus(appName)` 状态查询；若非 `running` 状态，立即执行 `appcenter-cli start <appName>`，强行唤醒激活应用，保证桌面图标立刻被飞牛桌面渲染显示。
+3. **复制图标源资源代理支持 (`icons.go`, `app.js`)**：
+   - **问题定位**：Watchcow 原生条目显示的图标路径可能为内部代理地址 `/api/desktop/docklabel/icon?id=...`，复制弹窗直接继承该 URI 时，后端打包独立应用时无法当成本地文件或外链下载，导致图标提取失败回退默认图标。
+   - **全面修复**：前端 `openCreateDesktopModalFromWatchcow` 优先提取容器原始定义的 `icon` 或 `local_icon_path`；后端 `loadIconImage` 增加对 `/api/desktop/docklabel/icon` 查询参数的识别与直接映射，保证复制出的桌面应用图标高清保真。
+4. **卸载/停用防误伤隔离保护 (`protectedAppNames`)**：
+   - **问题定位**：当用户在下方 Watchcow 列表停用原有条目时，`UninstallItem` 会推导通用候选包名进行清理，容易误触同名或同端口的派生桌面应用。
+   - **全面修复**：在 `UninstallItem` 中引入 `protectedAppNames ...string` 保护名单，从 `storage.GetAllItems()` 收集所有当前活跃的桌面快捷方式应用名；在扫描清理候选包时，若命中受保护的活跃应用包名则严格跳过，确保停用 Watchcow 绝对不会误伤复制创建的独立桌面图标。
+5. **单元测试完善与全链路版本升级至 `v1.1.31`**：
+   - 在 `internal/desktop/icons_test.go` 中新增 `TestLoadIconImageDocklabelProxy`，覆盖 Docklabel 代理路径图标提取测试；
+   - 在 `internal/desktop/installer_test.go` 中新增 `TestUninstallItemProtectedApps`，验证保护名单防误伤逻辑；
+   - 全链路版本同步升级至 `1.1.31`（`cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js`）。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过（包含新增的防误伤测试与图标解析测试）。
+2. **零 .fpk 残留**：保持本地仓库纯净，构建由 GitHub Actions 云端流水线打包发布。

@@ -173,3 +173,19 @@ func TestGetAppStatus(t *testing.T) {
 	}
 }
 
+func TestUninstallItemProtectedApps(t *testing.T) {
+	installer := &Installer{}
+	item := DesktopItem{
+		ID:            "docklabel-my-container",
+		AppName:       "fndocker.dock-my-container",
+		ContainerName: "my-container",
+		Port:          8080,
+	}
+
+	// Should run cleanly and protect specified active packages
+	err := installer.UninstallItem(item, "fndocker.dock-my-container", "fndocker.my-container-123456")
+	if err != nil {
+		t.Fatalf("UninstallItem returned unexpected error: %v", err)
+	}
+}
+

@@ -3,6 +3,7 @@ package desktop
 import (
 	_ "embed"
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"image"
@@ -334,6 +335,30 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return nil, fmt.Errorf("empty icon source")
+	}
+
+	// 0. Check if it's an internal Docklabel icon proxy URL (e.g. /api/desktop/docklabel/icon?id=docklabel-xxx)
+	if strings.Contains(source, "/api/desktop/docklabel/icon") {
+		if u, err := url.Parse(source); err == nil {
+			id := u.Query().Get("id")
+			if id != "" {
+				idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
+				cachedPath := filepath.Join(iconsDir, "dock_cache_"+idHash+".png")
+				if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
+					if img, err := decodeAnyImage(data); err == nil && img != nil {
+						return img, nil
+					}
+				}
+				cleanID := strings.TrimPrefix(id, "docklabel-")
+				if resolved := ResolveWatchcowIconPath(cleanID, "", nil); resolved != "" {
+					if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+						if img, err := decodeAnyImage(data); err == nil && img != nil {
+							return img, nil
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// 1. Check if it's a local/loopback icon URL (e.g. http://127.0.0.1:5900/icons/xxx, /icons/xxx)

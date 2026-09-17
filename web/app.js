@@ -469,7 +469,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.30';
+  const ver = state.settings?.version || '1.1.31';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -3148,7 +3148,7 @@ function resetDesktopForm() {
   document.getElementById('item-protocol').value = 'http';
   document.getElementById('item-path').value = '/';
   document.getElementById('item-ui-type').value = 'url';
-  document.getElementById('item-all-users').value = 'false';
+  document.getElementById('item-all-users').value = 'true';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
   document.getElementById('test-target-result').textContent = '';
@@ -3290,7 +3290,7 @@ function openCreateDesktopModalFromWatchcow(id) {
   document.getElementById('item-protocol').value = item.protocol || 'http';
   document.getElementById('item-path').value = item.path || '/';
   document.getElementById('item-ui-type').value = item.ui_type || 'url';
-  document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
+  document.getElementById('item-all-users').value = item.all_users !== false ? 'true' : 'false';
 
   const elFileTypes = document.getElementById('item-file-types');
   if (elFileTypes) elFileTypes.value = Array.isArray(item.file_types) ? item.file_types.join(', ') : '';
@@ -3309,33 +3309,34 @@ function openCreateDesktopModalFromWatchcow(id) {
     btnDel.onclick = null;
   }
 
-  // Pre-fill icon
-  const itemIcon = item.display_icon || item.icon || '';
+  // Pre-fill icon: prioritize real icon source (item.icon) or local icon path over internal proxy URL
+  const realIcon = item.icon || item.local_icon_path || '';
+  const displayIcon = item.display_icon || realIcon;
   const previewImg = document.getElementById('icon-preview-img');
   const elIcon = document.getElementById('item-icon');
 
-  if (itemIcon && (itemIcon.startsWith('http://') || itemIcon.startsWith('https://'))) {
+  if (realIcon && (realIcon.startsWith('http://') || realIcon.startsWith('https://'))) {
     setIconModalTab('url');
     const urlInput = document.getElementById('icon-url-input');
-    if (urlInput) urlInput.value = itemIcon;
-    if (elIcon) elIcon.value = itemIcon;
+    if (urlInput) urlInput.value = realIcon;
+    if (elIcon) elIcon.value = realIcon;
     if (previewImg) {
-      previewImg.src = getIconUrl(itemIcon);
+      previewImg.src = getIconUrl(realIcon);
       previewImg.onerror = () => {
         previewImg.src = apiUrl('/default_item_icon.png');
       };
     }
-  } else if (itemIcon) {
+  } else if (realIcon && !realIcon.startsWith('/api/')) {
     setIconModalTab('lib');
-    if (elIcon) elIcon.value = itemIcon;
+    if (elIcon) elIcon.value = realIcon;
     if (previewImg) {
-      previewImg.src = getIconUrl(itemIcon);
+      previewImg.src = getIconUrl(displayIcon || realIcon);
       previewImg.onerror = () => {
         previewImg.src = apiUrl('/default_item_icon.png');
       };
     }
   } else {
-    // Auto-resolve or recommend official icon from Homarr CDN for Docker containers
+    // If realIcon is empty or internal API, auto-resolve CDN icon from container/image
     let iconCandidate = '';
     if (item.image) {
       let imgPart = item.image.split('/').pop().split(':')[0].split('@')[0];
@@ -3344,6 +3345,7 @@ function openCreateDesktopModalFromWatchcow(id) {
     if (!iconCandidate) {
       iconCandidate = item.container_name || item.name;
     }
+    let foundCdn = false;
     if (iconCandidate) {
       const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
       if (cleanName) {
@@ -3353,6 +3355,7 @@ function openCreateDesktopModalFromWatchcow(id) {
         if (urlInput) urlInput.value = cdnUrl;
         if (previewImg) previewImg.src = cdnUrl;
         if (elIcon) elIcon.value = cdnUrl;
+        foundCdn = true;
         if (previewImg) {
           previewImg.onerror = () => {
             previewImg.src = apiUrl('/default_item_icon.png');
@@ -3361,6 +3364,11 @@ function openCreateDesktopModalFromWatchcow(id) {
           };
         }
       }
+    }
+    if (!foundCdn && displayIcon) {
+      setIconModalTab('lib');
+      if (elIcon) elIcon.value = displayIcon;
+      if (previewImg) previewImg.src = getIconUrl(displayIcon);
     }
   }
 
@@ -4076,7 +4084,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.30';
+      const ver = state.settings?.version || '1.1.31';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
