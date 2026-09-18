@@ -47,6 +47,7 @@ type Installer struct {
 	rootIconPath    string
 	iconsDir        string
 	hasAppcenterCLI bool
+	reconcileMu     sync.RWMutex
 	reconcileStatus map[string]string
 }
 
@@ -86,8 +87,8 @@ func NewInstaller(dataDir string, rootIconPath string) *Installer {
 
 // GetReconcileStatus returns whether the given item is currently being restored.
 func (i *Installer) GetReconcileStatus(itemID, appName string) (bool, string) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	i.reconcileMu.RLock()
+	defer i.reconcileMu.RUnlock()
 	if i.reconcileStatus == nil {
 		return false, ""
 	}
@@ -98,6 +99,63 @@ func (i *Installer) GetReconcileStatus(itemID, appName string) (bool, string) {
 		return true, status
 	}
 	return false, ""
+}
+
+// InitStartupReconcile pre-populates reconcile status for enabled items at startup
+func (i *Installer) InitStartupReconcile(items []DesktopItem) {
+	i.reconcileMu.Lock()
+	defer i.reconcileMu.Unlock()
+	if i.reconcileStatus == nil {
+		i.reconcileStatus = make(map[string]string)
+	}
+	for _, item := range items {
+		if item.Enabled {
+			appName := item.AppName
+			if appName == "" {
+				appName = i.DeriveAppName(item)
+			}
+			i.reconcileStatus[item.ID] = "恢复中..."
+			if appName != "" {
+				i.reconcileStatus[appName] = "恢复中..."
+			}
+		}
+	}
+}
+
+// SetItemReconcileStatus updates reconcile status for a single item.
+func (i *Installer) SetItemReconcileStatus(itemID, appName, status string) {
+	i.reconcileMu.Lock()
+	defer i.reconcileMu.Unlock()
+	if i.reconcileStatus == nil {
+		i.reconcileStatus = make(map[string]string)
+	}
+	if itemID != "" {
+		i.reconcileStatus[itemID] = status
+	}
+	if appName != "" {
+		i.reconcileStatus[appName] = status
+	}
+}
+
+// ClearItemReconcileStatus removes an item from reconcile status.
+func (i *Installer) ClearItemReconcileStatus(itemID, appName string) {
+	i.reconcileMu.Lock()
+	defer i.reconcileMu.Unlock()
+	if i.reconcileStatus != nil {
+		if itemID != "" {
+			delete(i.reconcileStatus, itemID)
+		}
+		if appName != "" {
+			delete(i.reconcileStatus, appName)
+		}
+	}
+}
+
+// ClearAllReconcileStatus clears all reconcile statuses.
+func (i *Installer) ClearAllReconcileStatus() {
+	i.reconcileMu.Lock()
+	defer i.reconcileMu.Unlock()
+	i.reconcileStatus = make(map[string]string)
 }
 
 // HasCLI returns whether appcenter-cli is detected on the host.
@@ -820,38 +878,29 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		}
 	}
 
-	i.mu.Lock()
-	if i.reconcileStatus == nil {
-		i.reconcileStatus = make(map[string]string)
-	}
 	for _, item := range items {
 		if !item.Enabled {
 			continue
 		}
-		PersistItemIcon(&item, i.iconsDir)
 		appName := item.AppName
 		if appName == "" {
 			appName = i.DeriveAppName(item)
 		}
 		if !installedSet[appName] {
 			missing = append(missing, item)
-			i.reconcileStatus[item.ID] = "排队中..."
-			if appName != "" {
-				i.reconcileStatus[appName] = "排队中..."
-			}
+			i.SetItemReconcileStatus(item.ID, appName, "排队中...")
 		} else {
 			// If app is installed in fnOS, check whether it is stopped/disabled
 			status := i.getAppStatus(appName)
 			if status == "stopped" || (status != "running" && status != "starting" && status != "") {
 				stopped = append(stopped, item)
-				i.reconcileStatus[item.ID] = "恢复中..."
-				if appName != "" {
-					i.reconcileStatus[appName] = "恢复中..."
-				}
+				i.SetItemReconcileStatus(item.ID, appName, "恢复中...")
+			} else {
+				// Already running and ready, clear reconcile status immediately
+				i.ClearItemReconcileStatus(item.ID, appName)
 			}
 		}
 	}
-	i.mu.Unlock()
 
 	// 2. Restore stopped/disabled items by starting them
 	if len(stopped) > 0 {
@@ -861,6 +910,7 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 			if appName == "" {
 				appName = i.DeriveAppName(item)
 			}
+			i.SetItemReconcileStatus(item.ID, appName, "恢复中...")
 			slog.Info("正在恢复启动已停用应用...", "appName", appName, "title", item.Name, "progress", fmt.Sprintf("%d/%d", idx+1, len(stopped)))
 			startOut, startErr := exec.Command(i.cliPath, "start", appName).CombinedOutput()
 			if startErr != nil {
@@ -872,12 +922,7 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 				slog.Info("成功启动应用，桌面图标已恢复显示", "appName", appName, "title", item.Name)
 			}
 
-			i.mu.Lock()
-			delete(i.reconcileStatus, item.ID)
-			if appName != "" {
-				delete(i.reconcileStatus, appName)
-			}
-			i.mu.Unlock()
+			i.ClearItemReconcileStatus(item.ID, appName)
 		}
 	}
 
@@ -891,27 +936,17 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 				appName = i.DeriveAppName(item)
 			}
 
-			progressText := "恢复中..."
-			i.mu.Lock()
-			i.reconcileStatus[item.ID] = progressText
-			if appName != "" {
-				i.reconcileStatus[appName] = progressText
-			}
-			i.mu.Unlock()
-
+			i.SetItemReconcileStatus(item.ID, appName, "恢复中...")
 			slog.Info("检测到未安装的已启用桌面应用，执行补齐安装...", "appName", appName, "title", item.Name, "progress", fmt.Sprintf("%d/%d", idx+1, total))
 			if err := i.InstallItem(item); err != nil {
 				slog.Warn("补齐安装应用失败", "appName", appName, "error", err)
 			}
 
-			i.mu.Lock()
-			delete(i.reconcileStatus, item.ID)
-			if appName != "" {
-				delete(i.reconcileStatus, appName)
-			}
-			i.mu.Unlock()
+			i.ClearItemReconcileStatus(item.ID, appName)
 		}
 	}
+
+	i.ClearAllReconcileStatus()
 
 	if len(stopped) > 0 || len(missing) > 0 {
 		slog.Info("桌面应用状态对齐检查与恢复完成，未对已正常运行的应用产生任何扰动")

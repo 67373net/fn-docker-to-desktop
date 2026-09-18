@@ -171,33 +171,18 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 			}
 		}
 
-		// 5. Common host storage locations
-		commonBases := []string{
-			"/usr/local/apps",
-			"/var/apps",
-			"/vol1",
-			"/vol1/@appdata",
-			"/vol2",
-			"/vol3",
-			"/vol4",
-			"/home",
-			"/home/net67373",
-			"/var/lib/docker/volumes",
+		// 5. Direct known extra locations on fnOS/Docker
+		knownExtraDirs := []string{
+			"/var/lib/docker/volumes/watchcow_data/_data/icons",
+			"/var/lib/docker/volumes/watchcow_data/_data",
+			"/var/lib/docker/volumes/watchcow-data/_data/icons",
+			"/var/lib/docker/volumes/watchcow-data/_data",
+			"/var/lib/docker/volumes/watchcow_icons/_data",
 		}
-		for _, b := range commonBases {
-			globPatterns := []string{
-				filepath.Join(b, "*", "icons", baseName),
-				filepath.Join(b, "*", clean),
-				filepath.Join(b, "*", "README.assets", baseName),
-				filepath.Join(b, "*", "*", "icons", baseName),
-			}
-			for _, pat := range globPatterns {
-				matches, _ := filepath.Glob(pat)
-				for _, match := range matches {
-					if info, err := os.Stat(match); err == nil && !info.IsDir() {
-						return match
-					}
-				}
+		for _, d := range knownExtraDirs {
+			cand := filepath.Join(d, baseName)
+			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+				return cand
 			}
 		}
 	} else if strings.HasPrefix(iconVal, "http://") || strings.HasPrefix(iconVal, "https://") {
@@ -270,36 +255,18 @@ func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerC
 					}
 				}
 
-				// 4. Common host storage locations
-				commonBases := []string{
-					"/usr/local/apps",
-					"/var/apps",
-					"/vol1",
-					"/vol1/@appdata",
-					"/vol2",
-					"/vol3",
-					"/vol4",
-					"/home",
-					"/home/net67373",
-					"/var/lib/docker/volumes",
+				// 4. Direct known extra locations on fnOS/Docker
+				knownExtraDirs := []string{
+					"/var/lib/docker/volumes/watchcow_data/_data/icons",
+					"/var/lib/docker/volumes/watchcow_data/_data",
+					"/var/lib/docker/volumes/watchcow-data/_data/icons",
+					"/var/lib/docker/volumes/watchcow-data/_data",
+					"/var/lib/docker/volumes/watchcow_icons/_data",
 				}
-				for _, b := range commonBases {
-					globPatterns := []string{
-						filepath.Join(b, "*", "README.assets", baseName),
-						filepath.Join(b, "*", "icons", baseName),
-						filepath.Join(b, "*", "*", "icons", baseName),
-						filepath.Join(b, "*", "*", "*", "icons", baseName),
-						filepath.Join(b, "*", "*", "docker", "*", "icons", baseName),
-						filepath.Join(b, "*", baseName),
-						filepath.Join(b, "*", "_data", "icons", baseName),
-					}
-					for _, pat := range globPatterns {
-						matches, _ := filepath.Glob(pat)
-						for _, match := range matches {
-							if info, err := os.Stat(match); err == nil && !info.IsDir() {
-								return match
-							}
-						}
+				for _, d := range knownExtraDirs {
+					cand := filepath.Join(d, baseName)
+					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+						return cand
 					}
 				}
 			}
@@ -828,14 +795,10 @@ func ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, s
 
 	idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(found.ID)))
 	var cacheHashes []string
+	cleanID := strings.TrimPrefix(strings.TrimPrefix(found.ID, "docklabel-"), "watchcow-")
 	cacheHashes = append(cacheHashes, idHash)
-	if strings.HasPrefix(found.ID, "docklabel-") {
-		legacyID := "watchcow-" + strings.TrimPrefix(found.ID, "docklabel-")
-		cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte(legacyID))))
-	} else if strings.HasPrefix(found.ID, "watchcow-") {
-		modernID := "docklabel-" + strings.TrimPrefix(found.ID, "watchcow-")
-		cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte(modernID))))
-	}
+	cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+cleanID))))
+	cacheHashes = append(cacheHashes, fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+cleanID))))
 
 	// 0. Fast-path disk cache check
 	if iconsDir != "" {
@@ -891,6 +854,30 @@ func ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, s
 				}
 			}
 		}
+		// If it is a loopback/local HTTP URL, fetch directly from local web server (e.g. Watchcow port 5900)
+		if strings.HasPrefix(found.Icon, "http://") || strings.HasPrefix(found.Icon, "https://") {
+			client := &http.Client{Timeout: 1 * time.Second}
+			if resp, err := client.Get(found.Icon); err == nil {
+				if resp.StatusCode == http.StatusOK {
+					data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+					resp.Body.Close()
+					if err == nil && len(data) > 0 {
+						if iconsDir != "" {
+							_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
+						}
+						saveCache(data)
+						ct := resp.Header.Get("Content-Type")
+						if ct == "" {
+							ct = "image/png"
+						}
+						slog.Info("[DOCKLABEL-ICON] 本地容器服务图标拉取成功", "id", found.ID, "url", found.Icon, "size", len(data))
+						return data, ct, nil
+					}
+				} else {
+					resp.Body.Close()
+				}
+			}
+		}
 	}
 
 	// 3. Try dynamic resolution on host if LocalIconPath was empty or moved
@@ -927,16 +914,24 @@ func ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, s
 				cleanRaw := strings.TrimPrefix(found.Icon, "https://raw.githubusercontent.com/")
 				parts := strings.SplitN(cleanRaw, "/", 4)
 				if len(parts) == 4 {
-					jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
-					urlCandidates = append(urlCandidates, jsDelivrURL)
+					fastlyURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
+					gitmirrorURL := fmt.Sprintf("https://raw.gitmirror.com/%s/%s/%s/%s", parts[0], parts[1], parts[2], parts[3])
+					urlCandidates = append(urlCandidates, fastlyURL, gitmirrorURL)
 				}
-				urlCandidates = append(urlCandidates, "https://ghproxy.net/"+found.Icon)
+				urlCandidates = append(urlCandidates, "https://mirror.ghproxy.com/"+found.Icon, "https://ghproxy.net/"+found.Icon)
 			}
 			urlCandidates = append(urlCandidates, found.Icon)
 
-			client := &http.Client{Timeout: 2 * time.Second}
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+			client := &http.Client{Timeout: 800 * time.Millisecond}
 			for _, targetURL := range urlCandidates {
-				req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+				select {
+				case <-ctx.Done():
+					break
+				default:
+				}
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 				if err != nil {
 					continue
 				}

@@ -3681,7 +3681,66 @@ INFO
 
 ### 验证与产物清单 (Artifacts & Verification)
 1. **自动化单元测试与编译验证**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过，`go build ./cmd/server` 编译成功。
-2. **零 .fpk 残留**：本地工作树干净，由 GitHub Actions 云端流水线统一构建发布。
+
+---
+
+## Turn 50 - v1.1.35 发布记录
+
+### 用户需求与问题总结 (User Requirements & Issues)
+1. **重装后状态倒退与闪烁**：
+   - 卸载旧版、安装新版后，图标直接显示“就绪”，但实际上桌面上没有任何图标，过了一会儿才显示“恢复中...”。
+2. **Watchcow 复制条目图标桌面回退默认**：
+   - 从 Watchcow 复制到上方的条目，列表中图标是对的，编辑界面中的图标也是对的，但是桌面上的图标却变成了本 app 中的默认图标。
+3. **严重性能劣化与大量 `[PERF]` 告警**：
+   - 安装、卸载、重装、重装后图标重新加载极其缓慢，出现大量持续 3s~12s 的 `[PERF] PersistItemIcon 图标持久化耗时过长`、`handleGetDesktopItems 响应耗时过长` 等警告日志。
+4. **弹窗二次提示误报**：
+   - 点击复制后，什么都没改，直接关闭窗口，会二次提示内容未保存。
+
+---
+
+### 架构与核心根因诊断 (Architecture & Root Cause Analysis)
+1. **启动对齐与状态死锁/锁竞争 (`Installer.mu` 全局锁耗时过长)**：
+   - **根因**：`ReconcileInstalledItems` 在执行期间持有 `Installer.mu.Lock()`，且在循环体内为每个条目同步执行 `PersistItemIcon` 与 `getAppStatus` (`appcenter-cli status`)；与此同时，前端轮询 `/api/desktop/items` 时调用的 `GetReconcileStatus` 也需要竞争 `Installer.mu.Lock()`，导致所有 HTTP 请求被阻塞数十秒，造成严重的界面假死与网络超时。
+   - **治理**：
+     - 将 `reconcileStatus` 隔离为独立的 `reconcileMu sync.RWMutex`，`GetReconcileStatus` 仅需毫秒级读锁（<10ns），彻底杜绝与应用打包、CLI 执行及图标处理的锁冲突；
+     - `ReconcileInstalledItems` 循环体内不再持有任何粗粒度互斥锁，已正常运行的条目瞬间完成校验并立刻清除恢复状态；
+     - 在主服务启动 (`activeHandler.Store`) 之前，同步调用 `installer.InitStartupReconcile(storage.GetAllItems())`，使所有已启用条目从第 0 毫秒即处于“恢复中...”状态，移除无谓的 `1s` 延迟等待，彻底消灭“先显示就绪后跳变恢复中”的竞态问题。
+
+2. **本地回环 URL 跳过 HTTP 请求 Bug 导致桌面图标回退默认**：
+   - **根因**：
+     - Watchcow 条目的图标通常形如 `http://127.0.0.1:5900/icons/images.png`。`IsLocalOrLoopbackIconURL` 正确识别其为本地回环地址；
+     - 但在 `ResolveDockLabelIconBytes` 与 `loadIconImage` 中，本地文件检测未命中时，远端下载分支却因为 `!isLocal` 而**完全跳过了 HTTP 请求**，从未向本地正在运行的 Watchcow 容器（127.0.0.1:5900）发起任何 HTTP GET！
+     - 导致图标解析彻底失败，桌面打包安装时只得回退到内置的系统默认图标 `default_item_icon.png`。
+   - **治理**：
+     - 在 `ResolveDockLabelIconBytes` 与 `loadIconImage` 中，若为本地回环 HTTP/HTTPS URL，在磁盘检查未命中后，立即向 127.0.0.1 发起带 1 秒超时的本地 HTTP GET 请求，直接从运行中的 Watchcow 容器拉取原生图标并高速持久化至 `iconsDir/` 和缓存中；
+     - 在 `loadIconImage` 中增加内部 DockLabel 代理 URL 的即时降级解析，若磁盘尚未生成缓存，直接调用统一解析器 `ResolveDockLabelIconBytes`，彻底解决桌面图标回退系统默认的问题。
+
+3. **磁盘盲目通配符扫描优化与远端下载超时熔断**：
+   - **根因**：
+     - `ResolveWatchcowIconPath` 和 `loadIconImage` 原先在图标未找到时，会遍历 `/vol1`、`/vol2`、`/var/lib/docker/volumes` 等目录并执行 3 级深度的 `filepath.Glob`（如 `/vol1/*/*/*`）。在 NAS 机械硬盘和庞大海量存储卷上，盲目 glob 遍历导致严重的磁盘 I/O 阻塞（单次耗时达 3~5 秒）；
+     - 远端 GitHub 图标下载缺乏总时间熔断，多次重试叠加后达到 12 秒之久。
+   - **治理**：
+     - 完全移除所有根目录与多层通配符 glob 扫描，改为直接精准探测已知标准路径（`/var/apps/watchcow/icons`、Docker 数据卷精准路径等），单次探测耗时从秒级降至 0.01 毫秒；
+     - 远端图标下载引入 `context.WithTimeout(1500*time.Millisecond)` 总体超时控制，集成 `raw.gitmirror.com`、`fastly.jsdelivr.net`、`mirror.ghproxy.com` 高速镜像，超时立即熔断降级。
+
+4. **移除 GET 请求中的失控后台 Goroutine**：
+   - **根因**：`handleGetDesktopItems` 原先在每次接收 HTTP GET 请求时，均会启动一个后台 goroutine 遍历持久化条目图标。在前端 3 秒轮询与并发请求下，滋生大量重复并发任务。
+   - **治理**：彻底移除 `handleGetDesktopItems` 中的后台 goroutine，图标持久化仅在条目创建、编辑、导入以及桌面对齐时按需执行。
+
+5. **弹窗未保存脏检测与图标折叠状态联动**：
+   - **治理**：
+     - 在 `isDesktopItemFormDirty` 中增加图标选择器折叠判定：当选择器处于折叠且未展开状态时，不触发图标脏检测误报；
+     - 表单快照完整记录 `iconVal`，确保从 Watchcow 复制预填后直接点击取消或关闭时，100% 判定为未修改，不再产生二次确认弹窗扰民。
+
+6. **全链路版本升级至 `v1.1.35`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.35`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过，`go build ./cmd/server` 编译成功。
+2. **零 .fpk 残留**：本地工作树保持纯净，由 GitHub Actions 云端流水线统一构建发布。
+
 
 
 

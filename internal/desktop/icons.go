@@ -263,21 +263,28 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 		if u, err := url.Parse(item.Icon); err == nil {
 			id := u.Query().Get("id")
 			if id != "" {
-				idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
-				for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
-					cp := filepath.Join(iconsDir, prefix+idHash+".png")
-					if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
-						if err := os.WriteFile(targetPath, data, 0644); err == nil {
-							item.Icon = targetName
-							slog.Info("从 DockLabel 缓存物理持久化图标成功", "id", item.ID, "target", targetName)
-							return true
+				cleanID := strings.TrimPrefix(strings.TrimPrefix(id, "docklabel-"), "watchcow-")
+				for _, h := range []string{
+					fmt.Sprintf("%x", sha256.Sum256([]byte(id))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+cleanID))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+cleanID))),
+				} {
+					for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+						cp := filepath.Join(iconsDir, prefix+h+".png")
+						if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
+							if err := os.WriteFile(targetPath, data, 0644); err == nil {
+								item.Icon = targetName
+								slog.Info("从 DockLabel 缓存物理持久化图标成功", "id", item.ID, "target", targetName)
+								return true
+							}
 						}
 					}
 				}
 				// If not cached yet, resolve it directly via ResolveDockLabelIconBytes
 				if dItems, err := ScanDockLabelItems(nil); err == nil {
 					for i := range dItems {
-						if dItems[i].ID == id || strings.TrimPrefix(dItems[i].ID, "docklabel-") == strings.TrimPrefix(id, "watchcow-") {
+						dClean := strings.TrimPrefix(strings.TrimPrefix(dItems[i].ID, "docklabel-"), "watchcow-")
+						if dItems[i].ID == id || dClean == cleanID || (item.ContainerName != "" && dItems[i].ContainerName == item.ContainerName) {
 							data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir)
 							if err == nil && len(data) > 0 {
 								if err := os.WriteFile(targetPath, data, 0644); err == nil {
@@ -465,17 +472,35 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 		if u, err := url.Parse(source); err == nil {
 			id := u.Query().Get("id")
 			if id != "" {
-				idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
-				for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
-					cachedPath := filepath.Join(iconsDir, prefix+idHash+".png")
-					if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
-						if img, err := decodeAnyImage(data); err == nil && img != nil {
-							return img, nil
+				cleanID := strings.TrimPrefix(strings.TrimPrefix(id, "docklabel-"), "watchcow-")
+				for _, h := range []string{
+					fmt.Sprintf("%x", sha256.Sum256([]byte(id))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+cleanID))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+cleanID))),
+				} {
+					for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+						cachedPath := filepath.Join(iconsDir, prefix+h+".png")
+						if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
+							if img, err := decodeAnyImage(data); err == nil && img != nil {
+								return img, nil
+							}
 						}
 					}
 				}
-				cleanID := strings.TrimPrefix(id, "docklabel-")
-				cleanID = strings.TrimPrefix(cleanID, "watchcow-")
+				// If not cached yet, resolve it directly via ScanDockLabelItems and ResolveDockLabelIconBytes
+				if dItems, err := ScanDockLabelItems(nil); err == nil {
+					for i := range dItems {
+						dClean := strings.TrimPrefix(strings.TrimPrefix(dItems[i].ID, "docklabel-"), "watchcow-")
+						if dItems[i].ID == id || dClean == cleanID {
+							if data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir); err == nil && len(data) > 0 {
+								if img, err := decodeAnyImage(data); err == nil && img != nil {
+									return img, nil
+								}
+							}
+							break
+						}
+					}
+				}
 				if resolved := ResolveWatchcowIconPath(cleanID, "", nil); resolved != "" {
 					if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
 						if img, err := decodeAnyImage(data); err == nil && img != nil {
@@ -508,6 +533,26 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 						_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
 					}
 					return img, nil
+				}
+			}
+		}
+		// C. If loopback/local HTTP URL, fetch directly from local server (e.g. Watchcow on port 5900)
+		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+			client := &http.Client{Timeout: 1 * time.Second}
+			if resp, err := client.Get(source); err == nil {
+				if resp.StatusCode == http.StatusOK {
+					data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+					resp.Body.Close()
+					if err == nil && len(data) > 0 {
+						if img, err := decodeAnyImage(data); err == nil && img != nil {
+							if iconsDir != "" {
+								_ = os.WriteFile(filepath.Join(iconsDir, baseName), data, 0644)
+							}
+							return img, nil
+						}
+					}
+				} else {
+					resp.Body.Close()
 				}
 			}
 		}
@@ -549,19 +594,30 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 				cleanRaw := strings.TrimPrefix(source, "https://raw.githubusercontent.com/")
 				parts := strings.SplitN(cleanRaw, "/", 4)
 				if len(parts) == 4 {
-					jsDelivrURL := fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
 					fastlyURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s/%s@%s/%s", parts[0], parts[1], parts[2], parts[3])
-					urlCandidates = append(urlCandidates, fastlyURL, jsDelivrURL)
+					gitmirrorURL := fmt.Sprintf("https://raw.gitmirror.com/%s/%s/%s/%s", parts[0], parts[1], parts[2], parts[3])
+					urlCandidates = append(urlCandidates, fastlyURL, gitmirrorURL)
 				}
-				urlCandidates = append(urlCandidates, "https://ghproxy.net/"+source)
+				urlCandidates = append(urlCandidates, "https://mirror.ghproxy.com/"+source, "https://ghproxy.net/"+source)
 			}
 			urlCandidates = append(urlCandidates, source)
 
-			client := &http.Client{Timeout: 2 * time.Second}
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+			client := &http.Client{Timeout: 800 * time.Millisecond}
 			for _, targetURL := range urlCandidates {
-				resp, err := client.Get(targetURL)
+				select {
+				case <-ctx.Done():
+					break
+				default:
+				}
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+				if err != nil {
+					continue
+				}
+				resp, err := client.Do(req)
 				if err == nil && resp.StatusCode == http.StatusOK {
-					data, err := io.ReadAll(resp.Body)
+					data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 					resp.Body.Close()
 					if err == nil && len(data) > 0 {
 						if img, err := decodeAnyImage(data); err == nil && img != nil {
@@ -599,21 +655,20 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 					}
 				}
 			}
-			for _, b := range []string{"/home", "/home/net67373", "/vol1", "/var/apps"} {
-				pats := []string{
-					filepath.Join(b, "*", "icons", baseName),
-					filepath.Join(b, "*", "README.assets", baseName),
-					filepath.Join(b, "*", baseName),
-				}
-				for _, pat := range pats {
-					matches, _ := filepath.Glob(pat)
-					for _, match := range matches {
-						if fi, err := os.Stat(match); err == nil && !fi.IsDir() {
-							if data, err := os.ReadFile(match); err == nil {
-								if img, err := decodeAnyImage(data); err == nil && img != nil {
-									return img, nil
-								}
-							}
+			knownPaths := []string{
+				filepath.Join("/var/apps/watchcow/icons", baseName),
+				filepath.Join("/var/apps/watchcow/data/icons", baseName),
+				filepath.Join("/usr/local/apps/@appdata/watchcow/icons", baseName),
+				filepath.Join("/vol1/@appdata/watchcow/icons", baseName),
+				filepath.Join("/vol2/@appdata/watchcow/icons", baseName),
+				filepath.Join("/var/lib/docker/volumes/watchcow_data/_data/icons", baseName),
+				filepath.Join("/var/lib/docker/volumes/watchcow-data/_data/icons", baseName),
+			}
+			for _, kp := range knownPaths {
+				if fi, err := os.Stat(kp); err == nil && !fi.IsDir() {
+					if data, err := os.ReadFile(kp); err == nil {
+						if img, err := decodeAnyImage(data); err == nil && img != nil {
+							return img, nil
 						}
 					}
 				}
@@ -621,7 +676,7 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 		}
 	}
 
-	// 4. Local file paths (check multiple possible locations)
+	// 5. Local file paths (check multiple possible locations)
 	cleanSource := strings.TrimPrefix(source, "file://")
 	cleanSource = strings.TrimPrefix(cleanSource, "/icons/")
 	cleanSource = strings.TrimPrefix(cleanSource, "icons/")
@@ -643,17 +698,16 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 	}
 
 	baseName := filepath.Base(cleanSource)
-	for _, b := range []string{"/home", "/home/net67373", "/vol1", "/var/apps"} {
-		pats := []string{
-			filepath.Join(b, "*", "icons", baseName),
-			filepath.Join(b, "*", "README.assets", baseName),
-			filepath.Join(b, "*", baseName),
-		}
-		for _, pat := range pats {
-			matches, _ := filepath.Glob(pat)
-			possiblePaths = append(possiblePaths, matches...)
-		}
+	knownPaths := []string{
+		filepath.Join("/var/apps/watchcow/icons", baseName),
+		filepath.Join("/var/apps/watchcow/data/icons", baseName),
+		filepath.Join("/usr/local/apps/@appdata/watchcow/icons", baseName),
+		filepath.Join("/vol1/@appdata/watchcow/icons", baseName),
+		filepath.Join("/vol2/@appdata/watchcow/icons", baseName),
+		filepath.Join("/var/lib/docker/volumes/watchcow_data/_data/icons", baseName),
+		filepath.Join("/var/lib/docker/volumes/watchcow-data/_data/icons", baseName),
 	}
+	possiblePaths = append(possiblePaths, knownPaths...)
 
 	for _, p := range possiblePaths {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {

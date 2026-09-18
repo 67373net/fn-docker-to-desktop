@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.34"
+const appVersion = "1.1.35"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -420,6 +420,12 @@ func main() {
 		loggingHandler.ServeHTTP(w, r)
 	})
 
+	// Pre-populate startup reconcile status for all enabled items immediately
+	// so the frontend never flashes "就绪" (Ready) before reconciliation begins.
+	if installer.HasCLI() {
+		installer.InitStartupReconcile(storage.GetAllItems())
+	}
+
 	activeHandler.Store(&rootHandler)
 	isAppReady.Store(true)
 	slog.Info("把 Docker 放到桌面服务已完全就绪")
@@ -428,12 +434,12 @@ func main() {
 	// Gently ensure all enabled items (custom desktop items and enabled docklabel items) are installed in fnOS.
 	if installer.HasCLI() {
 		go func() {
-			time.Sleep(1 * time.Second)
 			items := storage.GetAllItems()
 			labelItems, err := desktop.ScanDockLabelItems(storage.GetDockLabelState)
 			if err == nil {
 				for _, li := range labelItems {
 					if li.Enabled {
+						installer.SetItemReconcileStatus(li.ID, li.AppName, "恢复中...")
 						dItem := desktop.DesktopItem{
 							ID:            li.ID,
 							Name:          li.Name,

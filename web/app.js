@@ -506,7 +506,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.34';
+  const ver = state.settings?.version || '1.1.35';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1558,7 +1558,8 @@ function getDesktopItemFormSnapshot() {
     allUsers: document.getElementById('item-all-users')?.value || 'false',
     noticeContent: document.getElementById('item-notice-content')?.value || '',
     fileTypes: document.getElementById('item-file-types')?.value || '',
-    noDisplay: !!document.getElementById('item-no-display')?.checked
+    noDisplay: !!document.getElementById('item-no-display')?.checked,
+    iconVal: document.getElementById('item-icon')?.value || ''
   });
 }
 
@@ -1570,8 +1571,8 @@ function isDesktopItemFormDirty() {
   const modal = document.getElementById('modal-desktop-item');
   if (!modal || !modal.classList.contains('active')) return false;
 
-  const isIconDirty = isIconModified('modal');
-  if (isIconDirty) return true;
+  const isIconPickerOpen = document.getElementById('modal-icon-picker-expanded')?.style.display !== 'none';
+  if (isIconPickerOpen && isIconModified('modal')) return true;
 
   if (!state.desktopItemFormSnapshot) return false;
   let snap = {};
@@ -1590,6 +1591,7 @@ function isDesktopItemFormDirty() {
   if (String(cur.allUsers) !== String(snap.allUsers)) return true;
   if ((cur.noticeContent || '').trim() !== (snap.noticeContent || '').trim()) return true;
   if (!!cur.noDisplay !== !!snap.noDisplay) return true;
+  if ((cur.iconVal || '').trim() !== (snap.iconVal || '').trim()) return true;
 
   // Mode check:
   if (cur.mode !== snap.mode) {
@@ -1631,7 +1633,8 @@ function isDesktopItemFormDirty() {
 
 function tryCloseDesktopItemModal() {
   if (isDesktopItemFormDirty()) {
-    const msg = isIconModified('modal')
+    const isIconPickerOpen = document.getElementById('modal-icon-picker-expanded')?.style.display !== 'none';
+    const msg = (isIconPickerOpen && isIconModified('modal'))
       ? '当前图标已修改但尚未保存，确定要放弃修改并退出吗？'
       : '当前内容已修改但尚未保存，确定要放弃修改并退出吗？';
     if (!confirm(msg)) {
@@ -4088,7 +4091,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.34';
+      const ver = state.settings?.version || '1.1.35';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

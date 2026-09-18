@@ -530,15 +530,6 @@ func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) 
 	}
 	items := h.storage.GetAllItems()
 
-	// Asynchronously heal any unpersisted icons without blocking the GET response
-	go func(itemsCopy []desktop.DesktopItem) {
-		for idx := range itemsCopy {
-			if desktop.PersistItemIcon(&itemsCopy[idx], h.iconsDir) {
-				_ = h.storage.SaveItem(itemsCopy[idx])
-			}
-		}
-	}(append([]desktop.DesktopItem(nil), items...))
-
 	if h.installer != nil {
 		for idx := range items {
 			appName := items[idx].AppName
