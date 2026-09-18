@@ -706,10 +706,8 @@ table.data-table td.table-sink-divider-cell {
 /* Toggle Switch */
 .status-toggle-wrapper {
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   vertical-align: middle;
 }
 
@@ -2098,7 +2096,7 @@ tr.row-updating {
 }
 
 .donate-subtitle {
-  color: var(--text-muted);
+  color: var(--text-main);
   font-size: 0.95rem;
   line-height: 1.6;
   margin-bottom: 2.5rem;

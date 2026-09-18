@@ -439,7 +439,7 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
-		if dur > 1000*time.Millisecond {
+		if dur > 3000*time.Millisecond {
 			slog.Warn("[PERF] ScanDockLabelItems 扫描耗时过长", "duration", dur)
 		}
 	}()

@@ -506,7 +506,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.36';
+  const ver = state.settings?.version || '1.1.37';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1118,9 +1118,6 @@ function renderDesktopTable() {
             <input type="checkbox" class="desktop-toggle-checkbox" data-id="${item.id}" ${item.enabled ? 'checked' : ''}>
             <span class="toggle-slider"></span>
           </label>
-          <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
-            ${item.enabled ? '就绪' : '已停用'}
-          </span>
         </div>`;
 
       const iconSrc = getIconUrl(item.icon);
@@ -1144,28 +1141,37 @@ function renderDesktopTable() {
 
       const isUpdating = !!item._updating || isReconciling;
 
-      html += `<tr class="${isUpdating ? 'row-updating' : ''}">
-        <td>
-          <div class="name-with-icon">
-            <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
-            <div class="name-with-icon-text">
-              <strong>${escapeHtml(item.name)}</strong>
+      const containerHint = item.container_name
+        ? `<div style="font-size: 0.76rem; color: var(--text-muted); font-weight: normal; margin-top: 2px;">${escapeHtml(item.container_name)}</div>`
+        : '';
+
+      html += `
+        <tr data-id="${item.id}" class="${isUpdating ? 'row-updating' : ''}">
+          <td>
+            <div class="proc-name-cell">
+              <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
+              <div>
+                <div style="font-weight: 600; color: var(--text-main); font-size: 0.92rem;">
+                  ${escapeHtml(item.name)}
+                  ${item.notice_enabled && (item.notice_content || '').trim() ? ' <span style="font-size: 11px; color: #3b82f6;" title="已开启启动前提醒公告">📢</span>' : ''}
+                </div>
+                ${containerHint}
+              </div>
             </div>
-          </div>
-        </td>
-        <td>${typeColHtml}</td>
-        <td>${entryColHtml}</td>
-        <td><code>${escapeHtml(targetText)}</code></td>
-        <td>${statusColHtml}</td>
-        <td>
-          <div class="table-actions">
-            <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled style="opacity: 0.5; pointer-events: none;"' : ''}>
-              <span>编辑</span>
-            </button>
-          </div>
-        </td>
-        <td class="filler-col"></td>
-      </tr>`;
+          </td>
+          <td>${typeColHtml}</td>
+          <td><code>${escapeHtml(targetText)}</code></td>
+          <td>${entryColHtml}</td>
+          <td>${statusColHtml}</td>
+          <td>
+            <div class="table-actions">
+              <button class="btn btn-sm btn-secondary btn-edit-desktop" data-id="${item.id}" ${isUpdating ? 'disabled' : ''}>
+                <span>编辑</span>
+              </button>
+            </div>
+          </td>
+          <td class="filler-col"></td>
+        </tr>`;
     }
   }
 
@@ -1173,7 +1179,7 @@ function renderDesktopTable() {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
         <td colspan="7" class="table-sink-divider-cell">
-          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新</span>
+          <span class="table-sink-title">以下图标读取自 Compose 中的 Watchcow 标签；如需修改，请编辑 Compose 配置后刷新</span>
         </td>
       </tr>
       <tr>
@@ -1185,7 +1191,7 @@ function renderDesktopTable() {
     html += `
       <tr class="table-sink-divider-row" aria-hidden="true">
         <td colspan="7" class="table-sink-divider-cell">
-          <span class="table-sink-title">以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新</span>
+          <span class="table-sink-title">以下图标读取自 Compose 中的 Watchcow 标签；如需修改，请编辑 Compose 配置后刷新</span>
         </td>
       </tr>`;
 
@@ -1239,9 +1245,6 @@ function renderDesktopTable() {
             <input type="checkbox" class="watchcow-toggle-checkbox" data-id="${escapeHtml(item.id)}" ${item.enabled ? 'checked' : ''}>
             <span class="toggle-slider"></span>
           </label>
-          <span class="status-toggle-label ${item.enabled ? 'active' : 'paused'}">
-            ${item.enabled ? '就绪' : '已停用'}
-          </span>
         </div>`;
 
       let statusColHtml = toggleHtml;
@@ -3644,8 +3647,13 @@ function openPortDesktopListModal(port, procName, items) {
   for (const item of items) {
     const iconSrc = getIconUrl(item.icon);
     const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
-    const openModeClass = item.ui_type === 'iframe' ? 'text-open-modal' : 'text-open-tab';
-    const statusText = item.enabled ? '<span class="status-badge active">就绪</span>' : '<span class="status-badge paused">已停用</span>';
+    const statusText = `
+      <div class="status-toggle-wrapper">
+        <label class="toggle-switch" style="cursor: default;" title="${item.enabled ? '已启用' : '已停用'}">
+          <input type="checkbox" ${item.enabled ? 'checked' : ''} disabled>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>`;
 
     html += `<tr>
       <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标"></td>
@@ -3860,23 +3868,14 @@ async function handleSaveDesktopItem(e) {
     collapseIconPicker('modal');
     closeModal('modal-desktop-item');
 
-    // Update in-memory state FIRST so table and badges have it before any tab switch or fetch
+    // Update in-memory state FIRST so table and badges have it immediately before any tab switch or fetch
     if (id) {
       const existing = state.desktopItems.find(i => i.id === id);
       if (existing) {
+        Object.assign(existing, payload);
         existing._updating = true;
         existing._error = false;
         existing._statusText = '更新中...';
-        existing.name = name;
-        existing.port = port;
-        existing.app_name = appName;
-        if (icon) existing.icon = icon;
-        existing.icon_type = iconType;
-        existing.icon_text = iconText;
-        existing.icon_text_color = iconTextColor;
-        existing.icon_bg_color = iconBgColor;
-        existing.notice_enabled = noticeEnabled;
-        existing.notice_content = noticeContent;
       }
     } else {
       state.desktopItems.unshift({
@@ -3944,7 +3943,11 @@ async function handleSaveDesktopItem(e) {
           if (target) {
             target._updating = false;
             target._statusText = '';
+            if (respData && respData.id) {
+              Object.assign(target, respData);
+            }
           }
+          renderDesktopTable();
           await fetchDesktopItems();
           await fetchPorts();
         }
@@ -4178,7 +4181,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.36';
+      const ver = state.settings?.version || '1.1.37';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

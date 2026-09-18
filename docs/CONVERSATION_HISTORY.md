@@ -3803,6 +3803,72 @@ INFO
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 52 - v1.1.37 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **编辑桌面图标保存后参数即时更新**：
+   - 当前在编辑图标参数保存后，桌面条目显示“更新中”，但表格列显示的还是旧参数，直到后台就绪后才刷新；
+   - 要求保存后立即将修改后的参数（名称、端口、目标地址、路径、打开方式等）同步并渲染在表格上，让用户在“更新中”状态即可直观看到最新配置。
+2. **状态列开关与文本简化及垂直居中**：
+   - 彻底移除“就绪”和“已停用”常态提示文字，仅保留“更新中...”、“排队中...”、“恢复中...”等临时中间态文字；
+   - 无状态文字时，开关（toggle switch）保持上下垂直居中对齐；
+   - 端口列表点击后的桌面图标弹窗内状态显示同样调整为开关样式展示。
+3. **Watchcow 沉底区域标题文案优化**：
+   - 原文：“以下内容读取自 docker compose 中的 Watchcow 标签，手动编辑 compose 脚本后刷新”
+   - 改为：“以下图标读取自 Compose 中的 Watchcow 标签；如需修改，请编辑 Compose 配置后刷新”
+4. **README 与关于界面文案调整**：
+   - “可能会有一些 bug ”改为“可能会有很多 bug ”；
+   - “自动读取 Watchcow 配置：无缝兼容并只读读取 docker compose 中的 Watchcow 标签配置，一键启用放置到桌面。” 改为 “自动读取 Watchcow 配置：兼容 Docker compose 中的 Watchcow 标签配置，一键启用。”。
+5. **打赏副标题字体颜色调整**：
+   - 将打赏说明文字颜色由灰色（`var(--text-muted)`）改为正常字体颜色（`var(--text-main)`）。
+6. **系统设置 Tab 文案规范**：
+   - “飞牛桌面可见权限”改为“本app访问权限”；
+   - “访问保护密码 (可选，留空则免密)”改为“访问密码 (可选，留空则免密)”；
+   - “确认新密码”改为“确认密码”。
+7. **生命周期与性能评估**：
+   - 评估生命周期日志中的安装（~5.3s）与卸载（~56s）耗时合理性与优化安全性；
+   - 优化 Docker unix socket 扫描告警阈值，消除正常容器列表查询时的误报警告。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **桌面图标保存即时乐观更新 (`web/app.js`)**：
+   - 在 `handleSaveDesktopItem` 中，关闭模态框后立即执行 `Object.assign(existing, payload)`，直接在前端内存状态更新 `name`、`port`、`mode`、`target_url`、`path`、`ui_type` 等全量字段；
+   - 保存请求成功后，使用服务端最新返回数据更新条目属性（`Object.assign(target, respData)`）并立即调用 `renderDesktopTable()`；
+   - 用户在条目处于“更新中...”状态时能够即刻看到新填写的配置参数。
+
+2. **状态列清理与开关垂直居中对齐 (`web/app.js`, `web/style.css`)**：
+   - 在 `renderDesktopTable()` 和 `renderWatchcowTable()` 中，移除“就绪”和“已停用”的 `<span class="status-toggle-label">` 元素，仅保留中间状态展示；
+   - 更新 `openPortDesktopListModal` 弹窗，将原有状态徽标替换为只读开关组件；
+   - 在 `web/style.css` 中重构 `.status-toggle-wrapper`：移除 `flex-direction: column` 与 `gap: 2px`，采用 `display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;`，确保开关在单元格内完全垂直居中。
+
+3. **Watchcow 区域文案统一 (`web/app.js`)**：
+   - 将 `web/app.js` 中所有沉底分隔栏标题统一更新为：“以下图标读取自 Compose 中的 Watchcow 标签；如需修改，请编辑 Compose 配置后刷新”。
+
+4. **文案规范与打赏样式调整 (`web/index.html`, `README.md`, `web/style.css`)**：
+   - 同步更新 `README.md` 与 `web/index.html` 中的 bug 描述与 Watchcow 特性介绍；
+   - 将 `.donate-subtitle` 颜色由 `var(--text-muted)` 改为 `var(--text-main)`；
+   - 更新系统设置中的权限与密码确认相关 label 文案。
+
+5. **Docker 扫描性能告警阈值自适应调整 (`internal/desktop/docklabel.go`, `internal/api/handler.go`)**：
+   - 经实测，NAS 宿主机上通过 unix socket 请求 Docker 守护进程 `GET /containers/json` 并解析 10+ 容器 JSON 在高负载下耗时约 1.2~1.6s 属于完全正常的 I/O 耗时；
+   - 将 `ScanDockLabelItems` 与 `handleGetDockLabelItems` 的警告阈值由 1000ms 调整至 3000ms，消除误报 WARN 告警。
+
+6. **全链路版本升级至 `v1.1.37`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.37`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 

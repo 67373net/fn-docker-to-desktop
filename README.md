@@ -2,7 +2,7 @@
 
 本项目灵感及代码参考了项目 [watchcow](https://github.com/tf4fun/watchcow)。
 
-本项目还处于 beta 测试版，可能会有一些 bug 和功能调整。欢迎提 issues
+本项目还处于 beta 测试版，可能会有很多 bug 和功能调整。欢迎提 issues
 
 ---
 
@@ -11,7 +11,7 @@
 1. **Docker 一键放桌面**：自动识别容器，一键在飞牛桌面生成图标。
 2. **局域网/公网服务反向代理**：可将内网服务或公网服务代理至本机，并生成桌面图标。
 3. 将任意**网页快捷方式**放置到飞牛桌面。
-4. **自动读取 Watchcow 配置**：无缝兼容并只读读取 docker compose 中的 Watchcow 标签配置，一键启用放置到桌面。
+4. **自动读取 Watchcow 配置**：兼容 Docker compose 中的 Watchcow 标签配置，一键启用。
 
 ---
 

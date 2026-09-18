@@ -2129,7 +2129,7 @@ func (h *Handler) handleGetDockLabelItems(w http.ResponseWriter, r *http.Request
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
-		if dur > 1000*time.Millisecond {
+		if dur > 3000*time.Millisecond {
 			slog.Warn("[PERF] handleGetDockLabelItems 扫描耗时过长", "duration", dur)
 		}
 	}()
