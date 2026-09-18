@@ -406,6 +406,133 @@ func (l *Logger) ReadLogs(dateStr, levelFilter, search string, limit int) (*LogR
 	return resp, nil
 }
 
+// GetLifecycleLogFilePath returns the path to the lifecycle log file.
+func (l *Logger) GetLifecycleLogFilePath() string {
+	candidates := []string{
+		"/tmp/fn-docker-to-desktop-lifecycle.log",
+		filepath.Join(l.logDir, "lifecycle.log"),
+		"/tmp/fn-docker-to-desktop-uninstall.log",
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() && fi.Size() > 0 {
+			return c
+		}
+	}
+	return "/tmp/fn-docker-to-desktop-lifecycle.log"
+}
+
+// ReadLifecycleLogs reads and filters the system lifecycle and startup logs.
+func (l *Logger) ReadLifecycleLogs(levelFilter, search string, limit int) (*LogResponse, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 2000
+	}
+
+	filePath := l.GetLifecycleLogFilePath()
+	resp := &LogResponse{
+		Success:     true,
+		Dates:       []string{"lifecycle"},
+		CurrentDate: "lifecycle",
+		LogPath:     filePath,
+		Lines:       []LogEntry{},
+	}
+
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return resp, nil
+		}
+		return nil, err
+	}
+	resp.FileSize = fileInfo.Size()
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 128*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	var allEntries []LogEntry
+	levelFilter = strings.ToUpper(strings.TrimSpace(levelFilter))
+	search = strings.ToLower(strings.TrimSpace(search))
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		entry := parseLifecycleLogLine(line)
+
+		if levelFilter != "" && levelFilter != "ALL" {
+			if entry.Level != levelFilter {
+				continue
+			}
+		}
+
+		if search != "" {
+			if !strings.Contains(strings.ToLower(line), search) {
+				continue
+			}
+		}
+
+		allEntries = append(allEntries, entry)
+	}
+
+	resp.TotalLines = len(allEntries)
+	if len(allEntries) > limit {
+		resp.Lines = allEntries[len(allEntries)-limit:]
+	} else {
+		resp.Lines = allEntries
+	}
+
+	return resp, nil
+}
+
+func parseLifecycleLogLine(raw string) LogEntry {
+	entry := LogEntry{
+		Raw:   raw,
+		Level: "INFO",
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "[") {
+		idx := strings.Index(trimmed, "]")
+		if idx > 1 {
+			entry.Timestamp = trimmed[1:idx]
+			entry.Message = strings.TrimSpace(trimmed[idx+1:])
+		}
+	} else {
+		parts := strings.SplitN(trimmed, " ", 3)
+		if len(parts) >= 2 {
+			entry.Timestamp = parts[0] + " " + parts[1]
+		}
+		if len(parts) >= 3 {
+			entry.Message = parts[2]
+		} else {
+			entry.Message = raw
+		}
+	}
+
+	upper := strings.ToUpper(raw)
+	if strings.Contains(upper, "ERROR") || strings.Contains(raw, "失败") || strings.Contains(upper, "FATAL") {
+		entry.Level = "ERROR"
+	} else if strings.Contains(upper, "WARN") || strings.Contains(raw, "警告") {
+		entry.Level = "WARN"
+	} else {
+		entry.Level = "INFO"
+	}
+
+	if entry.Message == "" {
+		entry.Message = raw
+	}
+	return entry
+}
+
 func parseLogLine(raw string) LogEntry {
 	entry := LogEntry{
 		Raw:   raw,

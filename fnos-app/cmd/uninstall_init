@@ -22,6 +22,19 @@ log_msg() {
 script_start_time=$(date +%s%3N)
 log_msg "=== 开始执行 把 Docker 放到桌面 (fn-docker-to-desktop) 卸载清理 (PID: $$) ==="
 
+# 检测是否处于覆盖升级/重装流程 (由 upgrade_init 标记，10分钟内有效)
+UPGRADE_FLAG="/tmp/fn-docker-to-desktop-upgrading"
+if [ -f "${UPGRADE_FLAG}" ]; then
+    flag_time=$(cat "${UPGRADE_FLAG}" 2>/dev/null || echo 0)
+    now_time=$(date +%s)
+    diff_time=$((now_time - flag_time))
+    if [ "${diff_time}" -ge 0 ] && [ "${diff_time}" -le 600 ]; then
+        log_msg "检测到当前处于应用覆盖升级/重装阶段 (upgrade_init 触发于 ${diff_time} 秒前)，保留现有桌面图标与子应用，跳过注销！"
+        log_msg "=== 覆盖升级跳过清理完成 (总耗时: $(( $(date +%s%3N) - script_start_time ))ms) ==="
+        exit 0
+    fi
+fi
+
 # 1. 定位 appcenter-cli 工具
 CLI=""
 for candidate in \

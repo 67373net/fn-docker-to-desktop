@@ -19,6 +19,12 @@ log_msg() {
 }
 
 start_t=$(date +%s%3N)
+UPGRADE_FLAG="/tmp/fn-docker-to-desktop-upgrading"
+if [ -f "${UPGRADE_FLAG}" ]; then
+    log_msg "检测到处于应用覆盖升级/重装阶段，跳过卸载后置清理并保留环境"
+    exit 0
+fi
+
 log_msg "执行卸载后置清理 (PID: $$)..."
 rm -rf /tmp/fndocker_* 2>/dev/null || true
 rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true

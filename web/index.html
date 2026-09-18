@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.37">
+  <link rel="stylesheet" href="style.css?v=1.1.38">
 </head>
 <body>
   <!-- Header Bar -->
@@ -173,6 +173,14 @@
       <!-- Logs Toolbar -->
       <div class="toolbar">
         <div class="form-row" style="align-items: center; gap: 8px; margin-bottom: 0;">
+          <label class="form-label" style="margin-bottom: 0; white-space: nowrap;">日志来源:</label>
+          <select id="log-source-select" class="form-select" style="width: 175px; padding: 6px 10px; font-size: 13px; font-weight: 500;">
+            <option value="app" selected>应用运行日志</option>
+            <option value="lifecycle">安装/启停生命周期日志</option>
+          </select>
+        </div>
+
+        <div class="form-row" id="group-log-date" style="align-items: center; gap: 8px; margin-bottom: 0;">
           <label class="form-label" style="margin-bottom: 0; white-space: nowrap;">日志日期:</label>
           <select id="log-date-select" class="form-select" style="width: 140px; padding: 6px 10px; font-size: 13px;"></select>
         </div>
@@ -200,7 +208,7 @@
         <div class="log-info-meta">
           <span class="log-info-tag">存储路径</span>
           <code id="log-path-display">/var/apps/fn-docker-to-desktop/var/logs/app-YYYY-MM-DD.log</code>
-          <span class="badge badge-neutral" style="margin-left: 8px;">保留 8 天</span>
+          <span class="badge badge-neutral" id="log-retention-badge" style="margin-left: 8px;">保留 8 天</span>
         </div>
         <div class="log-info-stats">
           <span>当前显示 <strong id="log-display-count">0</strong> / 共 <strong id="log-total-count">0</strong> 行</span>
@@ -469,7 +477,7 @@
     <section class="tab-pane" id="pane-about">
       <div class="about-container">
         <div class="about-content">
-          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.37</span></h3>
+          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.38</span></h3>
           <p class="about-md-p">本项目灵感及代码参考了项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。</p>
           <p class="about-md-p">本项目还处于 beta 测试版，可能会有很多 bug 和功能调整。欢迎提 <a href="https://github.com/67373net/fn-docker-to-desktop/issues" target="_blank" rel="noopener noreferrer" class="about-link">issues</a></p>
           <hr class="about-md-hr">
@@ -487,12 +495,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.37" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.38" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.37" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.38" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -894,6 +902,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.37"></script>
+  <script src="app.js?v=1.1.38"></script>
 </body>
 </html>

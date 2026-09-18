@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.37"
+const appVersion = "1.1.38"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -143,6 +143,7 @@ func main() {
 	defer stop()
 
 	slog.Info("把 Docker 放到桌面 (fn-docker-to-desktop) 启动中...")
+	outputStartupLifecycleLogs(logInst)
 
 	// Determine fnOS Unified Gateway Unix Domain Socket
 	socketPath := *socketFlag
@@ -485,4 +486,27 @@ func main() {
 	}
 
 	slog.Info("服务已安全退出")
+}
+
+func outputStartupLifecycleLogs(logInst *logger.Logger) {
+	if logInst == nil {
+		return
+	}
+	path := logInst.GetLifecycleLogFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	startIdx := 0
+	if len(lines) > 20 {
+		startIdx = len(lines) - 20
+	}
+	slog.Info("=== 载入系统生命周期与启动日志 ===", "path", path, "recent_lines", len(lines)-startIdx)
+	for _, l := range lines[startIdx:] {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			slog.Info("[LIFECYCLE] " + l)
+		}
+	}
 }

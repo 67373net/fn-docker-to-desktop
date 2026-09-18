@@ -35,6 +35,7 @@ start_process() {
     fi
 
     log_msg "Starting fn-docker-to-desktop..."
+    rm -f /tmp/fn-docker-to-desktop-upgrading 2>/dev/null || true
     mkdir -p "${TRIM_PKGVAR}/data" 2>/dev/null || true
     mkdir -p "${TRIM_PKGVAR}/logs" 2>/dev/null || true
 

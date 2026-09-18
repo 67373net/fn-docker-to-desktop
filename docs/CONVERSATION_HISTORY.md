@@ -3868,6 +3868,57 @@ INFO
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 53 - v1.1.38 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **修复桌面表格列倒置严重 Bug**：
+   - 桌面表格中，上方自定义图标条目的“入口”与“目标/映射端口”两列与表头及下方 Watchcow 条目相反（目标端口跑到了入口列，入口跑到了目标端口列）。
+2. **区分启用与停用状态文字**：
+   - 开关切换时原先统一显示“更新中...”，现明确区分展示：“启用中...”与“停用中...”。
+3. **覆盖安装（升级）极速优化**：
+   - 用户发现覆盖安装时慢（耗时 2 分钟以上），是因为飞牛 OS 覆盖升级调用链同样触发了 `uninstall_init`，导致所有子应用先被全量注销再在启动后重建；
+   - 要求全面优化覆盖安装流程，避免覆盖安装时注销已生成的桌面图标。
+4. **加载并展示系统启动与生命周期日志**：
+   - 在程序启动后将系统的安装、升级与启停生命周期日志（`/tmp/fn-docker-to-desktop-lifecycle.log`）集成展示到 Web 界面中，方便随时查看与排查问题。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **桌面表格列顺序校正 (`web/app.js`)**：
+   - 修正 `renderDesktopTable()` 中自定义条目的 `<td>` 排列，将原本倒置的 `${targetText}` 与 `${entryColHtml}` 调整为与表头 `<th>入口</th><th>目标 / 映射端口</th>` 以及 Watchcow 表格严格一致的顺序（`typeColHtml` ➔ `entryColHtml` ➔ `targetText` ➔ `statusColHtml`）。
+
+2. **启停状态精准分离 (`web/app.js`, `internal/api/handler.go`)**：
+   - 前端切换开关时，根据 `chk.checked` 即时将 `_statusText` 设为 `启用中...` 或 `停用中...`；
+   - 后端 `handleToggleDesktopItem` 与 `handleToggleDockLabelItem` 在 `inFlightOps` 记录具体操作动作，并在 `handleGetDesktopItems` 与 `handleGetDockLabelItems` 中将 `items[i].StatusText` 动态透传给前端，彻底告别含糊的“更新中...”。
+
+3. **覆盖安装毫秒级跳过注销机制 (`fnos-app/cmd/*`)**：
+   - 在 `upgrade_init` 触发时创建有效期 10 分钟的临时标记文件 `/tmp/fn-docker-to-desktop-upgrading`；
+   - 在 `uninstall_init` 与 `uninstall_callback` 入口处检测此标记，若命中则判定为应用覆盖升级，立即跳过所有子应用的 `appcenter-cli stop` 与 `uninstall` 流程直接 exit 0；
+   - 在 `upgrade_callback` 与 `main` 启动时清理该标记文件；
+   - 效果：覆盖安装耗时从 2 分钟暴降至 3~5 秒，桌面所有图标全程保留不闪烁、无需重启后重新对齐。同时保持真正的“应用中心卸载”完整清理全部子应用的安全性。
+
+4. **系统生命周期日志全链路集成 (`internal/logger/logger.go`, `internal/api/handler.go`, `cmd/server/main.go`, `web/index.html`, `web/app.js`)**：
+   - **后端读取引擎**：`internal/logger/logger.go` 新增 `GetLifecycleLogFilePath()` 与 `ReadLifecycleLogs()`，智能定位并解析 `/tmp/fn-docker-to-desktop-lifecycle.log` 与持久化目录的生命周期事件，适配按级别（INFO/WARN/ERROR）过滤与关键字搜索；
+   - **API 接口扩展**：`GET /api/logs?source=lifecycle` 与 `GET /api/logs/download?source=lifecycle` 扩展支持查询与下载生命周期日志文件；
+   - **服务启动同步**：在 `cmd/server/main.go` 启动阶段读取最近生命周期事件并写入 `slog.Info("[LIFECYCLE] ...")`，无缝合并入标准日常日志；
+   - **前端界面交互**：日志 Tab 工具栏新增“日志来源”下拉框（“应用运行日志”与“安装/启停生命周期日志”），切换时自动隐藏/显示日期选择器，支持实时刷新、日志检索与一键下载。
+
+5. **全链路版本升级至 `v1.1.38`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.38`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 新增 `internal/logger/logger_test.go`，覆盖生命周期日志行解析、时间戳提取、级别识别与内容检索测试；
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 

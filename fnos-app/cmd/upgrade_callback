@@ -1,7 +1,12 @@
 #!/bin/bash
 LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
+UPGRADE_FLAG="/tmp/fn-docker-to-desktop-upgrading"
 ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
 msg="[${ts}] [upgrade_callback] START (PID: $$, Args: $*)"
 echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
+rm -f "${UPGRADE_FLAG}" 2>/dev/null || true
 chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true
+if [ -n "${TRIM_PKGVAR}" ] && [ -d "${TRIM_PKGVAR}/logs" ]; then
+    echo "${msg}" >> "${TRIM_PKGVAR}/logs/lifecycle.log" 2>/dev/null || true
+fi
 exit 0

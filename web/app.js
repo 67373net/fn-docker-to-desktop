@@ -294,7 +294,7 @@ async function fetchWatchcowItems() {
           return {
             ...item,
             _updating: true,
-            _statusText: pending._statusText || '更新中...'
+            _statusText: pending._statusText || (item.enabled ? '停用中...' : '启用中...')
           };
         }
         return item;
@@ -506,7 +506,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.37';
+  const ver = state.settings?.version || '1.1.38';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1160,8 +1160,8 @@ function renderDesktopTable() {
             </div>
           </td>
           <td>${typeColHtml}</td>
-          <td><code>${escapeHtml(targetText)}</code></td>
           <td>${entryColHtml}</td>
+          <td><code>${escapeHtml(targetText)}</code></td>
           <td>${statusColHtml}</td>
           <td>
             <div class="table-actions">
@@ -1250,7 +1250,7 @@ function renderDesktopTable() {
       let statusColHtml = toggleHtml;
       const isReconciling = !!item.reconciling;
       if (isReconciling || item._updating) {
-        const statusText = item._statusText || item.status_text || '更新中...';
+        const statusText = item._statusText || item.status_text || (isReconciling ? '恢复中...' : '更新中...');
         statusColHtml = `
           <div class="status-updating-badge">
             <span class="spinner-small"></span>
@@ -1302,7 +1302,7 @@ function renderDesktopTable() {
       const item = state.desktopItems.find(i => i.id === id);
       if (item) {
         item._updating = true;
-        item._statusText = '更新中...';
+        item._statusText = chk.checked ? '启用中...' : '停用中...';
         item._error = false;
         renderDesktopTable();
       }
@@ -1355,7 +1355,7 @@ function renderDesktopTable() {
       const item = (state.watchcowItems || []).find(i => i.id === id);
       if (item) {
         item._updating = true;
-        item._statusText = '更新中...';
+        item._statusText = chk.checked ? '启用中...' : '停用中...';
         item._error = false;
         renderDesktopTable();
       }
@@ -4181,7 +4181,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.37';
+      const ver = state.settings?.version || '1.1.38';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4508,6 +4508,22 @@ function initApp() {
 
 // --- System Logs Viewer (8 Days Retention) ---
 function initLogViewer() {
+  const sourceSelect = document.getElementById('log-source-select');
+  if (sourceSelect) {
+    sourceSelect.addEventListener('change', (e) => {
+      state.logSource = e.target.value;
+      const dateGroup = document.getElementById('group-log-date');
+      const retentionBadge = document.getElementById('log-retention-badge');
+      if (dateGroup) {
+        dateGroup.style.display = state.logSource === 'lifecycle' ? 'none' : 'flex';
+      }
+      if (retentionBadge) {
+        retentionBadge.textContent = state.logSource === 'lifecycle' ? '系统生命周期' : '保留 8 天';
+      }
+      fetchLogs();
+    });
+  }
+
   const dateSelect = document.getElementById('log-date-select');
   if (dateSelect) {
     dateSelect.addEventListener('change', (e) => {
@@ -4554,8 +4570,9 @@ function initLogViewer() {
 
 async function fetchLogs(isAutoPoll = false) {
   try {
-    let url = apiUrl(`/api/logs?level=${encodeURIComponent(state.logLevel || 'ALL')}`);
-    if (state.logDate) {
+    const source = state.logSource || 'app';
+    let url = apiUrl(`/api/logs?source=${encodeURIComponent(source)}&level=${encodeURIComponent(state.logLevel || 'ALL')}`);
+    if (source !== 'lifecycle' && state.logDate) {
       url += `&date=${encodeURIComponent(state.logDate)}`;
     }
     if (state.logSearch) {
@@ -4568,15 +4585,21 @@ async function fetchLogs(isAutoPoll = false) {
       const data = await res.json();
       state.logs = data.lines || [];
 
-      updateDateDropdown(data.dates, data.current_date);
+      if (source !== 'lifecycle') {
+        updateDateDropdown(data.dates, data.current_date);
+      }
 
       const pathEl = document.getElementById('log-path-display');
       if (pathEl && data.log_path) {
         pathEl.textContent = data.log_path;
       }
       const titleEl = document.getElementById('terminal-title');
-      if (titleEl && data.current_date) {
-        titleEl.textContent = `app-${data.current_date}.log (${formatBytes(data.file_size || 0)})`;
+      if (titleEl) {
+        if (source === 'lifecycle') {
+          titleEl.textContent = `fn-docker-to-desktop-lifecycle.log (${formatBytes(data.file_size || 0)})`;
+        } else if (data.current_date) {
+          titleEl.textContent = `app-${data.current_date}.log (${formatBytes(data.file_size || 0)})`;
+        }
       }
       const totalEl = document.getElementById('log-total-count');
       if (totalEl) {
@@ -4656,6 +4679,11 @@ function scrollLogsToBottom() {
 }
 
 function downloadLogFile() {
+  const source = state.logSource || 'app';
+  if (source === 'lifecycle') {
+    window.open(apiUrl('/api/logs/download?source=lifecycle'), '_blank');
+    return;
+  }
   const select = document.getElementById('log-date-select');
   const date = select ? select.value : '';
   window.open(apiUrl(`/api/logs/download?date=${encodeURIComponent(date)}`), '_blank');

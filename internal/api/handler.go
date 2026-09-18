@@ -536,7 +536,14 @@ func (h *Handler) handleGetDesktopItems(w http.ResponseWriter, r *http.Request) 
 			if appName == "" {
 				appName = h.installer.DeriveAppName(items[idx])
 			}
-			if isRec, statusText := h.installer.GetReconcileStatus(items[idx].ID, appName); isRec {
+			if op, inFlight := h.inFlightOps.Load(items[idx].ID); inFlight {
+				items[idx].Reconciling = true
+				if opStr, ok := op.(string); ok && opStr != "" {
+					items[idx].StatusText = opStr
+				} else {
+					items[idx].StatusText = "更新中..."
+				}
+			} else if isRec, statusText := h.installer.GetReconcileStatus(items[idx].ID, appName); isRec {
 				items[idx].Reconciling = true
 				items[idx].StatusText = statusText
 			}
@@ -1064,13 +1071,6 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, loaded := h.inFlightOps.LoadOrStore(id, true); loaded {
-		slog.Warn("[API] 桌面图标正在处理中，拒绝重复并发请求", "id", id)
-		h.jsonResponse(w, r, map[string]string{"error": "该桌面图标正在处理中，请勿频繁点击"}, http.StatusConflict)
-		return
-	}
-	defer h.inFlightOps.Delete(id)
-
 	item, ok := h.storage.GetItem(id)
 	if !ok {
 		slog.Warn("[API] 切换状态未找到指定图标", "id", id)
@@ -1079,6 +1079,18 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	targetState := !item.Enabled
+	opText := "停用中..."
+	if targetState {
+		opText = "启用中..."
+	}
+
+	if _, loaded := h.inFlightOps.LoadOrStore(id, opText); loaded {
+		slog.Warn("[API] 桌面图标正在处理中，拒绝重复并发请求", "id", id)
+		h.jsonResponse(w, r, map[string]string{"error": "该桌面图标正在处理中，请勿频繁点击"}, http.StatusConflict)
+		return
+	}
+	defer h.inFlightOps.Delete(id)
+
 	slog.Info("[API] 准备切换桌面图标状态", "id", id, "name", item.Name, "当前状态", item.Enabled, "目标状态", targetState)
 
 	item.Enabled = targetState
@@ -2034,6 +2046,7 @@ func (h *Handler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	source := r.URL.Query().Get("source")
 	date := r.URL.Query().Get("date")
 	level := r.URL.Query().Get("level")
 	search := r.URL.Query().Get("search")
@@ -2054,6 +2067,16 @@ func (h *Handler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if source == "lifecycle" {
+		resp, err := logInst.ReadLifecycleLogs(level, search, limit)
+		if err != nil {
+			h.jsonResponse(w, r, map[string]string{"error": "读取生命周期日志失败: " + err.Error()}, http.StatusInternalServerError)
+			return
+		}
+		h.jsonResponse(w, r, resp, http.StatusOK)
+		return
+	}
+
 	resp, err := logInst.ReadLogs(date, level, search, limit)
 	if err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "读取日志失败: " + err.Error()}, http.StatusInternalServerError)
@@ -2069,6 +2092,7 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	source := r.URL.Query().Get("source")
 	date := r.URL.Query().Get("date")
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
@@ -2081,6 +2105,19 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 
 	if logInst == nil {
 		http.Error(w, "日志系统未就绪", http.StatusInternalServerError)
+		return
+	}
+
+	if source == "lifecycle" {
+		filePath := logInst.GetLifecycleLogFilePath()
+		fi, err := os.Stat(filePath)
+		if err != nil || fi.IsDir() {
+			http.Error(w, "未找到系统生命周期日志文件", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"fn-docker-to-desktop-lifecycle.log\"")
+		http.ServeFile(w, r, filePath)
 		return
 	}
 
@@ -2154,9 +2191,13 @@ func (h *Handler) handleGetDockLabelItems(w http.ResponseWriter, r *http.Request
 		if appName == "" {
 			appName = desktop.DeriveDockLabelAppName(items[i].ContainerName, items[i].EntryName, "")
 		}
-		if _, inFlight := h.inFlightOps.Load(items[i].ID); inFlight {
+		if op, inFlight := h.inFlightOps.Load(items[i].ID); inFlight {
 			items[i].Reconciling = true
-			items[i].StatusText = "更新中..."
+			if opStr, ok := op.(string); ok && opStr != "" {
+				items[i].StatusText = opStr
+			} else {
+				items[i].StatusText = "更新中..."
+			}
 		} else if h.installer != nil {
 			if isRec, statusText := h.installer.GetReconcileStatus(items[i].ID, appName); isRec {
 				items[i].Reconciling = true
@@ -2179,7 +2220,14 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if _, loaded := h.inFlightOps.LoadOrStore(id, true); loaded {
+	curEnabled := h.storage.GetDockLabelState(id, false)
+	targetEnabled := !curEnabled
+	opText := "停用中..."
+	if targetEnabled {
+		opText = "启用中..."
+	}
+
+	if _, loaded := h.inFlightOps.LoadOrStore(id, opText); loaded {
 		slog.Warn("[DOCKLABEL] 容器标签条目正在处理中，拒绝重复并发请求", "id", id)
 		h.jsonResponse(w, r, map[string]string{"error": "该图标正在处理中，请稍候"}, http.StatusConflict)
 		return
