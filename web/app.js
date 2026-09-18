@@ -506,7 +506,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.35';
+  const ver = state.settings?.version || '1.1.36';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1073,11 +1073,12 @@ function renderDesktopTable() {
     html += '<tr><td colspan="7" class="empty-state" style="padding: 1.5rem 1rem;">暂无手动添加的桌面图标</td></tr>';
   } else {
     for (const item of filtered) {
+      const pathSuffix = (item.path && item.path !== '/') ? item.path : '';
       let modeText = '本机端口';
-      let targetText = `:${item.port}`;
+      let targetText = `:${item.port}${pathSuffix}`;
       if (item.mode === 'proxy') {
         modeText = '端口映射';
-        targetText = `${item.target_url} ➔ :${item.port}`;
+        targetText = `${item.target_url}${pathSuffix} ➔ :${item.port}`;
       } else if (item.mode === 'shortcut') {
         modeText = '网页链接';
         targetText = item.target_url;
@@ -1572,7 +1573,10 @@ function isDesktopItemFormDirty() {
   if (!modal || !modal.classList.contains('active')) return false;
 
   const isIconPickerOpen = document.getElementById('modal-icon-picker-expanded')?.style.display !== 'none';
-  if (isIconPickerOpen && isIconModified('modal')) return true;
+  if (isIconPickerOpen && isIconModified('modal')) {
+    console.log('[DIRTY-CHECK] Icon modified in expanded picker');
+    return true;
+  }
 
   if (!state.desktopItemFormSnapshot) return false;
   let snap = {};
@@ -1585,26 +1589,61 @@ function isDesktopItemFormDirty() {
   }
 
   // Check common fields against snapshot
-  if ((cur.name || '').trim() !== (snap.name || '').trim()) return true;
-  if ((cur.appName || '').trim() !== (snap.appName || '').trim()) return true;
-  if ((cur.containerName || '').trim() !== (snap.containerName || '').trim()) return true;
-  if (String(cur.allUsers) !== String(snap.allUsers)) return true;
-  if ((cur.noticeContent || '').trim() !== (snap.noticeContent || '').trim()) return true;
-  if (!!cur.noDisplay !== !!snap.noDisplay) return true;
-  if ((cur.iconVal || '').trim() !== (snap.iconVal || '').trim()) return true;
+  if ((cur.name || '').trim() !== (snap.name || '').trim()) {
+    console.log('[DIRTY-CHECK] name modified:', snap.name, '->', cur.name);
+    return true;
+  }
+  if ((cur.appName || '').trim() !== (snap.appName || '').trim()) {
+    console.log('[DIRTY-CHECK] appName modified:', snap.appName, '->', cur.appName);
+    return true;
+  }
+  if ((cur.containerName || '').trim() !== (snap.containerName || '').trim()) {
+    console.log('[DIRTY-CHECK] containerName modified:', snap.containerName, '->', cur.containerName);
+    return true;
+  }
+  if (String(cur.allUsers) !== String(snap.allUsers)) {
+    console.log('[DIRTY-CHECK] allUsers modified:', snap.allUsers, '->', cur.allUsers);
+    return true;
+  }
+  if ((cur.noticeContent || '').trim() !== (snap.noticeContent || '').trim()) {
+    console.log('[DIRTY-CHECK] noticeContent modified:', snap.noticeContent, '->', cur.noticeContent);
+    return true;
+  }
+  if (!!cur.noDisplay !== !!snap.noDisplay) {
+    console.log('[DIRTY-CHECK] noDisplay modified:', snap.noDisplay, '->', cur.noDisplay);
+    return true;
+  }
+  if ((cur.iconVal || '').trim() !== (snap.iconVal || '').trim()) {
+    console.log('[DIRTY-CHECK] iconVal modified:', snap.iconVal, '->', cur.iconVal);
+    return true;
+  }
 
   // Mode check:
   if (cur.mode !== snap.mode) {
     // User switched mode tab. Check if user actually entered/modified content for the new mode!
     if (cur.mode === 'local') {
       const p = (cur.localPort || '').trim();
-      if (p && p !== (snap.localPort || '').trim()) return true;
+      if (p && p !== (snap.localPort || '').trim()) {
+        console.log('[DIRTY-CHECK] localPort dirty in switched mode:', snap.localPort, '->', p);
+        return true;
+      }
     } else if (cur.mode === 'proxy') {
       const u = (cur.targetUrl || '').trim();
-      if (u && u !== (snap.targetUrl || '').trim()) return true;
+      const p = (cur.proxyPort || '').trim();
+      if (u && u !== (snap.targetUrl || '').trim()) {
+        console.log('[DIRTY-CHECK] targetUrl dirty in switched mode:', snap.targetUrl, '->', u);
+        return true;
+      }
+      if (p && p !== (snap.proxyPort || '').trim()) {
+        console.log('[DIRTY-CHECK] proxyPort dirty in switched mode:', snap.proxyPort, '->', p);
+        return true;
+      }
     } else if (cur.mode === 'shortcut') {
       const s = (cur.shortcutUrl || '').trim();
-      if (s && s !== (snap.shortcutUrl || '').trim()) return true;
+      if (s && s !== (snap.shortcutUrl || '').trim()) {
+        console.log('[DIRTY-CHECK] shortcutUrl dirty in switched mode:', snap.shortcutUrl, '->', s);
+        return true;
+      }
     }
     // If no meaningful content entered for new mode, switching mode tab was just navigation!
     return false;
@@ -1612,20 +1651,56 @@ function isDesktopItemFormDirty() {
 
   // cur.mode === snap.mode: check mode-specific fields
   if (cur.mode === 'local') {
-    if ((cur.localPort || '').trim() !== (snap.localPort || '').trim()) return true;
-    if (cur.protocol !== snap.protocol) return true;
-    if ((cur.path || '').trim() !== (snap.path || '').trim()) return true;
-    if (cur.uiType !== snap.uiType) return true;
-    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) return true;
+    if ((cur.localPort || '').trim() !== (snap.localPort || '').trim()) {
+      console.log('[DIRTY-CHECK] localPort modified:', snap.localPort, '->', cur.localPort);
+      return true;
+    }
+    if (cur.protocol !== snap.protocol) {
+      console.log('[DIRTY-CHECK] protocol modified:', snap.protocol, '->', cur.protocol);
+      return true;
+    }
+    if ((cur.path || '').trim() !== (snap.path || '').trim()) {
+      console.log('[DIRTY-CHECK] path modified:', snap.path, '->', cur.path);
+      return true;
+    }
+    if (cur.uiType !== snap.uiType) {
+      console.log('[DIRTY-CHECK] uiType modified:', snap.uiType, '->', cur.uiType);
+      return true;
+    }
+    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) {
+      console.log('[DIRTY-CHECK] fileTypes modified:', snap.fileTypes, '->', cur.fileTypes);
+      return true;
+    }
   } else if (cur.mode === 'proxy') {
-    if ((cur.targetUrl || '').trim() !== (snap.targetUrl || '').trim()) return true;
-    if ((cur.proxyPort || '').trim() !== (snap.proxyPort || '').trim()) return true;
-    if (!!cur.skipTls !== !!snap.skipTls) return true;
-    if ((cur.path || '').trim() !== (snap.path || '').trim()) return true;
-    if (cur.uiType !== snap.uiType) return true;
-    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) return true;
+    if ((cur.targetUrl || '').trim() !== (snap.targetUrl || '').trim()) {
+      console.log('[DIRTY-CHECK] targetUrl modified:', snap.targetUrl, '->', cur.targetUrl);
+      return true;
+    }
+    if ((cur.proxyPort || '').trim() !== (snap.proxyPort || '').trim()) {
+      console.log('[DIRTY-CHECK] proxyPort modified:', snap.proxyPort, '->', cur.proxyPort);
+      return true;
+    }
+    if (!!cur.skipTls !== !!snap.skipTls) {
+      console.log('[DIRTY-CHECK] skipTls modified:', snap.skipTls, '->', cur.skipTls);
+      return true;
+    }
+    if ((cur.path || '').trim() !== (snap.path || '').trim()) {
+      console.log('[DIRTY-CHECK] path modified:', snap.path, '->', cur.path);
+      return true;
+    }
+    if (cur.uiType !== snap.uiType) {
+      console.log('[DIRTY-CHECK] uiType modified:', snap.uiType, '->', cur.uiType);
+      return true;
+    }
+    if ((cur.fileTypes || '').trim() !== (snap.fileTypes || '').trim()) {
+      console.log('[DIRTY-CHECK] fileTypes modified:', snap.fileTypes, '->', cur.fileTypes);
+      return true;
+    }
   } else if (cur.mode === 'shortcut') {
-    if ((cur.shortcutUrl || '').trim() !== (snap.shortcutUrl || '').trim()) return true;
+    if ((cur.shortcutUrl || '').trim() !== (snap.shortcutUrl || '').trim()) {
+      console.log('[DIRTY-CHECK] shortcutUrl modified:', snap.shortcutUrl, '->', cur.shortcutUrl);
+      return true;
+    }
   }
 
   return false;
@@ -1875,10 +1950,6 @@ function setDesktopModalMode(mode) {
   const groupFileTypes = document.getElementById('form-group-file-types');
   if (groupFileTypes) {
     groupFileTypes.style.display = mode === 'shortcut' ? 'none' : 'block';
-  }
-  if (mode === 'shortcut') {
-    const elUiType = document.getElementById('item-ui-type');
-    if (elUiType) elUiType.value = 'url';
   }
 }
 
@@ -3270,7 +3341,8 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   }
   if (iconCandidate) {
     const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
-    if (cleanName) {
+    const genericWords = ['image', 'images', 'icon', 'icons', 'default', 'app', 'apps', 'logo', 'pic', 'picture', 'portal', 'dashboard', 'service', 'server', 'container', 'test'];
+    if (cleanName && !genericWords.includes(cleanName) && !cleanName.startsWith('copy_')) {
       const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
       setIconModalTab('url');
       const urlInput = document.getElementById('icon-url-input');
@@ -3282,7 +3354,22 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
       imgEl.onerror = () => {
         imgEl.src = apiUrl('/default_item_icon.png');
         if (urlInput) urlInput.value = '';
-        if (elIcon && elIcon.value === cdnUrl) elIcon.value = '';
+        if (elIcon && elIcon.value === cdnUrl) {
+          elIcon.value = '';
+          if (state.desktopItemFormSnapshot) {
+            try {
+              let snapObj = JSON.parse(state.desktopItemFormSnapshot);
+              if (snapObj.iconVal === cdnUrl) {
+                snapObj.iconVal = '';
+                state.desktopItemFormSnapshot = JSON.stringify(snapObj);
+              }
+            } catch (_) {}
+          }
+          if (state.initialModalIcon && state.initialModalIcon.iconVal === cdnUrl) {
+            state.initialModalIcon.iconVal = '';
+            state.initialModalIcon.url = '';
+          }
+        }
       };
     }
   }
@@ -4091,7 +4178,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.35';
+      const ver = state.settings?.version || '1.1.36';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

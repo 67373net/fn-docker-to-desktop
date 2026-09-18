@@ -249,6 +249,28 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 		}
 	}
 
+	// If pointing to copy_<id>.png but physical file does not exist (e.g. fresh reinstall with persisted state),
+	// attempt to restore from container label / docklabel scan before falling back
+	if item.Icon == targetName || strings.HasPrefix(item.Icon, "copy_") {
+		if item.ContainerName != "" {
+			if dItems, err := ScanDockLabelItems(nil); err == nil {
+				for i := range dItems {
+					if dItems[i].ContainerName == item.ContainerName {
+						data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir)
+						if err == nil && len(data) > 0 {
+							if err := os.WriteFile(targetPath, data, 0644); err == nil {
+								item.Icon = targetName
+								slog.Info("重装后从对应容器标签恢复物理持久化图标成功", "id", item.ID, "container", item.ContainerName, "target", targetName)
+								return true
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// If icon is already a clean local file in iconsDir and NOT a proxy URL or remote URL, keep it!
 	cleanName := strings.TrimPrefix(strings.TrimPrefix(item.Icon, "/icons/"), "icons/")
 	if !strings.Contains(cleanName, "/") && !strings.Contains(cleanName, "?") && !strings.Contains(cleanName, ":") {
@@ -313,13 +335,25 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 		}
 	}
 
-	// 3. Fallback: try fetching from candidate names (bounded to 2s)
-	candidates := []string{item.Icon, item.ContainerName, item.Name}
-	if data, _, err := FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
-		if err := os.WriteFile(targetPath, data, 0644); err == nil {
-			item.Icon = targetName
-			slog.Info("从镜像匹配并物理持久化桌面图标文件", "id", item.ID, "target", targetName)
-			return true
+	// 3. Fallback: try fetching from candidate names (bounded to 2s, strictly excluding generic or internal names)
+	var validCandidates []string
+	for _, c := range []string{item.ContainerName, item.Image, item.Name} {
+		c = strings.TrimSpace(c)
+		if c == "" || isGenericIconCandidate(c) {
+			continue
+		}
+		if isLocal, _ := IsLocalOrLoopbackIconURL(c); isLocal {
+			continue
+		}
+		validCandidates = append(validCandidates, c)
+	}
+	if len(validCandidates) > 0 {
+		if data, _, err := FetchIconBytesFromMirrors(validCandidates...); err == nil && len(data) > 0 {
+			if err := os.WriteFile(targetPath, data, 0644); err == nil {
+				item.Icon = targetName
+				slog.Info("从镜像匹配并物理持久化桌面图标文件", "id", item.ID, "target", targetName)
+				return true
+			}
 		}
 	}
 
@@ -630,20 +664,12 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 			}
 		}
 
-		// If URL fetch failed (e.g. 404 or connection error), extract candidate name from URL and try CDN mirrors
 		baseName := filepath.Base(source)
 		if idx := strings.Index(baseName, "?"); idx != -1 {
 			baseName = baseName[:idx]
 		}
-		cleanName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-		cleanName = strings.TrimRight(cleanName, "0123456789-_")
-		if cleanName != "" {
-			if img, err := fetchIconFromMirrors(cleanName); err == nil && img != nil {
-				return img, nil
-			}
-		}
 
-		// Also check local host fallback for baseName
+		// Also check local host fallback for baseName first
 		if baseName != "" {
 			if resolved := ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
 				if data, err := os.ReadFile(resolved); err == nil {
@@ -655,6 +681,17 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 					}
 				}
 			}
+		}
+
+		// Only query CDN mirrors for remote non-generic icons (never for loopback or generic icon names)
+		isLocalURL, _ := IsLocalOrLoopbackIconURL(source)
+		cleanName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+		cleanName = strings.TrimRight(cleanName, "0123456789-_")
+		if !isLocalURL && cleanName != "" && !isGenericIconCandidate(cleanName) {
+			if img, err := fetchIconFromMirrors(cleanName); err == nil && img != nil {
+				return img, nil
+			}
+		}
 			knownPaths := []string{
 				filepath.Join("/var/apps/watchcow/icons", baseName),
 				filepath.Join("/var/apps/watchcow/data/icons", baseName),
@@ -674,7 +711,6 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 				}
 			}
 		}
-	}
 
 	// 5. Local file paths (check multiple possible locations)
 	cleanSource := strings.TrimPrefix(source, "file://")

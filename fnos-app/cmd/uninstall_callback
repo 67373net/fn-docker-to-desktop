@@ -4,14 +4,24 @@
 # ==============================================================================
 
 LOG_FILE="/tmp/fn-docker-to-desktop-uninstall.log"
+LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
+
 log_msg() {
-    local msg="$(date '+%Y-%m-%d %H:%M:%S') - [callback] $1"
+    local ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+    local msg="[${ts}] [uninstall_callback] $1"
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+    echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
     chmod 0666 "${LOG_FILE}" 2>/dev/null || true
+    chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true
+    if [ -n "${TRIM_PKGVAR}" ] && [ -d "${TRIM_PKGVAR}/logs" ]; then
+        echo "${msg}" >> "${TRIM_PKGVAR}/logs/lifecycle.log" 2>/dev/null || true
+    fi
 }
 
-log_msg "执行卸载后置清理 (瞬时完成)..."
+start_t=$(date +%s%3N)
+log_msg "执行卸载后置清理 (PID: $$)..."
 rm -rf /tmp/fndocker_* 2>/dev/null || true
 rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true
-log_msg "卸载后置清理完成"
+end_t=$(date +%s%3N)
+log_msg "卸载后置清理完成 (耗时: $((end_t - start_t))ms)"
 exit 0

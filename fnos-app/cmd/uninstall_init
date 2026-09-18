@@ -5,13 +5,22 @@
 # ==============================================================================
 
 LOG_FILE="/tmp/fn-docker-to-desktop-uninstall.log"
+LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
+
 log_msg() {
-    local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    local ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+    local msg="[${ts}] [uninstall_init] $1"
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+    echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
     chmod 0666 "${LOG_FILE}" 2>/dev/null || true
+    chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true
+    if [ -n "${TRIM_PKGVAR}" ] && [ -d "${TRIM_PKGVAR}/logs" ]; then
+        echo "${msg}" >> "${TRIM_PKGVAR}/logs/lifecycle.log" 2>/dev/null || true
+    fi
 }
 
-log_msg "=== 开始执行 把 Docker 放到桌面 (fn-docker-to-desktop) 卸载清理 ==="
+script_start_time=$(date +%s%3N)
+log_msg "=== 开始执行 把 Docker 放到桌面 (fn-docker-to-desktop) 卸载清理 (PID: $$) ==="
 
 # 1. 定位 appcenter-cli 工具
 CLI=""
@@ -33,7 +42,7 @@ fi
 
 log_msg "检测 appcenter-cli 路径: ${CLI:-未找到}"
 
-# 2. 如果存在 appcenter-cli，快速清理所有由本程序创建的桌面子应用 (fndocker.* 或 put-port.*)
+# 2. 如果存在 appcenter-cli，快速清理所有由本程序创建的桌面子应用 (仅限 fndocker.* 与 put-port.*)
 if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
     DATA_DIRS=(
         "${TRIM_PKGVAR}/data"
@@ -56,38 +65,61 @@ if [ -n "${CLI}" ] && [ -x "${CLI}" ]; then
             legacy_dock=$(grep -E '":\s*true' "${dock_file}" 2>/dev/null | grep -oE '"watchcow-[^"]+"' | tr -d '"' | sed 's/^watchcow-/fndocker.dock-/' || true)
             RAW_APPS="${RAW_APPS} ${legacy_dock}"
         fi
-        wc_file="${d}/watchcow_states.json"
-        if [ -f "${wc_file}" ]; then
-            # 扫描此前版本中可能被用户在本产品中开启过的旧版 watchcow 兼容包名 (watchcow.xxx)
-            legacy_wc=$(grep -E '":\s*true' "${wc_file}" 2>/dev/null | grep -oE '"watchcow-[^"]+"' | tr -d '"' | sed 's/^watchcow-/watchcow./' || true)
-            RAW_APPS="${RAW_APPS} ${legacy_wc}"
-        fi
     done
 
-    # 从 cli list 扫描残留应用 (仅扫描本程序专属命名空间 fndocker.* 与 put-port.*)
-    cli_apps=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' || true)
-    RAW_APPS="${RAW_APPS} ${cli_apps}"
+    # 从 cli list 扫描系统中当前实际已注册的子应用列表 (严格限定专属命名空间 fndocker.* 与 put-port.*)
+    # 严禁匹配或触碰 watchcow.* 或任何外部第三方原生应用！
+    cli_installed=$("${CLI}" list 2>/dev/null | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
+    RAW_APPS="${RAW_APPS} ${cli_installed}"
 
-    # 严格过滤仅保留本程序专属命名空间的子应用 (fndocker.* 与 put-port.*，以及本程序 watchcow_states.json 中明确标记启用的遗留应用)，绝不波及任何外部第三方原生 Watchcow 应用
-    UNIQUE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -oE '((fndocker|put-port)\.[a-zA-Z0-9._-]+|watchcow\.[a-zA-Z0-9._-]+)' | sort -u || true)
+    # 严格去重并交叉比对：仅清理当前在系统中确实已安装的本程序子应用
+    CANDIDATE_APPS=$(echo "${RAW_APPS}" | tr ' ' '\n' | grep -oE '(fndocker|put-port)\.[a-zA-Z0-9._-]+' | sort -u || true)
+    UNIQUE_APPS=""
+    for app in ${CANDIDATE_APPS}; do
+        if echo "${cli_installed}" | grep -qx "${app}"; then
+            UNIQUE_APPS="${UNIQUE_APPS} ${app}"
+        fi
+    done
+    UNIQUE_APPS=$(echo "${UNIQUE_APPS}" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
 
     if [ -n "${UNIQUE_APPS}" ]; then
-        log_msg "发现待清理子应用列表: ${UNIQUE_APPS}"
+        log_msg "发现系统中待清理子应用列表: [${UNIQUE_APPS}]"
 
-        # 核心优化 1：并发执行 stop，在 0.5 秒内使桌面所有图标瞬间消失！
+        # 核心优化 1：并发执行 stop，在 0.5 秒内使桌面所有图标瞬间隐藏！
+        stop_start=$(date +%s%3N)
         for app in ${UNIQUE_APPS}; do
             log_msg "立即并发停止应用: ${app}"
             "${CLI}" stop "${app}" >> "${LOG_FILE}" 2>&1 &
         done
         wait
-        log_msg "所有子应用图标已在桌面瞬间隐藏"
+        stop_end=$(date +%s%3N)
+        log_msg "所有子应用图标已在桌面瞬间隐藏 (耗时 $((stop_end - stop_start))ms)"
 
-        # 核心优化 2：在前台同步逐个注销子应用，确保被彻底注销，杜绝后台子进程被 cgroup 提前杀除导致应用残留在“未启用”状态
+        # 核心优化 2：采用受控并发池 (最多 3 个并发任务) 执行注销，既大幅缩减总耗时，又避免争抢 appcenter 锁
+        # 若并发注销偶尔失败，自动回退串行重试，确保彻底注销且不留僵尸包
+        uninst_start=$(date +%s%3N)
+        MAX_PARALLEL=3
         for app in ${UNIQUE_APPS}; do
-            log_msg "正在注销子应用: ${app}"
-            "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+            (
+                app_t0=$(date +%s%3N)
+                log_msg "正在注销子应用: ${app} (Job PID: $$)"
+                if ! "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1; then
+                    log_msg "子应用并发注销初次未成功，正在重试: ${app}"
+                    sleep 0.5
+                    "${CLI}" uninstall "${app}" >> "${LOG_FILE}" 2>&1 || true
+                fi
+                app_t1=$(date +%s%3N)
+                log_msg "子应用注销完毕: ${app} (单项耗时 $((app_t1 - app_t0))ms)"
+            ) &
+            while [ $(jobs -r -p 2>/dev/null | wc -l) -ge ${MAX_PARALLEL} ]; do
+                sleep 0.1
+            done
         done
-        log_msg "所有子应用注销完成"
+        wait
+        uninst_end=$(date +%s%3N)
+        log_msg "所有子应用注销完成 (总耗时 $((uninst_end - uninst_start))ms)"
+    else
+        log_msg "未检测到任何需要清理的本程序子应用"
     fi
 fi
 
@@ -95,5 +127,6 @@ fi
 rm -rf /tmp/fndocker_* 2>/dev/null || true
 rm -f /tmp/fn-docker-to-desktop.sock 2>/dev/null || true
 
-log_msg "=== 卸载清理完成 ==="
+script_end_time=$(date +%s%3N)
+log_msg "=== 卸载清理全部完成 (总执行耗时: $((script_end_time - script_start_time))ms) ==="
 exit 0

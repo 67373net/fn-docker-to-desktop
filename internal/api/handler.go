@@ -2284,15 +2284,13 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 				}
 			}
 			_ = h.installer.UninstallItem(dItem, protected...)
-			// Defensively uninstall legacy package names, protecting any active desktop items
+			// Defensively uninstall our app's own legacy package names, protecting any active desktop items
 			legacyPrefixes := []string{
 				"fndocker.wc-" + targetItem.ContainerName,
-				"watchcow." + targetItem.ContainerName,
 			}
 			if targetItem.EntryName != "" && targetItem.EntryName != "default" {
 				legacyPrefixes = append(legacyPrefixes,
 					fmt.Sprintf("fndocker.wc-%s-%s", targetItem.ContainerName, targetItem.EntryName),
-					fmt.Sprintf("watchcow.%s.%s", targetItem.ContainerName, targetItem.EntryName),
 				)
 			}
 			for _, pfx := range legacyPrefixes {
@@ -2405,15 +2403,17 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Fallback to default icon: cache default icon to cachePath to make future requests instant
+	// Fallback to default icon: only cache to disk if no icon was configured at all
 	slog.Debug("[DOCKLABEL-ICON] 容器标签未配置或未找到自定义图标，回退至系统默认图标",
 		"id", id,
 		"name", found.Name,
 		"iconVal", found.Icon,
 		"localIconPath", found.LocalIconPath,
 	)
-	if data, err := h.getDefaultItemIconBytes(); err == nil && len(data) > 0 {
-		_ = os.WriteFile(cachePath, data, 0644)
+	if strings.TrimSpace(found.Icon) == "" {
+		if data, err := h.getDefaultItemIconBytes(); err == nil && len(data) > 0 {
+			_ = os.WriteFile(cachePath, data, 0644)
+		}
 	}
 	h.serveDefaultItemIcon(w, r)
 }

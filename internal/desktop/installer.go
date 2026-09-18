@@ -853,16 +853,18 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		return
 	}
 	start := time.Now()
-	defer func() {
-		dur := time.Since(start)
-		if dur > 3000*time.Millisecond {
-			slog.Warn("[PERF] ReconcileInstalledItems 状态对齐耗时过长", "duration", dur, "items_count", len(items))
-		}
-	}()
-
-	// 1. Identify missing items and stopped items
 	var missing []DesktopItem
 	var stopped []DesktopItem
+	defer func() {
+		dur := time.Since(start)
+		threshold := 5000 * time.Millisecond
+		if len(missing) > 0 || len(stopped) > 0 {
+			threshold = time.Duration(len(missing)*25+len(stopped)*5+10) * time.Second
+		}
+		if dur > threshold {
+			slog.Warn("[PERF] ReconcileInstalledItems 状态对齐耗时异常过长", "duration", dur, "items_count", len(items), "missing", len(missing), "stopped", len(stopped))
+		}
+	}()
 
 	installedSet := make(map[string]bool)
 	if i.cliPath != "" {

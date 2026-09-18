@@ -77,198 +77,200 @@ type dockerContainerJSON struct {
 }
 
 // ResolveWatchcowIconPath resolves a file:// or remote URL icon into a local filesystem path if available.
+// isGenericIconCandidate checks if a name is a generic non-service word or internal identifier
+// that should never be looked up on Homarr CDN mirrors.
+func isGenericIconCandidate(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, "copy_") || strings.HasPrefix(lower, "dock_cache_") || strings.HasPrefix(lower, "wc_cache_") {
+		return true
+	}
+	base := filepath.Base(lower)
+	baseNoExt := strings.TrimSuffix(base, filepath.Ext(base))
+	generic := map[string]bool{
+		"image": true, "images": true, "icon": true, "icons": true,
+		"default": true, "app": true, "apps": true, "logo": true,
+		"pic": true, "picture": true, "favicon": true, "index": true,
+		"portal": true, "dashboard": true, "images.png": true, "icon.png": true,
+	}
+	return generic[lower] || generic[base] || generic[baseNoExt]
+}
+
 func ResolveWatchcowIconPath(iconVal string, workingDir string, mounts []dockerContainerMount) string {
-	if strings.HasPrefix(iconVal, "file://") {
-		clean := strings.TrimPrefix(iconVal, "file://")
+	iconVal = strings.TrimSpace(iconVal)
+	if iconVal == "" {
+		return ""
+	}
+
+	clean := iconVal
+	baseName := ""
+
+	if strings.HasPrefix(clean, "file://") {
+		clean = strings.TrimPrefix(clean, "file://")
+		if strings.HasPrefix(clean, "/") {
+			if info, err := os.Stat(clean); err == nil && !info.IsDir() {
+				return clean
+			}
+		}
 		clean = strings.TrimPrefix(clean, "./")
 		clean = strings.TrimPrefix(clean, "/")
-
-		// 1. Host absolute path
-		if strings.HasPrefix(iconVal, "file:///") {
-			absPath := strings.TrimPrefix(iconVal, "file://")
-			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
-				return absPath
-			}
-		}
-
-		// 2. Compose workingDir
-		if workingDir != "" {
-			cand := filepath.Join(workingDir, clean)
-			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-				return cand
-			}
-		}
-
-		baseName := filepath.Base(clean)
-
-		// 3. Mount sources, variations, and sibling directories
-		for _, m := range mounts {
-			if m.Source == "" {
-				continue
-			}
-			sources := []string{
-				m.Source,
-				m.Source + "-proxy",
-				m.Source + "-portal",
-			}
-			for _, s := range sources {
-				candidates := []string{
-					filepath.Join(s, clean),
-					filepath.Join(s, "icons", baseName),
-					filepath.Join(s, baseName),
-				}
-				for _, cand := range candidates {
-					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-						return cand
-					}
-				}
-			}
-
-			// Sibling directories of mount source
-			parent := filepath.Dir(m.Source)
-			if parent != "" && parent != "/" && parent != "." {
-				globPatterns := []string{
-					filepath.Join(parent, "*", "icons", baseName),
-					filepath.Join(parent, "*", clean),
-					filepath.Join(parent, "*", baseName),
-					filepath.Join(parent, "*", "README.assets", baseName),
-				}
-				for _, pat := range globPatterns {
-					matches, _ := filepath.Glob(pat)
-					for _, match := range matches {
-						if info, err := os.Stat(match); err == nil && !info.IsDir() {
-							return match
-						}
-					}
-				}
-			}
-		}
-
-		// 4. Known Watchcow directories
-		legacyDirs := []string{
-			"/usr/local/apps/@appdata/watchcow/icons",
-			"/usr/local/apps/@appdata/watchcow/data/icons",
-			"/usr/local/apps/@appdata/watchcow/target/icons",
-			"/usr/local/apps/@appcenter/watchcow/icons",
-			"/usr/local/apps/@appcenter/watchcow/ui/images",
-			"/var/apps/watchcow/icons",
-			"/var/apps/watchcow/data/icons",
-			"/var/apps/watchcow/target/icons",
-			"/var/apps/watchcow/target/ui/images",
-			"/vol1/@appdata/watchcow/icons",
-			"/vol1/@appdata/watchcow/data/icons",
-			"/vol2/@appdata/watchcow/icons",
-			"/vol2/@appdata/watchcow/data/icons",
-			"/vol3/@appdata/watchcow/icons",
-			"/vol4/@appdata/watchcow/icons",
-			"/vol1/1000/docker",
-			"/vol1/docker",
-		}
-		for _, d := range legacyDirs {
-			cand := filepath.Join(d, baseName)
-			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-				return cand
-			}
-		}
-
-		// 5. Direct known extra locations on fnOS/Docker
-		knownExtraDirs := []string{
-			"/var/lib/docker/volumes/watchcow_data/_data/icons",
-			"/var/lib/docker/volumes/watchcow_data/_data",
-			"/var/lib/docker/volumes/watchcow-data/_data/icons",
-			"/var/lib/docker/volumes/watchcow-data/_data",
-			"/var/lib/docker/volumes/watchcow_icons/_data",
-		}
-		for _, d := range knownExtraDirs {
-			cand := filepath.Join(d, baseName)
-			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-				return cand
-			}
-		}
-	} else if strings.HasPrefix(iconVal, "http://") || strings.HasPrefix(iconVal, "https://") {
-		// Even for HTTP/HTTPS URLs (like http://127.0.0.1:5900/icons/... or raw.githubusercontent.com/...),
-		// check if the file is cloned or stored locally on the host
-		u, err := url.Parse(iconVal)
+		baseName = filepath.Base(clean)
+	} else if strings.HasPrefix(clean, "http://") || strings.HasPrefix(clean, "https://") {
+		u, err := url.Parse(clean)
 		if err == nil {
-			baseName := filepath.Base(u.Path)
-			if baseName != "" && baseName != "/" && baseName != "." {
-				// 1. Check Compose workingDir
-				if workingDir != "" {
-					for _, cand := range []string{
-						filepath.Join(workingDir, "icons", baseName),
-						filepath.Join(workingDir, baseName),
-					} {
-						if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-							return cand
-						}
-					}
-				}
+			baseName = filepath.Base(u.Path)
+			if idx := strings.Index(baseName, "?"); idx != -1 {
+				baseName = baseName[:idx]
+			}
+		}
+	} else {
+		// Bare filename or relative path
+		clean = strings.TrimPrefix(clean, "./")
+		clean = strings.TrimPrefix(clean, "/icons/")
+		clean = strings.TrimPrefix(clean, "icons/")
+		baseName = filepath.Base(clean)
+		if idx := strings.Index(baseName, "?"); idx != -1 {
+			baseName = baseName[:idx]
+		}
+		if strings.HasPrefix(iconVal, "/") {
+			if info, err := os.Stat(iconVal); err == nil && !info.IsDir() {
+				return iconVal
+			}
+		}
+	}
 
-				// 2. Check mounts
-				for _, m := range mounts {
-					if m.Source == "" {
-						continue
-					}
-					for _, cand := range []string{
-						filepath.Join(m.Source, "icons", baseName),
-						filepath.Join(m.Source, baseName),
-					} {
-						if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-							return cand
-						}
-					}
-					parent := filepath.Dir(m.Source)
-					if parent != "" && parent != "/" && parent != "." {
-						matches, _ := filepath.Glob(filepath.Join(parent, "*", "icons", baseName))
-						for _, match := range matches {
-							if info, err := os.Stat(match); err == nil && !info.IsDir() {
-								return match
-							}
-						}
-					}
-				}
+	if baseName == "" || baseName == "." || baseName == "/" {
+		return ""
+	}
 
-				// 3. Known Watchcow directories
-				legacyDirs := []string{
-					"/usr/local/apps/@appdata/watchcow/icons",
-					"/usr/local/apps/@appdata/watchcow/data/icons",
-					"/usr/local/apps/@appdata/watchcow/target/icons",
-					"/usr/local/apps/@appcenter/watchcow/icons",
-					"/usr/local/apps/@appcenter/watchcow/ui/images",
-					"/var/apps/watchcow/icons",
-					"/var/apps/watchcow/data/icons",
-					"/var/apps/watchcow/target/icons",
-					"/var/apps/watchcow/target/ui/images",
-					"/vol1/@appdata/watchcow/icons",
-					"/vol1/@appdata/watchcow/data/icons",
-					"/vol2/@appdata/watchcow/icons",
-					"/vol2/@appdata/watchcow/data/icons",
-					"/vol3/@appdata/watchcow/icons",
-					"/vol4/@appdata/watchcow/icons",
-					"/vol1/1000/docker",
-					"/vol1/docker",
-				}
-				for _, d := range legacyDirs {
-					cand := filepath.Join(d, baseName)
-					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-						return cand
-					}
-				}
+	// Helper to check file existence
+	checkFile := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		if info, err := os.Stat(p); err == nil && !info.IsDir() && info.Size() > 0 {
+			return p
+		}
+		return ""
+	}
 
-				// 4. Direct known extra locations on fnOS/Docker
-				knownExtraDirs := []string{
-					"/var/lib/docker/volumes/watchcow_data/_data/icons",
-					"/var/lib/docker/volumes/watchcow_data/_data",
-					"/var/lib/docker/volumes/watchcow-data/_data/icons",
-					"/var/lib/docker/volumes/watchcow-data/_data",
-					"/var/lib/docker/volumes/watchcow_icons/_data",
+	// 1. Compose workingDir
+	if workingDir != "" {
+		for _, cand := range []string{
+			filepath.Join(workingDir, clean),
+			filepath.Join(workingDir, "icons", baseName),
+			filepath.Join(workingDir, baseName),
+		} {
+			if res := checkFile(cand); res != "" {
+				return res
+			}
+		}
+	}
+
+	// 2. Container mounts & variations
+	for _, m := range mounts {
+		if m.Source == "" {
+			continue
+		}
+		sources := []string{
+			m.Source,
+			m.Source + "-proxy",
+			m.Source + "-portal",
+		}
+		for _, s := range sources {
+			for _, cand := range []string{
+				filepath.Join(s, clean),
+				filepath.Join(s, "icons", baseName),
+				filepath.Join(s, baseName),
+			} {
+				if res := checkFile(cand); res != "" {
+					return res
 				}
-				for _, d := range knownExtraDirs {
-					cand := filepath.Join(d, baseName)
-					if info, err := os.Stat(cand); err == nil && !info.IsDir() {
-						return cand
+			}
+		}
+
+		// Sibling directories of mount source
+		parent := filepath.Dir(m.Source)
+		if parent != "" && parent != "/" && parent != "." {
+			globPatterns := []string{
+				filepath.Join(parent, "*", "icons", baseName),
+				filepath.Join(parent, "*", clean),
+				filepath.Join(parent, "*", baseName),
+				filepath.Join(parent, "*", "README.assets", baseName),
+			}
+			for _, pat := range globPatterns {
+				matches, _ := filepath.Glob(pat)
+				for _, match := range matches {
+					if res := checkFile(match); res != "" {
+						return res
 					}
 				}
+			}
+		}
+	}
+
+	// 3. Known Watchcow & common host directories
+	legacyDirs := []string{
+		"/usr/local/apps/@appdata/watchcow/icons",
+		"/usr/local/apps/@appdata/watchcow/data/icons",
+		"/usr/local/apps/@appdata/watchcow/target/icons",
+		"/usr/local/apps/@appcenter/watchcow/icons",
+		"/usr/local/apps/@appcenter/watchcow/ui/images",
+		"/var/apps/watchcow/icons",
+		"/var/apps/watchcow/data/icons",
+		"/var/apps/watchcow/target/icons",
+		"/var/apps/watchcow/target/ui/images",
+		"/vol1/@appdata/watchcow/icons",
+		"/vol1/@appdata/watchcow/data/icons",
+		"/vol2/@appdata/watchcow/icons",
+		"/vol2/@appdata/watchcow/data/icons",
+		"/vol3/@appdata/watchcow/icons",
+		"/vol4/@appdata/watchcow/icons",
+		"/vol1/1000/docker",
+		"/vol1/docker",
+		"/home/net67373/watchcow/icons",
+		"/home/net67373/watchcow-proxy/icons",
+		"/home/net67373/watchcow",
+		"/home/net67373/watchcow-proxy",
+	}
+	for _, d := range legacyDirs {
+		for _, cand := range []string{
+			filepath.Join(d, baseName),
+			filepath.Join(d, "icons", baseName),
+		} {
+			if res := checkFile(cand); res != "" {
+				return res
+			}
+		}
+	}
+
+	// Home directory wildcards
+	if homeMatches, _ := filepath.Glob("/home/*/watchcow*/icons/" + baseName); len(homeMatches) > 0 {
+		for _, match := range homeMatches {
+			if res := checkFile(match); res != "" {
+				return res
+			}
+		}
+	}
+
+	// 4. Direct known extra locations on fnOS/Docker
+	knownExtraDirs := []string{
+		"/var/lib/docker/volumes/watchcow_data/_data/icons",
+		"/var/lib/docker/volumes/watchcow_data/_data",
+		"/var/lib/docker/volumes/watchcow-data/_data/icons",
+		"/var/lib/docker/volumes/watchcow-data/_data",
+		"/var/lib/docker/volumes/watchcow_icons/_data",
+	}
+	for _, d := range knownExtraDirs {
+		if res := checkFile(filepath.Join(d, baseName)); res != "" {
+			return res
+		}
+	}
+
+	// Docker volume wildcards
+	if volMatches, _ := filepath.Glob("/var/lib/docker/volumes/*watchcow*/_data/icons/" + baseName); len(volMatches) > 0 {
+		for _, match := range volMatches {
+			if res := checkFile(match); res != "" {
+				return res
 			}
 		}
 	}
@@ -957,11 +959,23 @@ func ResolveDockLabelIconBytes(found *DockLabelItem, iconsDir string) ([]byte, s
 	}
 
 	// 6. Try resolving from Homarr dashboard icon mirrors using candidate names (bounded to 2s)
-	candidates := []string{found.Icon, found.ContainerName, found.Image, found.Name}
-	if data, ct, err := FetchIconBytesFromMirrors(candidates...); err == nil && len(data) > 0 {
-		saveCache(data)
-		slog.Info("[DOCKLABEL-ICON] 从官方图标库镜像自动匹配并缓存图标成功", "id", found.ID, "candidates", candidates, "size", len(data))
-		return data, ct, nil
+	var validCandidates []string
+	for _, c := range []string{found.Icon, found.ContainerName, found.Image, found.Name} {
+		c = strings.TrimSpace(c)
+		if c == "" || isGenericIconCandidate(c) {
+			continue
+		}
+		if isLocal, _ := IsLocalOrLoopbackIconURL(c); isLocal {
+			continue
+		}
+		validCandidates = append(validCandidates, c)
+	}
+	if len(validCandidates) > 0 {
+		if data, ct, err := FetchIconBytesFromMirrors(validCandidates...); err == nil && len(data) > 0 {
+			saveCache(data)
+			slog.Info("[DOCKLABEL-ICON] 从官方图标库镜像自动匹配并缓存图标成功", "id", found.ID, "candidates", validCandidates, "size", len(data))
+			return data, ct, nil
+		}
 	}
 
 	return nil, "", fmt.Errorf("icon not found for %s", found.ID)

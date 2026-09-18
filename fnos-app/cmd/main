@@ -12,15 +12,24 @@ if [ -f "${TRIM_APPDEST}/app/fn-docker-to-desktop" ]; then
     CMD="${TRIM_APPDEST}/app/fn-docker-to-desktop"
 fi
 
+LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
+
 log_msg() {
     mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
-    local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    local ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+    local msg="[${ts}] [main] $1"
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
     echo "${msg}" >> "${FALLBACK_LOG}" 2>/dev/null || true
+    echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
     chmod 0666 "${FALLBACK_LOG}" 2>/dev/null || true
+    chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true
+    if [ -n "${TRIM_PKGVAR}" ] && [ -d "${TRIM_PKGVAR}/logs" ]; then
+        echo "${msg}" >> "${TRIM_PKGVAR}/logs/lifecycle.log" 2>/dev/null || true
+    fi
 }
 
 start_process() {
+    local start_t=$(date +%s%3N)
     if status; then
         return 0
     fi
@@ -91,11 +100,13 @@ start_process() {
         log_msg "Unix socket ${sock_path} is ready (waited $((waited * 200))ms)."
     fi
 
-    log_msg "Process ${pid} is healthy and running."
+    local end_t=$(date +%s%3N)
+    log_msg "Process ${pid} is healthy and running (start_process took $((end_t - start_t))ms)."
     return 0
 }
 
 stop_process() {
+    local stop_start_t=$(date +%s%3N)
     log_msg "Stopping fn-docker-to-desktop..."
 
     if [ -r "${PID_FILE}" ]; then
@@ -103,7 +114,9 @@ stop_process() {
         
         if ! check_process "${pid}"; then
             rm -f "${PID_FILE}"
-            return
+            local stop_end_t=$(date +%s%3N)
+            log_msg "Process ${pid} was not running, cleaned PID file (stop_process took $((stop_end_t - stop_start_t))ms)."
+            return 0
         fi
 
         kill -TERM ${pid} >> ${LOG_FILE} 2>&1
@@ -122,6 +135,8 @@ stop_process() {
     fi
 
     rm -f "${TRIM_APPDEST}/app.sock" 2>/dev/null || true
+    local stop_end_t=$(date +%s%3N)
+    log_msg "fn-docker-to-desktop stopped successfully (stop_process took $((stop_end_t - stop_start_t))ms)."
     return 0
 }
 

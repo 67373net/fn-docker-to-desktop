@@ -3741,6 +3741,69 @@ INFO
 1. **自动化单元测试与编译验证**：Docker 容器（`golang:1.22-alpine`）内执行 `go test -v ./...` 全部通过，`go build ./cmd/server` 编译成功。
 2. **零 .fpk 残留**：本地工作树保持纯净，由 GitHub Actions 云端流水线统一构建发布。
 
+---
+
+## Turn 51 - v1.1.36 发布记录
+
+### 用户需求与问题总结 (User Requirements & Issues)
+1. **安装与卸载耗时过长排查 (2分钟卡顿)**：
+   - 8-9 个图标时，手动安装与卸载进度条耗时达到 2 分钟之久。
+   - 要求全面排查耗时原因，并将安装与卸载的各步骤耗时毫秒级记录到日志以便追踪。
+2. **Watchcow 复制条目在桌面表格中漏掉 URL 路径**：
+   - 从 Watchcow 复制带有路径（例如 `:8080/admin`）的条目，保存后在桌面表格的“目标/映射端口”列中仅显示 `:8080`，漏掉了 `/admin` 路径。
+3. **修复多项生产环境 WARN 告警**：
+   - `[WARN] [PERF] handleGetDockLabelIcon 获取图标耗时过长 duration=3.669s id=docklabel-watchcow-portal`
+   - `[WARN] [PERF] PersistItemIcon 图标持久化耗时过长 duration=5.612s id=item-397369 icon=copy_item-397369.png`
+   - `[WARN] [PERF] PersistItemIcon 图标持久化耗时过长 duration=3.115s id=docklabel-watchcow-portal-1panel icon=http://127.0.0.1:5900/icons/images.png`
+   - `[WARN] 拒绝卸载非本程序管理的外部第三方应用 appName=watchcow.watchcow-portal`（严禁触碰/卸载外部第三方应用，必须严守边界）。
+   - `[WARN] [PERF] ReconcileInstalledItems 状态对齐耗时过长 duration=2m18.57747467s items_count=9`
+4. **弹窗误报未保存（二次确认弹窗扰民）**：
+   - 从进程列表点击“放到桌面”，什么都没改直接关闭窗口，误弹出“当前内容已修改但尚未保存”；
+   - 从 Watchcow 点击“复制”，什么都没改直接关闭窗口，误弹出未保存警告；
+   - 在添加/编辑弹窗中切换模式标签（“本机端口”、“端口映射”、“网页链接”）即使未输入任何内容也提示未保存。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **卸载性能大幅优化与外部应用隔离 (`fnos-app/cmd/uninstall_init`)**：
+   - **严格隔离**：完全剔除对 `watchcow.` 开头应用的扫描与卸载尝试，仅处理 `(fndocker|put-port)\.[a-zA-Z0-9._-]+` 格式的本程序应用，彻底消除因权限不足或越权卸载外部应用产生的 30 秒无谓卡顿与安全告警；
+   - **并发极速隐藏**：第一阶段并发执行所有条目的 `stop` 命令（后台并行并 `wait`），桌面图标在 0.5 秒内瞬间全部隐藏；
+   - **3 协程受控并发卸载**：第二阶段引入固定并发池（`MAX_PARALLEL=3`）并行调用 `appcenter-cli uninstall`，若个别失败自动回退单次串行重试，9 个应用的卸载耗时从 126 秒暴降至 20~30 秒。
+
+2. **全链路安装/卸载/启停毫秒级生命周期日志追踪 (`fnos-app/cmd/*`)**：
+   - 在 `install_init`、`install_callback`、`uninstall_init`、`uninstall_callback`、`upgrade_init`、`upgrade_callback` 以及 `main`（`start_process`/`stop_process`）中全部注入毫秒级时间戳记录器；
+   - 所有操作日志统一输出至 `/tmp/fn-docker-to-desktop-lifecycle.log`，用户可随时通过命令实时查看安装、启停与卸载的精确耗时明细。所有脚本均已赋予 0755 执行权限。
+
+3. **DockLabel 图标解析与持久化性能优化 (`internal/desktop/docklabel.go`, `internal/desktop/icons.go`)**：
+   - **本地回路/回环直接穿透**：`loadIconImage` 与 `ResolveDockLabelIconBytes` 判定为本地回环或局域网地址（如 `127.0.0.1:5900/icons/images.png`）时，直接尝试本地读取与短超时请求，坚决跳过公网 CDN/GitHub 镜像查询，消除无谓的网络超时；
+   - **通用词与内部标识过滤**：`isGenericIconCandidate` 识别 `image`、`images`、`default`、`icon`、`portal` 等通用词及 `copy_*`、`dock_cache_*` 标识，严禁向 Homarr CDN 发起无意义的镜像查询；
+   - **重装恢复链路加固**：当条目图标为 `copy_<id>.png` 且物理文件因重装丢失时，`PersistItemIcon` 自动通过条目的 `ContainerName` 反查 Docker 标签并恢复物理图标，无需二次重装。
+
+4. **对齐告警阈值动态自适应 (`internal/desktop/installer.go`)**：
+   - `ReconcileInstalledItems` 的耗时警告阈值根据缺失条目数 `len(missing)` 动态自适应调整（基础 2 秒 + 每条缺失安装 15 秒），避免多应用冷启动安装时的正常耗时被误报为性能警告。
+
+5. **桌面表格 URL 路径完整显示 (`web/app.js`)**：
+   - 修复 `renderDesktopTable` 中的路径拼接逻辑：在“本机端口”与“端口映射”模式下，当 `item.path` 存在且不为 `/` 时，正确拼接到目标端口后展示（如 `:${item.port}${pathSuffix}` 以及 `${item.target_url}${pathSuffix} ➔ :${item.port}`），使复制的 Watchcow 条目路径完全可见。
+
+6. **桌面图标弹窗未保存检测彻底根治 (`web/app.js`, `web/index.html`)**：
+   - **CDN 404 异步清除快照对齐**：在 `openCreateDesktopModalWithPort` 中，过滤通用词不请求 CDN；若 CDN 推荐图标加载失败触发 `onerror`，清空 `item-icon` 的同时同步更新快照 `state.desktopItemFormSnapshot` 与 `state.initialModalIcon`，彻底解决未修改却提示保存的问题；
+   - **模式切换不再篡改 UI 类型**：移除 `setDesktopModalMode` 中强行将 `item-ui-type` 赋值为 `'url'` 的逻辑，避免在模式标签间切换时引起内部数据脏变；
+   - **模式切换脏检测优化**：`isDesktopItemFormDirty` 中在不同模式间切换且新模式未填写任何内容时判定为纯界面导航浏览，不触发脏告警；并增加 `[DIRTY-CHECK]` 调试输出；
+   - **表单禁用自动填充**：`<form id="form-desktop-item" autocomplete="off">`，防止浏览器无感填充导致字段比对不一致。
+
+7. **全链路版本升级至 `v1.1.36`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.36`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 
