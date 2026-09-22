@@ -1176,7 +1176,7 @@ table.data-table td.table-sink-divider-cell {
 /* ==================== Logs Viewer ==================== */
 .log-info-banner {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   background-color: var(--bg-surface-subtle);
   border: 1px solid var(--border-color);

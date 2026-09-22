@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.41"
+const appVersion = "1.1.42"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -122,8 +122,8 @@ func main() {
 		return
 	}
 
-	// 1. Initialize 8-day rolling logger with auto-pruning
-	logInst, err := logger.Init(*dataDirFlag, 8)
+	// 1. Initialize 28-day dual retention streaming logger (28 days and max 28MB) with auto-pruning
+	logInst, err := logger.Init(*dataDirFlag, 28)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化日志系统失败: %v\n", err)
 	} else {

@@ -153,7 +153,7 @@ let state = {
   isSettingsDirty: false,
   eventSource: null,
   activeMode: 'local',
-  logSource: 'ALL',
+  logSource: 'app',
   logLevel: 'ALL',
   logSearch: '',
   logPage: 1,
@@ -557,10 +557,6 @@ async function checkAppUpdate(force = false) {
           if (dlBtn && data.download_url) {
             dlBtn.href = data.download_url;
           }
-          const accBtn = document.getElementById('btn-download-accelerated');
-          if (accBtn && data.accelerated_url) {
-            accBtn.href = data.accelerated_url;
-          }
           const changelogEl = document.getElementById('update-changelog-body');
           if (changelogEl) {
             changelogEl.textContent = (data.release_notes || '').trim() || '暂无更新日志说明';
@@ -605,7 +601,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.41';
+  const ver = state.settings?.version || '1.1.42';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4307,7 +4303,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.41';
+      const ver = state.settings?.version || '1.1.42';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4747,11 +4743,6 @@ async function fetchLogs(isAutoPoll = false) {
       const data = await res.json();
       state.logs = data.lines || [];
 
-      const pathEl = document.getElementById('log-path-display');
-      if (pathEl && data.log_path) {
-        pathEl.textContent = data.log_path;
-      }
-
       renderLogs(isAutoPoll);
     }
   } catch (err) {
@@ -4772,12 +4763,6 @@ function renderLogs(isAutoPoll = false) {
   }
   if (state.logPage < 1) {
     state.logPage = 1;
-  }
-
-  // Update total count and total pages display
-  const totalEl = document.getElementById('log-total-count');
-  if (totalEl) {
-    totalEl.textContent = totalCount;
   }
 
   const totalPagesEl = document.getElementById('log-total-pages');
@@ -4835,7 +4820,7 @@ function renderLogs(isAutoPoll = false) {
 }
 
 function downloadLogFile() {
-  const source = state.logSource || 'ALL';
+  const source = state.logSource || 'app';
   window.open(apiUrl(`/api/logs/download?source=${encodeURIComponent(source)}`), '_blank');
 }
 

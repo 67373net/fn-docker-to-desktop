@@ -2624,7 +2624,6 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	if res.DownloadURL == "" {
 		res.DownloadURL = fmt.Sprintf("https://github.com/67373net/fn-docker-to-desktop/releases/download/%s/%s", ghRelease.TagName, targetAsset)
 	}
-	res.AcceleratedURL = fmt.Sprintf("https://mirror.ghproxy.com/%s", res.DownloadURL)
 
 	h.versionCheckMu.Lock()
 	h.versionCheckCached = &res

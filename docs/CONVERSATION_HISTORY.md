@@ -4107,3 +4107,70 @@ INFO
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 57 - v1.1.42 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **移除国内镜像高速下载按钮，文案更新**：
+   - 移除不稳定的“国内镜像高速下载”按钮；
+   - “下载 .fpk 安装包”按钮文案改为“从 github 下载安装包”。
+2. **日志信息栏精简**：
+   - 移除日志信息条中的“存储路径 /usr/local/apps/@appdata/fn-docker-to-desktop/logs/app.log 流式存储”；
+   - 移除分页条中的“(共 5000 条)”文本，仅保留极简的分页控制组件：`每页显示 [200] 条，第 [x ▼] 页 / 共 N 页`。
+3. **日志性能评估与双重淘汰策略 (28 天 + 28 MB)**：
+   - 评估 SQLite 与纯文本日志性能优劣；
+   - 设定日志保存规则：保留 28 天且最多 28 MB，只要任一条件超限，立即淘汰清理最旧条目。
+4. **彻底消除终端动画/旋转进度条重复垃圾日志**：
+   - 用户反馈在日志中出现了大量终端进度动画字符（如 `| uninstalling.`, `- uninstalling..`, `\ uninstalling..`, `checking` 等）；
+   - 明确流式存储为单流追加而非展示终端裸输出；
+   - 恢复上个版本的干净日志体验：默认展示应用运行日志（`app`），生命周期候选剔除裸重定向日志文件，严格过滤 CLI 进度帧与无结构时间戳的终端杂音。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **纯文本追加与双重淘汰机制 (`internal/logger/logger.go`, `cmd/server/main.go`)**：
+   - **双重限制常量**：设定 `DefaultRetentionDays = 28`、`MaxLogSizeBytes = 28 * 1024 * 1024`（28MB 上限）、`TargetPruneSizeBytes = 24 * 1024 * 1024`（24MB 回缩目标，预留 4MB 缓冲避免频繁触发淘汰）；
+   - **淘汰算法 (`pruneLogFile`)**：
+     - 单次扫描文件行，解析 ISO/RFC 时间戳，遇到多行日志（如 Panic 堆栈）自动继承上级时间戳；
+     - 淘汰条件 1（时间淘汰）：若条目时间戳早于 `time.Now().AddDate(0, 0, -28)`，立即剔除；
+     - 淘汰条件 2（体积淘汰）：若过滤时间后总保留字节依然超出 24MB，自文件头部（最旧条目）依次淘汰直至小于等于目标体积；
+     - 采用原子写入（写入临时文件后执行 POSIX 原子的 `os.Rename`），杜绝并发读取断流或损坏；
+   - **触发时机**：
+     - 程序启动初始化（`logger.Init`）时立即淘汰；
+     - 后台定时器（`runPruningLoop`）每小时扫描淘汰一次；
+     - 日志写入（`Write`）时自动检测当前文件大小，达到 28MB 即刻触发锁定回缩淘汰。
+2. **彻底清理终端垃圾日志与恢复干净日志流 (`internal/logger/logger.go`, `web/index.html`, `web/app.js`)**：
+   - **剔除污染源**：从生命周期读取候选路径中彻底移除 `/tmp/fn-docker-to-desktop-uninstall.log`（该文件系卸载脚本直接接收 `appcenter-cli` 标准输出重定向，包含 `\r` 终端进度帧）；
+   - **终端旋转进度条过滤 (`isCliSpinnerLine`)**：
+     - 严密匹配并丢弃包含 `uninstalling`、`installing`、`verifying files`、`installation complete` 等 CLI 进度关键字的行；
+     - 丢弃单字符/前缀旋转字符（`|`、`/`、`-`、`\`）；
+   - **结构化时间戳白名单 (`parseLifecycleLogLine`)**：
+     - 严格要求生命周期日志必须以 `[202...` 或 `202...` 时间戳开头，任何无规范时间戳的终端裸内容直接拒绝解析；
+   - **默认展示恢复**：
+     - 默认激活 Chip 由 `ALL` 还原为 `运行日志`（`app`），打开页面默认仅读取 Go 运行时干净日志流，无任何生命周期杂质；
+     - 只有显式点击 `生命周期` 或 `全部来源` 时，才调取经过严格白名单清洗后的生命周期事件。
+3. **界面精简与文案调整 (`web/index.html`, `web/style.css`, `web/app.js`, `internal/api/handler.go`)**：
+   - **更新下载按钮**：
+     - 移除 `#btn-download-accelerated`（国内镜像高速下载）；
+     - 将 `#btn-download-fpk` 文案修改为“从 github 下载安装包”；
+     - 后端移除版本检查中的镜像加速链接拼接；
+   - **日志信息栏极简化**：
+     - 移除 `.log-info-meta`（存储路径及流式存储标签）；
+     - 移除 `(共 5000 条)`（`.log-total-count-text`）；
+     - `.log-info-banner` 调整为 `justify-content: flex-start;`，让分页控件优雅居左靠拢。
+4. **全链路版本升级至 `v1.1.42`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.42`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 新增 `TestCliSpinnerAndGarbageFiltering`：验证各类终端旋转条帧与杂乱字符被 100% 拦截丢弃；
+   - 新增 `TestDualRetentionPruning`：验证超过 28 天历史日志淘汰与超过体积阈值时从头部截断回缩逻辑；
+   - 验证 `ReadLogs("app", ...)` 仅读取应用日志，不读取生命周期日志；
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+

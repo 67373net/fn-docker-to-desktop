@@ -129,4 +129,99 @@ func TestStreamingReadLogsDescending(t *testing.T) {
 	if resp.Lines[3].Timestamp != "2026-09-22 10:00:00" {
 		t.Errorf("Expected index 3 to be oldest timestamp 2026-09-22 10:00:00, got %s", resp.Lines[3].Timestamp)
 	}
+
+	// Verify "app" sourceFilter only reads app logs
+	appResp, err := l.ReadLogs("app", "ALL", "", 100)
+	if err != nil {
+		t.Fatalf("ReadLogs for app failed: %v", err)
+	}
+	if appResp.TotalLines != 3 {
+		t.Errorf("Expected exactly 3 app logs, got %d", appResp.TotalLines)
+	}
+	for _, line := range appResp.Lines {
+		if line.Source != "app" {
+			t.Errorf("Expected only app logs, got source %s", line.Source)
+		}
+	}
+}
+
+func TestCliSpinnerAndGarbageFiltering(t *testing.T) {
+	garbageLines := []string{
+		"| uninstalling.[Info]Uninstall",
+		"checking",
+		"- uninstalling..",
+		"\\ uninstalling..",
+		"| uninstalling.",
+		"/ uninstalling....",
+		"Verifying files",
+		"|",
+		"/",
+		"-",
+		"\\",
+	}
+
+	for _, g := range garbageLines {
+		if !isCliSpinnerLine(g) {
+			// At least one filter must catch it
+			entry := parseLifecycleLogLine(g)
+			if entry.Raw != "" {
+				t.Errorf("Expected garbage line to be rejected, but got parsed: %q", g)
+			}
+		}
+		entry := parseLifecycleLogLine(g)
+		if entry.Raw != "" {
+			t.Errorf("parseLifecycleLogLine should return empty LogEntry for garbage: %q", g)
+		}
+	}
+}
+
+func TestDualRetentionPruning(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "logger-prune-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "test.log")
+	// Write 5 lines: 2 older than 28 days, 3 recent
+	content := "2020-01-01 10:00:00 [INFO] Old line 1\n" +
+		"2020-01-02 10:00:00 [INFO] Old line 2\n" +
+		"2026-09-20 10:00:00 [INFO] Recent line 1\n" +
+		"2026-09-21 10:00:00 [INFO] Recent line 2\n" +
+		"2026-09-22 10:00:00 [INFO] Recent line 3\n"
+
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Prune with 28 days retention: the 2020 lines must be removed
+	if err := pruneLogFile(filePath, 28, 1024*1024, 1024*1024); err != nil {
+		t.Fatalf("pruneLogFile failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("Failed to read pruned file: %v", err)
+	}
+	result := string(data)
+	if strings.Contains(result, "2020-01-01") || strings.Contains(result, "2020-01-02") {
+		t.Errorf("Old lines older than 28 days were not pruned: %s", result)
+	}
+	if !strings.Contains(result, "Recent line 1") || !strings.Contains(result, "Recent line 3") {
+		t.Errorf("Recent lines were accidentally pruned: %s", result)
+	}
+
+	// Test size-based pruning: set targetBytes to very small (e.g. 50 bytes)
+	if err := pruneLogFile(filePath, 28, 50, 45); err != nil {
+		t.Fatalf("pruneLogFile size limit failed: %v", err)
+	}
+
+	dataSize, _ := os.ReadFile(filePath)
+	if len(dataSize) > 50 {
+		t.Errorf("Expected pruned file to be <= 50 bytes, got %d bytes", len(dataSize))
+	}
+	// The latest line should be preserved
+	if !strings.Contains(string(dataSize), "Recent line 3") {
+		t.Errorf("Expected newest line 3 to be kept, got: %s", string(dataSize))
+	}
 }

@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.41">
+  <link rel="stylesheet" href="style.css?v=1.1.42">
 </head>
 <body>
   <!-- Header Bar -->
@@ -174,9 +174,9 @@
       <!-- Logs Toolbar -->
       <div class="toolbar">
         <div class="filter-chips" id="log-source-chips">
-          <button class="chip active" data-log-source="ALL">全部来源</button>
-          <button class="chip" data-log-source="app">运行日志</button>
+          <button class="chip active" data-log-source="app">运行日志</button>
           <button class="chip" data-log-source="lifecycle">生命周期</button>
+          <button class="chip" data-log-source="ALL">全部来源</button>
         </div>
 
         <div class="filter-chips" id="log-level-chips">
@@ -197,20 +197,14 @@
         <button class="btn btn-secondary" id="btn-download-logs" title="下载当前日志文件">下载日志</button>
       </div>
 
-      <!-- Log Info Bar -->
+      <!-- Log Pagination Bar -->
       <div class="log-info-banner">
-        <div class="log-info-meta">
-          <span class="log-info-tag">存储路径</span>
-          <code id="log-path-display">/var/apps/fn-docker-to-desktop/var/logs/app.log</code>
-          <span class="badge badge-neutral" id="log-retention-badge" style="margin-left: 8px;">流式存储</span>
-        </div>
         <div class="log-pagination" id="log-pagination">
           <span class="log-page-label">每页显示</span>
           <input type="number" id="log-page-size" class="form-input form-input-sm log-page-size-input" min="20" max="1000" step="10" value="200" title="可输入 20-1000 的正整数">
           <span class="log-page-label">条，第</span>
           <select id="log-page-select" class="form-select form-select-sm log-page-select-dropdown" title="选择页码"></select>
           <span class="log-page-label">页 / 共 <span id="log-total-pages">1</span> 页</span>
-          <span class="log-total-count-text">(共 <span id="log-total-count">0</span> 条)</span>
         </div>
       </div>
 
@@ -474,7 +468,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin-bottom: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.41</span></h3>
+            <h3 class="about-md-h3" style="margin-bottom: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.42</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -490,8 +484,7 @@
                 <span class="update-time" id="update-published-time"></span>
               </div>
               <div class="update-actions">
-                <a href="#" class="btn btn-sm btn-primary" id="btn-download-fpk" target="_blank" rel="noopener noreferrer">下载 .fpk 安装包</a>
-                <a href="#" class="btn btn-sm btn-secondary" id="btn-download-accelerated" target="_blank" rel="noopener noreferrer">国内镜像高速下载</a>
+                <a href="#" class="btn btn-sm btn-primary" id="btn-download-fpk" target="_blank" rel="noopener noreferrer">从 github 下载安装包</a>
               </div>
             </div>
             <div class="update-changelog-title">更新日志：</div>
@@ -517,12 +510,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.41" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.42" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.41" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.42" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -924,6 +917,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.41"></script>
+  <script src="app.js?v=1.1.42"></script>
 </body>
 </html>

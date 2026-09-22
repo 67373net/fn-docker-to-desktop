@@ -37,6 +37,12 @@ type LogResponse struct {
 	Lines       []LogEntry `json:"lines"`
 }
 
+const (
+	DefaultRetentionDays = 28
+	MaxLogSizeBytes      = 28 * 1024 * 1024 // 28MB 最大保留体积
+	TargetPruneSizeBytes = 24 * 1024 * 1024 // 24MB 淘汰目标体积 (超限后淘汰最老日志并预留缓冲空间)
+)
+
 // Logger manages multi-destination streaming logging and auto-pruning.
 type Logger struct {
 	mu            sync.Mutex
@@ -55,7 +61,7 @@ var (
 // Init initializes the streaming logger and configures slog default handler.
 func Init(dataDir string, retentionDays int) (*Logger, error) {
 	if retentionDays <= 0 {
-		retentionDays = 8
+		retentionDays = DefaultRetentionDays
 	}
 
 	// Determine log directory:
@@ -155,20 +161,8 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 
 	// Filter out lone spinner progress lines
 	trimmed := strings.TrimSpace(string(p))
-	if strings.Contains(trimmed, "Verifying files") && !strings.Contains(trimmed, "appcenter-cli") {
+	if isCliSpinnerLine(trimmed) {
 		return len(p), nil
-	}
-
-	// Size-based auto-rotation (> 20MB) to prevent disk exhaustion
-	if l.currentFile != nil {
-		if fi, err := l.currentFile.Stat(); err == nil && fi.Size() > 20*1024*1024 {
-			_ = l.currentFile.Close()
-			oldPath := filepath.Join(l.logDir, "app.log.old")
-			curPath := filepath.Join(l.logDir, "app.log")
-			_ = os.Remove(oldPath)
-			_ = os.Rename(curPath, oldPath)
-			l.currentFile, _ = os.OpenFile(curPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		}
 	}
 
 	// Write to stdout
@@ -186,55 +180,89 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	if l.currentFile != nil {
 		n, err = l.currentFile.Write(p)
 		_ = l.currentFile.Sync()
+
+		// Size-based auto-pruning (> 28MB) to keep within 28MB limit
+		if fi, err := l.currentFile.Stat(); err == nil && fi.Size() > MaxLogSizeBytes {
+			l.pruneCurrentFileLocked()
+		}
+
 		return n, err
 	}
 
 	return len(p), nil
 }
 
-// PruneOldLogs scans the log directory and deletes files older than retentionDays.
+func (l *Logger) pruneCurrentFileLocked() {
+	curPath := filepath.Join(l.logDir, "app.log")
+	if l.currentFile != nil {
+		_ = l.currentFile.Sync()
+		_ = l.currentFile.Close()
+		l.currentFile = nil
+	}
+
+	_ = pruneLogFile(curPath, l.retentionDays, MaxLogSizeBytes, TargetPruneSizeBytes)
+
+	var err error
+	l.currentFile, err = os.OpenFile(curPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil && l.outWriter != nil {
+		_, _ = fmt.Fprintf(l.outWriter, "[ERROR] [logger] 重新打开日志文件失败: %v\n", err)
+	}
+}
+
+// PruneOldLogs scans the log directory and trims logs exceeding 28 days or 28MB.
 func (l *Logger) PruneOldLogs() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	entries, err := os.ReadDir(l.logDir)
-	if err != nil {
-		return
-	}
+	// 1. Prune primary streaming app.log (both > 28 days and > 28MB)
+	l.pruneCurrentFileLocked()
 
+	// 2. Prune legacy app-*.log files
 	cutoff := time.Now().AddDate(0, 0, -l.retentionDays)
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, "app-") || !strings.HasSuffix(name, ".log") {
-			continue
-		}
-
-		// Extract date: app-YYYY-MM-DD.log
-		datePart := strings.TrimPrefix(name, "app-")
-		datePart = strings.TrimSuffix(datePart, ".log")
-
-		fileDate, err := time.Parse("2006-01-02", datePart)
-		if err != nil {
-			// Fallback to ModTime
-			if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+	entries, err := os.ReadDir(l.logDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasPrefix(name, "app-") && strings.HasSuffix(name, ".log") {
+				datePart := strings.TrimSuffix(strings.TrimPrefix(name, "app-"), ".log")
+				if fileDate, err := time.Parse("2006-01-02", datePart); err == nil {
+					if fileDate.Before(cutoff) {
+						_ = os.Remove(filepath.Join(l.logDir, name))
+						if l.outWriter != nil {
+							_, _ = fmt.Fprintf(l.outWriter, "%s [INFO] [logger] 已清理超过 %d 天的历史日志: %s\n",
+								time.Now().Format("2006-01-02 15:04:05"), l.retentionDays, name)
+						}
+					}
+				} else {
+					if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+						_ = os.Remove(filepath.Join(l.logDir, name))
+					}
+				}
+			}
+			// Clean up stale temporary files
+			if strings.HasSuffix(name, ".prune.tmp") {
 				_ = os.Remove(filepath.Join(l.logDir, name))
 			}
-			continue
-		}
-
-		if fileDate.Before(cutoff) {
-			targetPath := filepath.Join(l.logDir, name)
-			_ = os.Remove(targetPath)
-			if l.outWriter != nil {
-				_, _ = fmt.Fprintf(l.outWriter, "%s [INFO] [logger] 已自动清理超过 %d 天的历史日志: %s\n",
-					time.Now().Format("2006-01-02 15:04:05"), l.retentionDays, name)
-			}
 		}
 	}
+
+	// 3. Prune fallback and lifecycle logs
+	if l.fallbackFile != nil {
+		_ = l.fallbackFile.Sync()
+		_ = l.fallbackFile.Close()
+		l.fallbackFile = nil
+	}
+	_ = pruneLogFile("/tmp/fn-docker-to-desktop.log", l.retentionDays, MaxLogSizeBytes, TargetPruneSizeBytes)
+	l.fallbackFile, _ = os.OpenFile("/tmp/fn-docker-to-desktop.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+
+	_ = pruneLogFile("/tmp/fn-docker-to-desktop-lifecycle.log", l.retentionDays, MaxLogSizeBytes, TargetPruneSizeBytes)
+	_ = pruneLogFile(filepath.Join(l.logDir, "lifecycle.log"), l.retentionDays, MaxLogSizeBytes, TargetPruneSizeBytes)
+
+	// Clean up legacy noisy uninstall log if it exists in /tmp
+	_ = os.Remove("/tmp/fn-docker-to-desktop-uninstall.log")
 }
 
 func (l *Logger) runPruningLoop() {
@@ -295,7 +323,7 @@ func (l *Logger) GetLogFilePath(dateStr ...string) string {
 }
 
 // ReadLogs reads and filters logs from app.log and/or lifecycle logs.
-// sourceFilter can be "app", "lifecycle", or ""/"ALL" (for unified combined stream).
+// sourceFilter can be "app", "lifecycle", or "all" / "".
 // Entries are returned in descending chronological order (newest logs at top).
 func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (*LogResponse, error) {
 	if limit <= 0 || limit > 10000 {
@@ -313,9 +341,17 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 		Lines:   []LogEntry{},
 	}
 
-	var allEntries []LogEntry
+	type orderedEntry struct {
+		entry LogEntry
+		order int
+	}
+	var allEntries []orderedEntry
+	orderCounter := 0
 
 	matchAndAdd := func(entry LogEntry) {
+		if entry.Raw == "" {
+			return
+		}
 		if levelFilter != "" && levelFilter != "all" {
 			if strings.ToLower(entry.Level) != levelFilter {
 				return
@@ -327,11 +363,15 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 				return
 			}
 		}
-		allEntries = append(allEntries, entry)
+		orderCounter++
+		allEntries = append(allEntries, orderedEntry{
+			entry: entry,
+			order: orderCounter,
+		})
 	}
 
-	// Read app running logs if sourceFilter is "" or "all" or "app"
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == "app" {
+	// Read app running logs if sourceFilter is "app", "all", or ""
+	if sourceFilter == "app" || sourceFilter == "all" || sourceFilter == "" {
 		// Read legacy app-*.log files first so past entries are preserved
 		entries, _ := os.ReadDir(l.logDir)
 		var legacyFiles []string
@@ -362,11 +402,10 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 		}
 	}
 
-	// Read lifecycle logs if sourceFilter is "" or "all" or "lifecycle"
-	if sourceFilter == "" || sourceFilter == "all" || sourceFilter == "lifecycle" {
+	// Read lifecycle logs if sourceFilter is "lifecycle" or "all"
+	if sourceFilter == "lifecycle" || sourceFilter == "all" {
 		candidates := []string{
 			filepath.Join(l.logDir, "lifecycle.log"),
-			"/tmp/fn-docker-to-desktop-uninstall.log",
 			"/tmp/fn-docker-to-desktop-lifecycle.log",
 		}
 		seenFiles := make(map[string]bool)
@@ -384,25 +423,31 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 
 	// Sort descending by timestamp: newer logs displayed at top
 	sort.SliceStable(allEntries, func(i, j int) bool {
-		t1 := allEntries[i].Timestamp
-		t2 := allEntries[j].Timestamp
+		t1 := allEntries[i].entry.Timestamp
+		t2 := allEntries[j].entry.Timestamp
 		if t1 != "" && t2 != "" {
 			if t1 != t2 {
 				return t1 > t2
 			}
+			return allEntries[i].order > allEntries[j].order
 		} else if t1 != "" {
 			return true
 		} else if t2 != "" {
 			return false
 		}
-		return i < j
+		return allEntries[i].order > allEntries[j].order
 	})
 
 	resp.TotalLines = len(allEntries)
-	if len(allEntries) > limit {
-		resp.Lines = allEntries[:limit]
+	resultLines := make([]LogEntry, 0, len(allEntries))
+	for _, item := range allEntries {
+		resultLines = append(resultLines, item.entry)
+	}
+
+	if len(resultLines) > limit {
+		resp.Lines = resultLines[:limit]
 	} else {
-		resp.Lines = allEntries
+		resp.Lines = resultLines
 	}
 
 	return resp, nil
@@ -422,10 +467,7 @@ func readLinesFromFile(path string, source string, handler func(LogEntry)) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(trimmed, "Verifying files") || (len(trimmed) <= 2 && strings.ContainsAny(trimmed, "|/\\-")) {
+		if trimmed == "" || isCliSpinnerLine(trimmed) {
 			continue
 		}
 
@@ -434,6 +476,9 @@ func readLinesFromFile(path string, source string, handler func(LogEntry)) {
 			entry = parseLifecycleLogLine(line)
 		} else {
 			entry = parseLogLine(line)
+		}
+		if entry.Raw == "" {
+			continue
 		}
 		entry.Source = source
 		handler(entry)
@@ -445,7 +490,6 @@ func (l *Logger) GetLifecycleLogFilePath() string {
 	candidates := []string{
 		"/tmp/fn-docker-to-desktop-lifecycle.log",
 		filepath.Join(l.logDir, "lifecycle.log"),
-		"/tmp/fn-docker-to-desktop-uninstall.log",
 	}
 	for _, c := range candidates {
 		if fi, err := os.Stat(c); err == nil && !fi.IsDir() && fi.Size() > 0 {
@@ -461,13 +505,22 @@ func (l *Logger) ReadLifecycleLogs(levelFilter, search string, limit int) (*LogR
 }
 
 func parseLifecycleLogLine(raw string) LogEntry {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || isCliSpinnerLine(trimmed) {
+		return LogEntry{}
+	}
+
+	// Structured lifecycle log line MUST have a timestamp prefix: [202... or 202...
+	if !strings.HasPrefix(trimmed, "[202") && !strings.HasPrefix(trimmed, "202") {
+		return LogEntry{}
+	}
+
 	entry := LogEntry{
 		Raw:    raw,
 		Source: "lifecycle",
 		Level:  "info",
 	}
 
-	trimmed := strings.TrimSpace(raw)
 	if strings.HasPrefix(trimmed, "[") {
 		idx := strings.Index(trimmed, "]")
 		if idx > 1 {
@@ -504,6 +557,11 @@ func parseLifecycleLogLine(raw string) LogEntry {
 }
 
 func parseLogLine(raw string) LogEntry {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || isCliSpinnerLine(trimmed) {
+		return LogEntry{}
+	}
+
 	entry := LogEntry{
 		Raw:    raw,
 		Source: "app",
@@ -534,6 +592,174 @@ func parseLogLine(raw string) LogEntry {
 	}
 
 	return entry
+}
+
+var timeLayouts = []string{
+	"2006-01-02 15:04:05.000",
+	"2006-01-02 15:04:05.00",
+	"2006-01-02 15:04:05.0",
+	"2006-01-02 15:04:05",
+	time.RFC3339,
+	time.RFC3339Nano,
+}
+
+func parseLineTimestamp(line string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "[") {
+		idx := strings.Index(trimmed, "]")
+		if idx > 1 {
+			tsStr := trimmed[1:idx]
+			for _, layout := range timeLayouts {
+				if t, err := time.ParseInLocation(layout, tsStr, time.Local); err == nil {
+					return t, true
+				}
+			}
+		}
+	} else {
+		parts := strings.SplitN(trimmed, " ", 3)
+		if len(parts) >= 2 {
+			tsStr := parts[0] + " " + parts[1]
+			for _, layout := range timeLayouts {
+				if t, err := time.ParseInLocation(layout, tsStr, time.Local); err == nil {
+					return t, true
+				}
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func isCliSpinnerLine(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+
+	// Filter common CLI progress indicators
+	if strings.Contains(lower, "uninstalling") ||
+		strings.Contains(lower, "installing") ||
+		strings.Contains(lower, "verifying files") ||
+		strings.Contains(lower, "installation complete") {
+		return true
+	}
+	if strings.Contains(lower, "checking") && (strings.Contains(lower, "uninstall") || strings.Contains(lower, "install") || len(trimmed) <= 20) {
+		return true
+	}
+
+	// Filter single spinner characters or spinner prefix like "| uninstalling." or "- uninstalling.."
+	if len(trimmed) <= 2 && strings.ContainsAny(trimmed, "|/\\-") {
+		return true
+	}
+	if len(trimmed) >= 2 && (trimmed[0] == '/' || trimmed[0] == '\\' || trimmed[0] == '|' || trimmed[0] == '-') {
+		if trimmed[1] == ' ' || trimmed[1] == '\t' || strings.Contains(lower, "uninstalling") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func pruneLogFile(filePath string, retentionDays int, maxBytes int64, targetBytes int64) error {
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	if retentionDays <= 0 {
+		retentionDays = DefaultRetentionDays
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+
+	if fi.Size() == 0 {
+		return nil
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	type lineMeta struct {
+		text string
+		size int
+	}
+
+	var keptLines []lineMeta
+	var totalKeptBytes int64
+	var lastTime time.Time
+	var droppedOldLines bool
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 128*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if isCliSpinnerLine(trimmed) {
+			droppedOldLines = true
+			continue
+		}
+
+		if t, ok := parseLineTimestamp(trimmed); ok {
+			lastTime = t
+		}
+
+		// Check if older than retentionDays (28 days)
+		if !lastTime.IsZero() && lastTime.Before(cutoff) {
+			droppedOldLines = true
+			continue
+		}
+
+		lineLen := len(line) + 1 // newline
+		keptLines = append(keptLines, lineMeta{
+			text: line,
+			size: lineLen,
+		})
+		totalKeptBytes += int64(lineLen)
+	}
+
+	if err := scanner.Err(); err != nil && err != io.EOF {
+		return err
+	}
+
+	// If no lines were dropped and size does not exceed maxBytes, no rewrite needed
+	if !droppedOldLines && totalKeptBytes <= maxBytes {
+		return nil
+	}
+
+	// If totalKeptBytes exceeds targetBytes, drop oldest lines from head
+	startIndex := 0
+	for totalKeptBytes > targetBytes && startIndex < len(keptLines) {
+		totalKeptBytes -= int64(keptLines[startIndex].size)
+		startIndex++
+	}
+
+	tmpPath := filePath + ".prune.tmp"
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	w := bufio.NewWriter(tmpFile)
+	for i := startIndex; i < len(keptLines); i++ {
+		_, _ = w.WriteString(keptLines[i].text)
+		_ = w.WriteByte('\n')
+	}
+	_ = w.Flush()
+	_ = tmpFile.Sync()
+	_ = tmpFile.Close()
+
+	return os.Rename(tmpPath, filePath)
 }
 
 // LogDiagnostic outputs detailed startup diagnostics to help investigate environment and startup issues.
@@ -608,6 +834,7 @@ func LogDiagnostic(version string, port int, host, dataDir, iconPath string, soc
 		slog.Info("日志系统",
 			"日志存储路径", filepath.Join(defaultLogger.LogDir(), "app.log"),
 			"存储模式", "单文件流式存储",
+			"保留策略", fmt.Sprintf("最长 %d 天或最大 %d MB (满足其一即淘汰超限日志)", defaultLogger.retentionDays, MaxLogSizeBytes/(1024*1024)),
 		)
 	}
 	slog.Info(banner)
