@@ -485,7 +485,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.38",
+		AppVersion: "1.1.39",
 	})
 
 	mux := http.NewServeMux()
@@ -600,7 +600,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.38",
+		AppVersion: "1.1.39",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

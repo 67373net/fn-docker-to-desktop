@@ -3924,3 +3924,61 @@ INFO
 
 
 
+
+---
+
+## Turn 54 - v1.1.39 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **排查并彻底解决重复图标问题**：
+   - 用户反馈出现两个一模一样的图标，卸载程序后一个消失另一个还在，重装后才消失。需解释原因并杜绝此类问题再次发生。
+2. **去除桌面图标名称列 Emoji**：
+   - 移除桌面表格名称列中的 `📢` 公告提示 emoji，避免画蛇添足。
+3. **彻底修复广域网/公网访问时代理局域网设备的跨域与 CSRF 报错**：
+   - 用户在外网访问本 app，使用代理端口模式填写局域网其他设备 IP 时，遇到跨域错误、CSRF 防护拦截等问题。
+4. **修复桌面图标名称列图标与文字换行错位 Bug**：
+   - 上方自定义图标条目中，图标跑到文字上方并导致换行，要求图标在文字左侧水平居中对齐。
+5. **设置桌面表格列最小宽度**：
+   - “名称”列最小宽度设置为至少 5 个中文字符，“目标 / 映射端口”列最小宽度设置为至少 8 个中文字符。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **重复图标成因分析与闭环治理 (`web/app.js`, `cmd/server/main.go`, `internal/desktop/installer.go`)**：
+   - **成因解释**：用户在 Watchcow 区域已启用某项目（系统生成 `fndocker.dock-<id>` 子应用），随后点击“复制”新建了自定义桌面图标（系统生成 `fndocker.app-<id>` 子应用），两者具有相同名称与图标，导致飞牛桌面同时存在两个原生图标。旧版 `uninstall_init` 未能同时覆盖这两类路径，导致卸载时遗留其中一个孤立图标。
+   - **复制时自动停用源条目 (`web/app.js`)**：在从 Watchcow 复制新建保存成功后，若源 Watchcow 条目处于启用状态，前端自动静默调用接口停用源条目，杜绝同时存在两个相同应用的冲突。
+   - **服务启动自动孤立清理 (`cmd/server/main.go`, `internal/desktop/installer.go`)**：在后台开机对齐协程中，计算当前有效启用的所有应用标识 `activeApps`，并调用 `installer.PruneOrphanApps(activeApps)`，通过正则 `(fndocker|put-port)\.[a-zA-Z0-9._-]+` 扫描 `appcenter-cli list`，发现任何未在有效列表中的孤立快捷方式即自动执行 `stop` 与 `uninstall` 清理。
+
+2. **移除名称列冗余 Emoji (`web/app.js`)**：
+   - 彻底移除 `renderDesktopTable()` 及端口详情弹窗中名称旁的 `📢` 标签，保持界面纯净专业。
+
+3. **外网访问局域网反代服务跨域与 CSRF 全链路增强 (`internal/api/security.go`, `internal/proxy/manager.go`, `web/app.js`)**：
+   - **本应用 API 安全放行 (`internal/api/security.go`, `web/app.js`)**：
+     - 重构跨域检测函数 `isAllowedOrigin`，支持匹配 `X-Forwarded-Host`、Referer Host、`*.fnos.net` 飞牛中继域名、局域网私有网段，以及前端请求专用的 `X-Requested-With: XMLHttpRequest`、`X-App-Session` 请求头，彻底解决外网测试连通性时被判定为跨域 CSRF 拒绝的问题；
+     - 前端全局 `window.fetch` 拦截器无条件追加 `X-Requested-With` 请求头。
+   - **反向代理头信息精准重写 (`internal/proxy/manager.go`)**：
+     - **Origin & Referer 重写**：在 `proxy.Director` 中将传入的 `Origin` 与 `Referer` 重写为目标局域网服务的 Origin（`targetScheme://targetHost`），彻底穿透 OpenWrt、PVE、Home Assistant 等目标服务的 CSRF 与 Host 白名单检验；
+     - **Location 重定向改写**：在 `proxy.ModifyResponse` 中将后端服务返回的 301/302/307 等含局域网 IP 的重定向 Location 转换为相对根路径，防止外网浏览器被错误重定向到无法访问的内网私有 IP；
+     - **CORS 穿透与 OPTIONS 预检**：代理服务在 `ModifyResponse` 中动态透传 CORS 允许头，并在代理入口直接拦截 HTTP `OPTIONS` 请求返回 204 No Content，支持复杂 Web 客户端及 WebSocket 连通；
+     - **Cookie 域重写**：去除 `Set-Cookie` 中局域网专有的 `Domain=` 限制，使登录凭据在反代域名下正确存储生效；
+     - **去除 iframe 限制**：移除 `X-Frame-Options` 并剔除 CSP `frame-ancestors`，确保飞牛桌面内部弹窗无缝载入。
+
+4. **名称列布局与图标文字对齐修复 (`web/app.js`, `web/style.css`)**：
+   - 修正自定义条目名称单元格结构，使用 `.name-with-icon` 容器及 `.name-with-icon-text` 包裹文字，并为 `.icon-cell-img` 设置 `flex-shrink: 0;`；
+   - 在 CSS 中为 `.name-with-icon` 与 `.proc-name-cell` 统一设置 `display: inline-flex; align-items: center; gap: 10px; vertical-align: middle;`，图标稳居文字左侧，杜绝换行。
+
+5. **表格列最小宽度规范 (`web/style.css`)**：
+   - 设置 `#desktop-table` 首列（名称）及 `.name-with-icon-text` 的 `min-width: 5em`（加图标及边距为 `calc(5em + 42px + 2.25rem)`），保证至少展示 5 个中文字符；
+   - 设置第 4 列（目标 / 映射端口）`min-width: calc(8em + 2em)`，保证至少展示 8 个中文字符宽度。
+
+6. **全链路版本升级至 `v1.1.39`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.39`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。

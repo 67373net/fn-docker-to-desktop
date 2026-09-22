@@ -9,19 +9,22 @@ function getAppSessionToken() {
   const originalFetch = window.fetch;
   window.fetch = function(resource, init = {}) {
     const token = getAppSessionToken();
-    if (token) {
-      if (!init.headers) {
-        init.headers = {};
+    if (!init.headers) {
+      init.headers = {};
+    }
+    if (init.headers instanceof Headers) {
+      if (token && !init.headers.has('X-App-Session')) {
+        init.headers.set('X-App-Session', token);
       }
-      if (init.headers instanceof Headers) {
-        if (!init.headers.has('X-App-Session')) {
-          init.headers.set('X-App-Session', token);
-        }
-      } else if (Array.isArray(init.headers)) {
-        init.headers.push(['X-App-Session', token]);
-      } else {
-        init.headers['X-App-Session'] = token;
+      if (!init.headers.has('X-Requested-With')) {
+        init.headers.set('X-Requested-With', 'XMLHttpRequest');
       }
+    } else if (Array.isArray(init.headers)) {
+      if (token) init.headers.push(['X-App-Session', token]);
+      init.headers.push(['X-Requested-With', 'XMLHttpRequest']);
+    } else {
+      if (token) init.headers['X-App-Session'] = token;
+      init.headers['X-Requested-With'] = 'XMLHttpRequest';
     }
     return originalFetch.call(this, resource, init);
   };
@@ -506,7 +509,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.38';
+  const ver = state.settings?.version || '1.1.39';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1148,12 +1151,11 @@ function renderDesktopTable() {
       html += `
         <tr data-id="${item.id}" class="${isUpdating ? 'row-updating' : ''}">
           <td>
-            <div class="proc-name-cell">
+            <div class="name-with-icon">
               <img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标">
-              <div>
+              <div class="name-with-icon-text">
                 <div style="font-weight: 600; color: var(--text-main); font-size: 0.92rem;">
                   ${escapeHtml(item.name)}
-                  ${item.notice_enabled && (item.notice_content || '').trim() ? ' <span style="font-size: 11px; color: #3b82f6;" title="已开启启动前提醒公告">📢</span>' : ''}
                 </div>
                 ${containerHint}
               </div>
@@ -3244,6 +3246,7 @@ function initSettingIconEditor() {
 }
 
 function resetDesktopForm() {
+  state.sourceWatchcowId = null;
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = '';
   state.appShortId = Math.floor(100000 + Math.random() * 900000).toString();
@@ -3389,6 +3392,7 @@ function openCreateDesktopModalFromWatchcow(id) {
   if (!item) return;
 
   resetDesktopForm();
+  state.sourceWatchcowId = id;
   document.getElementById('desktop-modal-title').textContent = '新建桌面图标';
   document.getElementById('item-id').value = '';
   document.getElementById('item-name').value = item.name || '';
@@ -3657,7 +3661,7 @@ function openPortDesktopListModal(port, procName, items) {
 
     html += `<tr>
       <td><img class="icon-cell-img" src="${iconSrc}" onerror="this.src='${apiUrl('/default_item_icon.png')}'" alt="图标"></td>
-      <td><strong>${escapeHtml(item.name)}</strong>${item.notice_enabled && (item.notice_content || '').trim() ? ' <span style="font-size: 11px; color: #3b82f6;" title="已开启启动前提醒公告">📢</span>' : ''}</td>
+      <td><strong>${escapeHtml(item.name)}</strong></td>
       <td><code>${escapeHtml(item.path || '/')}</code></td>
       <td><span class="${openModeClass}">${openModeText}</span></td>
       <td>${statusText}</td>
@@ -3948,6 +3952,32 @@ async function handleSaveDesktopItem(e) {
             }
           }
           renderDesktopTable();
+
+          // Auto-disable source Watchcow item if copied from Watchcow to prevent duplicate icons
+          if (state.sourceWatchcowId) {
+            const srcId = state.sourceWatchcowId;
+            state.sourceWatchcowId = null;
+            const srcItem = (state.watchcowItems || []).find(i => i.id === srcId);
+            if (srcItem && srcItem.enabled) {
+              srcItem.enabled = false;
+              srcItem._updating = true;
+              srcItem._statusText = '停用中...';
+              renderDesktopTable();
+              fetch(apiUrl(`/api/desktop/docklabel/${encodeURIComponent(srcId)}/toggle`), { method: 'POST' })
+                .then(r => r.json())
+                .then(updated => {
+                  srcItem.enabled = updated.enabled;
+                  srcItem._updating = false;
+                  srcItem._statusText = null;
+                  renderDesktopTable();
+                })
+                .catch(() => {
+                  srcItem._updating = false;
+                  renderDesktopTable();
+                });
+            }
+          }
+
           await fetchDesktopItems();
           await fetchPorts();
         }
@@ -4181,7 +4211,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.38';
+      const ver = state.settings?.version || '1.1.39';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

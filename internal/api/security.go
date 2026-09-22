@@ -181,8 +181,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 						reqHost = h
 					}
 					origHost := parsed.Hostname()
-					// Allow same host or loopback / local IP
-					if origHost != reqHost && origHost != "localhost" && origHost != "127.0.0.1" {
+					if !isAllowedOrigin(r, origHost, reqHost) {
 						http.Error(w, `{"error":"forbidden_cross_origin","message":"拒绝跨域操作请求 (CSRF 防护)"}`, http.StatusForbidden)
 						return
 					}
@@ -192,6 +191,57 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedOrigin(r *http.Request, origHost string, reqHost string) bool {
+	// 1. Direct match with Host header
+	if origHost == reqHost || origHost == "localhost" || origHost == "127.0.0.1" || origHost == "::1" {
+		return true
+	}
+
+	// 2. Match with reverse proxy X-Forwarded-Host
+	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
+		if h, _, err := net.SplitHostPort(xfh); err == nil {
+			xfh = h
+		}
+		if strings.EqualFold(origHost, strings.TrimSpace(xfh)) {
+			return true
+		}
+	}
+
+	// 3. Match with Referer hostname
+	if ref := r.Header.Get("Referer"); ref != "" {
+		if u, err := url.Parse(ref); err == nil {
+			if strings.EqualFold(origHost, u.Hostname()) {
+				return true
+			}
+		}
+	}
+
+	// 4. fnOS Connect domain (*.fnos.net)
+	if strings.HasSuffix(strings.ToLower(origHost), ".fnos.net") {
+		return true
+	}
+
+	// 5. Private / LAN IP (e.g. 192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+	if ip := net.ParseIP(origHost); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			return true
+		}
+	}
+
+	// 6. Custom headers that cannot be set by unauthorized cross-origin HTML forms:
+	// A malicious cross-origin website cannot inject X-App-Session, X-Session-Token,
+	// X-Requested-With, or X-Trim-User without explicit CORS approval from the server.
+	if r.Header.Get("X-App-Session") != "" ||
+		r.Header.Get("X-Session-Token") != "" ||
+		r.Header.Get("X-Requested-With") != "" ||
+		r.Header.Get("X-Trim-User") != "" ||
+		r.Header.Get("X-Feiniu-User") != "" {
+		return true
+	}
+
+	return false
 }
 
 // IsRestrictedMetadataTarget checks whether a target URL is cloud metadata service (SSRF prevention).

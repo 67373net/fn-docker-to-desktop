@@ -94,12 +94,42 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 	}
 	proxy.Transport = customTransport
 
+	targetScheme := target.Scheme
+	if targetScheme == "" {
+		targetScheme = "http"
+	}
+	targetOrigin := fmt.Sprintf("%s://%s", targetScheme, target.Host)
+
 	// Custom Director to ensure Host and headers are properly set
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		incomingHost := req.Host
+		if incomingHost == "" {
+			incomingHost = req.Header.Get("Host")
+		}
+		incomingOrigin := req.Header.Get("Origin")
+
 		originalDirector(req)
 		req.Host = target.Host
-		// Set standard forwarding headers
+
+		// 1. Rewrite Origin to target's origin if present
+		// This bypasses target server's CSRF / Host mismatch / CORS blocking
+		if incomingOrigin != "" {
+			req.Header.Set("Origin", targetOrigin)
+			req.Header.Set("X-Original-Origin", incomingOrigin)
+		}
+
+		// 2. Rewrite Referer: if present, replace the scheme://host with targetOrigin
+		if ref := req.Header.Get("Referer"); ref != "" {
+			if refURL, err := url.Parse(ref); err == nil {
+				refURL.Scheme = targetScheme
+				refURL.Host = target.Host
+				req.Header.Set("Referer", refURL.String())
+				req.Header.Set("X-Original-Referer", ref)
+			}
+		}
+
+		// 3. Set standard forwarding headers
 		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
 			if prior, ok := req.Header["X-Forwarded-For"]; ok {
 				clientIP = strings.Join(prior, ", ") + ", " + clientIP
@@ -111,7 +141,80 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 		} else {
 			req.Header.Set("X-Forwarded-Proto", "http")
 		}
-		req.Header.Set("X-Forwarded-Host", req.Host)
+		if incomingHost != "" {
+			req.Header.Set("X-Forwarded-Host", incomingHost)
+		}
+	}
+
+	// ModifyResponse to handle redirects, CORS, iframe embedding, and cookies for WAN access
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// 1. Rewrite Location header in redirects (301, 302, 303, 307, 308)
+		if loc := resp.Header.Get("Location"); loc != "" {
+			if locURL, err := url.Parse(loc); err == nil {
+				if locURL.Host == target.Host || (locURL.Host != "" && strings.EqualFold(locURL.Host, target.Host)) {
+					relPath := locURL.RequestURI()
+					if locURL.Fragment != "" {
+						relPath += "#" + locURL.Fragment
+					}
+					if relPath == "" {
+						relPath = "/"
+					}
+					resp.Header.Set("Location", relPath)
+				}
+			}
+		}
+
+		// 2. Strip X-Frame-Options to allow iframe embedding in fnOS desktop
+		resp.Header.Del("X-Frame-Options")
+
+		// 3. Relax Content-Security-Policy frame-ancestors
+		if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
+			parts := strings.Split(csp, ";")
+			var newParts []string
+			for _, p := range parts {
+				trimmed := strings.TrimSpace(p)
+				if !strings.HasPrefix(strings.ToLower(trimmed), "frame-ancestors") {
+					newParts = append(newParts, p)
+				}
+			}
+			if len(newParts) > 0 {
+				resp.Header.Set("Content-Security-Policy", strings.Join(newParts, "; "))
+			} else {
+				resp.Header.Del("Content-Security-Policy")
+			}
+		}
+
+		// 4. Ensure permissive CORS headers for client-side AJAX/WebSockets
+		reqOrigin := ""
+		if resp.Request != nil {
+			reqOrigin = resp.Request.Header.Get("X-Original-Origin")
+		}
+		if reqOrigin != "" {
+			resp.Header.Set("Access-Control-Allow-Origin", reqOrigin)
+			resp.Header.Set("Access-Control-Allow-Credentials", "true")
+			resp.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD")
+			resp.Header.Set("Access-Control-Allow-Headers", "*, Authorization, Content-Type, X-Requested-With, Cookie")
+		}
+
+		// 5. Rewrite Set-Cookie: strip backend LAN Domain= so cookie binds to proxy domain
+		if cookies := resp.Header["Set-Cookie"]; len(cookies) > 0 {
+			var newCookies []string
+			for _, c := range cookies {
+				parts := strings.Split(c, ";")
+				var cookieParts []string
+				for _, p := range parts {
+					trimmed := strings.TrimSpace(p)
+					if strings.HasPrefix(strings.ToLower(trimmed), "domain=") {
+						continue
+					}
+					cookieParts = append(cookieParts, p)
+				}
+				newCookies = append(newCookies, strings.Join(cookieParts, "; "))
+			}
+			resp.Header["Set-Cookie"] = newCookies
+		}
+
+		return nil
 	}
 
 	// Custom ErrorHandler to return clean JSON error instead of blank 502
@@ -126,8 +229,25 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 			"</body></html>", targetURL, err.Error())
 	}
 
+	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				origin = "*"
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD")
+			w.Header().Set("Access-Control-Allow-Headers", "*, Authorization, Content-Type, X-Requested-With, Cookie")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
+
 	server := &http.Server{
-		Handler: proxy,
+		Handler: proxyHandler,
 	}
 
 	instance := &ProxyInstance{

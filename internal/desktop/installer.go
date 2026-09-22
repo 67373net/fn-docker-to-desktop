@@ -816,23 +816,24 @@ func (i *Installer) PruneOrphanApps(activeApps map[string]bool) error {
 		return err
 	}
 
+	re := regexp.MustCompile(`(fndocker|put-port)\.[a-zA-Z0-9._-]+`)
+	seen := make(map[string]bool)
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "│") {
-			parts := strings.Split(line, "│")
-			if len(parts) >= 2 {
-				installedApp := strings.TrimSpace(parts[1])
-				if strings.HasPrefix(installedApp, "fndocker.") || strings.HasPrefix(installedApp, "put-port.") {
-					if !activeApps[installedApp] {
-						slog.Info("发现历史孤立桌面图标，正在自动清理注销...", "appName", installedApp)
-						_ = exec.Command(i.cliPath, "stop", installedApp).Run()
-						out, uErr := exec.Command(i.cliPath, "uninstall", installedApp).CombinedOutput()
-						if uErr != nil {
-							slog.Warn("清理历史孤立桌面图标提示", "appName", installedApp, "output", cleanCliOutput(out))
-						} else {
-							slog.Info("成功注销清理历史孤立桌面图标", "appName", installedApp)
-						}
-					}
+		matches := re.FindAllString(line, -1)
+		for _, installedApp := range matches {
+			if seen[installedApp] {
+				continue
+			}
+			seen[installedApp] = true
+			if !activeApps[installedApp] {
+				slog.Info("发现历史孤立桌面图标，正在自动清理注销...", "appName", installedApp)
+				_ = exec.Command(i.cliPath, "stop", installedApp).Run()
+				out, uErr := exec.Command(i.cliPath, "uninstall", installedApp).CombinedOutput()
+				if uErr != nil {
+					slog.Warn("清理历史孤立桌面图标提示", "appName", installedApp, "output", cleanCliOutput(out))
+				} else {
+					slog.Info("成功注销清理历史孤立桌面图标", "appName", installedApp)
 				}
 			}
 		}

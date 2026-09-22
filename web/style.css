@@ -595,7 +595,8 @@ table.data-table.table-wrap .name-with-icon-text {
   overflow-wrap: anywhere !important;
 }
 
-.name-with-icon {
+.name-with-icon,
+.proc-name-cell {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -605,10 +606,20 @@ table.data-table.table-wrap .name-with-icon-text {
 .name-with-icon-text {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 5em;
   word-break: break-all;
   overflow-wrap: anywhere;
   white-space: nowrap;
+}
+
+#desktop-table th:nth-child(1),
+#desktop-table td:nth-child(1) {
+  min-width: calc(5em + 42px + 2.25rem);
+}
+
+#desktop-table th:nth-child(4),
+#desktop-table td:nth-child(4) {
+  min-width: calc(8em + 2em);
 }
 
 table.data-table tr:hover td {
@@ -826,6 +837,7 @@ table.data-table td.table-sink-divider-cell {
   background-color: var(--bg-surface-subtle);
   border: 1px solid var(--border-color);
   vertical-align: middle;
+  flex-shrink: 0;
 }
 
 .table-actions {

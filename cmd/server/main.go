@@ -26,7 +26,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.38"
+const appVersion = "1.1.39"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -436,10 +436,19 @@ func main() {
 	if installer.HasCLI() {
 		go func() {
 			items := storage.GetAllItems()
+			activeApps := make(map[string]bool)
+			for _, it := range items {
+				if it.Enabled && it.AppName != "" {
+					activeApps[it.AppName] = true
+				}
+			}
 			labelItems, err := desktop.ScanDockLabelItems(storage.GetDockLabelState)
 			if err == nil {
 				for _, li := range labelItems {
 					if li.Enabled {
+						if li.AppName != "" {
+							activeApps[li.AppName] = true
+						}
 						installer.SetItemReconcileStatus(li.ID, li.AppName, "恢复中...")
 						dItem := desktop.DesktopItem{
 							ID:            li.ID,
@@ -464,6 +473,9 @@ func main() {
 				}
 			}
 			installer.ReconcileInstalledItems(items)
+			if err := installer.PruneOrphanApps(activeApps); err != nil {
+				slog.Warn("清理历史孤立桌面图标异常", "error", err)
+			}
 		}()
 	}
 
