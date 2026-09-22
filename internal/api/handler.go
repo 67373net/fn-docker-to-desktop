@@ -2052,10 +2052,9 @@ func (h *Handler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := r.URL.Query().Get("source")
-	date := r.URL.Query().Get("date")
 	level := r.URL.Query().Get("level")
 	search := r.URL.Query().Get("search")
-	limit := 1000
+	limit := 5000
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
@@ -2072,17 +2071,7 @@ func (h *Handler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if source == "lifecycle" {
-		resp, err := logInst.ReadLifecycleLogs(level, search, limit)
-		if err != nil {
-			h.jsonResponse(w, r, map[string]string{"error": "读取生命周期日志失败: " + err.Error()}, http.StatusInternalServerError)
-			return
-		}
-		h.jsonResponse(w, r, resp, http.StatusOK)
-		return
-	}
-
-	resp, err := logInst.ReadLogs(date, level, search, limit)
+	resp, err := logInst.ReadLogs(source, level, search, limit)
 	if err != nil {
 		h.jsonResponse(w, r, map[string]string{"error": "读取日志失败: " + err.Error()}, http.StatusInternalServerError)
 		return
@@ -2099,9 +2088,6 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 
 	source := r.URL.Query().Get("source")
 	date := r.URL.Query().Get("date")
-	if date == "" {
-		date = time.Now().Format("2006-01-02")
-	}
 
 	logInst := h.loggerInstance
 	if logInst == nil {
@@ -2129,12 +2115,16 @@ func (h *Handler) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
 	filePath := logInst.GetLogFilePath(date)
 	fi, err := os.Stat(filePath)
 	if err != nil || fi.IsDir() {
-		http.Error(w, "未找到对应日期的日志文件", http.StatusNotFound)
-		return
+		filePath = "/tmp/fn-docker-to-desktop.log"
+		fi, err = os.Stat(filePath)
+		if err != nil || fi.IsDir() {
+			http.Error(w, "未找到日志文件", http.StatusNotFound)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"fn-docker-to-desktop-%s.log\"", date))
+	w.Header().Set("Content-Disposition", "attachment; filename=\"fn-docker-to-desktop.log\"")
 	http.ServeFile(w, r, filePath)
 }
 

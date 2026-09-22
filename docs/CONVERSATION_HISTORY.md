@@ -4032,3 +4032,78 @@ INFO
    - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+---
+
+## Turn 56 - v1.1.41 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **系统进程进程名称列最小宽度**：系统进程列表中“进程名称”列最小宽度设为至少 4 个中文字符。
+2. **“关于”界面居中与白色卡片**：关于界面的内容改为居中对齐，置于白色 Card 容器中，且保持原有内容宽度不缩小（`max-width: calc(860px + 4rem)`）。
+3. **“关于”标题文案精简**：将标题 `把 Docker 放到桌面 (fn-docker-to-desktop) v1.1.40` 简化为 `把 Docker 放到桌面 v1.1.41`。
+4. **系统设置项行间距翻倍**：在系统设置卡片（`v1.1.41 - 系统设置`）中，各项顶级表单项之间的行间距翻倍（由 `1.25rem` 增至 `2.5rem`）。
+5. **日志界面移除来源与日期下拉框**：去掉工具栏上的“目标来源”和“日志日期”两个 select 选择框。
+6. **运行日志与生命周期日志统一流式展示与分类 Tag**：运行日志和生命周期日志汇聚在同一流中，按时间倒序展示，每条日志使用独立的来源 tag 标识（`app` / `lifecycle`），并在工具栏增加来源分类选择 tag（`全部来源`、`运行日志`、`生命周期`）。
+7. **日志单文件流式存储与时间倒序顶端展示**：日志不再按天拆分文件，而是流式存储于单个文件 `app.log` 中，支持超过 20MB 时自动无损轮转；更晚的最新日志始终显示在列表顶端（时间倒序）。
+8. **日志分页功能与每页条数配置**：移除“当前显示 xxx 行”，实现精准分页：“每页显示 [200] 条，第 [x ▼] 页”；200 为默认值，允许手动修改为 20-1000 的任意正整数；第 x 页为下拉选择框，支持快速跳页。
+9. **日志查看框顶栏精简**：去掉日志终端框顶部的深色标题栏（文件名和文件大小），终端框整体四角圆角化。
+10. **Tag 标签小写与纯净规范化**：日志级别标签去除括号中文，改为统一纯净小写 `info`、`warn`、`error`、`debug`。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **单文件流式存储与日志合并降序引擎 (`internal/logger/logger.go`, `internal/api/handler.go`)**：
+   - **摒弃按天轮转，采用 `app.log` 持续流式存储**：
+     - 在初始化及日常写入中，所有运行日志统一追加写入 `logs/app.log`，不再按日期生成 `app-YYYY-MM-DD.log`；
+     - 内置 20MB 安全轮转机制：当 `app.log` 达到 20MB 时自动归档至 `app.log.old` 并重建空文件，彻底杜绝 NAS 磁盘被长年日志撑爆风险；
+     - 保持向后兼容：读取时自动合并遗留历史 `app-*.log`、`app.log.old` 以及当前 `app.log`，保证老用户升级后日志不丢失。
+   - **全量日志统一融合与倒序排列 (`ReadLogs`)**：
+     - `ReadLogs(sourceFilter, levelFilter, search, limit)` 支持无缝汇聚应用运行日志与系统生命周期日志（`/tmp/fn-docker-to-desktop-lifecycle.log`、`lifecycle.log`、`uninstall.log`）；
+     - 每条日志标注数据源 `Source: "app" | "lifecycle"`；
+     - 采用 `sort.SliceStable` 对提取出的时间戳进行严格逆序排序（`t1 > t2`），确保**最新产生的日志必定排在第 0 条、显示在界面最顶端**；
+     - 日志级别规范化输出为纯小写字符串：`info`、`warn`、`error`、`debug`。
+   - **API 接口适配 (`internal/api/handler.go`)**：
+     - `handleGetLogs` 直接调用统一的 `logInst.ReadLogs(source, level, search, limit)`；
+     - `handleDownloadLogs` 默认提供主流式日志 `app.log`（若指定 `source=lifecycle` 则提供生命周期日志）。
+
+2. **日志终端 UI 与交互重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - **工具栏升级**：
+     - 移除 `#log-source-select` 与 `#log-date-select`；
+     - 新增来源筛选 Chips：`全部来源`、`运行日志`、`生命周期`；
+     - 级别筛选 Chips 纯小写化：`全部`、`info`、`warn`、`error`；
+   - **分页与条数交互**：
+     - 移除旧有的“当前显示 xxx 行 / 共 xxx 行”；
+     - 新增分页组件：`每页显示 <input id="log-page-size"> 条，第 <select id="log-page-select"></select> 页 / 共 <span id="log-total-pages"></span> 页 (共 <span id="log-total-count"></span> 条)`；
+     - `log-page-size` 默认 200，支持输入 20 至 1000 的合法整数并在失焦或回车时自动纠偏；
+     - `log-page-select` 动态填充页码下拉选项并双向联动，前端根据页码对降序日志切片渲染；
+   - **终端视窗极简化**：
+     - 移除 `.terminal-header`（包含文件名和文件大小的顶栏），终端主体 `.terminal-body` 四角统一圆角（8px）；
+     - 每行日志依次渲染：行号（分页累计序号）、时间戳、来源标签（`app` 蓝色或 `lifecycle` 青色）、级别标签（`info`、`warn`、`error`、`debug`）、日志文本；
+     - 切换页码与新日志载入时视窗平滑滚动至顶端（因最新日志在顶端）。
+
+3. **界面排版优化与间距加倍 (`web/style.css`, `web/index.html`)**：
+   - **系统进程表格名称列宽度保护**：
+     - 为 `#proc-table th:nth-child(2), #proc-table td:nth-child(2)` 设定 `min-width: calc(4em + 2em + 16px)`，完整保障 4 个中文字符内容不被挤压折行。
+   - **“关于”页面居中与白卡容器**：
+     - `.about-container` 设为 `justify-content: center;`；
+     - `.about-content` 设为 `max-width: calc(860px + 4rem)` 并赋予白色卡片样式（`background-color: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: var(--shadow-sm); padding: 2rem;`），既实现居中卡片视觉，又确保原有 860px 内容净宽完全不缩水；
+     - 移动端适配调整为 `padding: 1.25rem 1rem;`。
+   - **“关于”标题文案精简**：
+     - 标题精简为 `把 Docker 放到桌面 <span id="about-app-version">v1.1.41</span>`。
+   - **系统设置项间距翻倍**：
+     - `.settings-card > .form-group` 由 `1.25rem` 增加一倍至 `2.5rem`（最后一个为 `2rem`），排版更显舒展大气。
+
+4. **全链路版本升级至 `v1.1.41`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.41`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 新增 `TestStreamingReadLogsDescending`，验证多源日志合并写入、严格时间倒序排序、小写级别以及流式读取逻辑；
+   - 更新 `TestParseLifecycleLogLine`、`TestCompareVersions`、`TestCheckUpdateEndpoint` 测试用例；
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+

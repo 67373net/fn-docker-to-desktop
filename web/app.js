@@ -153,9 +153,11 @@ let state = {
   isSettingsDirty: false,
   eventSource: null,
   activeMode: 'local',
-  logDate: '',
+  logSource: 'ALL',
   logLevel: 'ALL',
   logSearch: '',
+  logPage: 1,
+  logPageSize: 200,
   logs: [],
   appNameDirty: false,
   appShortId: '',
@@ -603,7 +605,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.40';
+  const ver = state.settings?.version || '1.1.41';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4305,7 +4307,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.40';
+      const ver = state.settings?.version || '1.1.41';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4640,37 +4642,24 @@ function initApp() {
   }, 2000);
 }
 
-// --- System Logs Viewer (8 Days Retention) ---
+// --- System Logs Viewer (Streaming & Paginated) ---
 function initLogViewer() {
-  const sourceSelect = document.getElementById('log-source-select');
-  if (sourceSelect) {
-    sourceSelect.addEventListener('change', (e) => {
-      state.logSource = e.target.value;
-      const dateGroup = document.getElementById('group-log-date');
-      const retentionBadge = document.getElementById('log-retention-badge');
-      if (dateGroup) {
-        dateGroup.style.display = state.logSource === 'lifecycle' ? 'none' : 'flex';
-      }
-      if (retentionBadge) {
-        retentionBadge.textContent = state.logSource === 'lifecycle' ? '系统生命周期' : '保留 8 天';
-      }
+  document.querySelectorAll('#log-source-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#log-source-chips .chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.logSource = chip.dataset.logSource || 'ALL';
+      state.logPage = 1;
       fetchLogs();
     });
-  }
-
-  const dateSelect = document.getElementById('log-date-select');
-  if (dateSelect) {
-    dateSelect.addEventListener('change', (e) => {
-      state.logDate = e.target.value;
-      fetchLogs();
-    });
-  }
+  });
 
   document.querySelectorAll('#log-level-chips .chip').forEach(chip => {
     chip.addEventListener('click', () => {
       document.querySelectorAll('#log-level-chips .chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
       state.logLevel = chip.dataset.logLevel || 'ALL';
+      state.logPage = 1;
       fetchLogs();
     });
   });
@@ -4682,6 +4671,7 @@ function initLogViewer() {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => {
         state.logSearch = e.target.value.trim();
+        state.logPage = 1;
         fetchLogs();
       }, 300);
     });
@@ -4700,15 +4690,53 @@ function initLogViewer() {
       downloadLogFile();
     });
   }
+
+  const pageSelect = document.getElementById('log-page-select');
+  if (pageSelect) {
+    pageSelect.addEventListener('change', (e) => {
+      state.logPage = parseInt(e.target.value, 10) || 1;
+      renderLogs();
+      const body = document.getElementById('terminal-log-body');
+      if (body) body.scrollTop = 0;
+    });
+  }
+
+  const pageSizeInput = document.getElementById('log-page-size');
+  if (pageSizeInput) {
+    const handlePageSizeChange = (valStr) => {
+      let val = parseInt(valStr, 10);
+      if (isNaN(val) || val < 20) val = 20;
+      if (val > 1000) val = 1000;
+      pageSizeInput.value = val;
+      if (state.logPageSize !== val) {
+        state.logPageSize = val;
+        state.logPage = 1;
+        renderLogs();
+        const body = document.getElementById('terminal-log-body');
+        if (body) body.scrollTop = 0;
+      }
+    };
+
+    pageSizeInput.addEventListener('change', (e) => {
+      handlePageSizeChange(e.target.value);
+    });
+    pageSizeInput.addEventListener('blur', (e) => {
+      handlePageSizeChange(e.target.value);
+    });
+    pageSizeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        handlePageSizeChange(e.target.value);
+        pageSizeInput.blur();
+      }
+    });
+  }
 }
 
 async function fetchLogs(isAutoPoll = false) {
   try {
-    const source = state.logSource || 'app';
-    let url = apiUrl(`/api/logs?source=${encodeURIComponent(source)}&level=${encodeURIComponent(state.logLevel || 'ALL')}`);
-    if (source !== 'lifecycle' && state.logDate) {
-      url += `&date=${encodeURIComponent(state.logDate)}`;
-    }
+    const source = state.logSource || 'ALL';
+    const level = state.logLevel || 'ALL';
+    let url = apiUrl(`/api/logs?source=${encodeURIComponent(source)}&level=${encodeURIComponent(level)}`);
     if (state.logSearch) {
       url += `&search=${encodeURIComponent(state.logSearch)}`;
     }
@@ -4719,29 +4747,9 @@ async function fetchLogs(isAutoPoll = false) {
       const data = await res.json();
       state.logs = data.lines || [];
 
-      if (source !== 'lifecycle') {
-        updateDateDropdown(data.dates, data.current_date);
-      }
-
       const pathEl = document.getElementById('log-path-display');
       if (pathEl && data.log_path) {
         pathEl.textContent = data.log_path;
-      }
-      const titleEl = document.getElementById('terminal-title');
-      if (titleEl) {
-        if (source === 'lifecycle') {
-          titleEl.textContent = `fn-docker-to-desktop-lifecycle.log (${formatBytes(data.file_size || 0)})`;
-        } else if (data.current_date) {
-          titleEl.textContent = `app-${data.current_date}.log (${formatBytes(data.file_size || 0)})`;
-        }
-      }
-      const totalEl = document.getElementById('log-total-count');
-      if (totalEl) {
-        totalEl.textContent = data.total_lines || 0;
-      }
-      const displayEl = document.getElementById('log-display-count');
-      if (displayEl) {
-        displayEl.textContent = state.logs.length;
       }
 
       renderLogs(isAutoPoll);
@@ -4751,48 +4759,69 @@ async function fetchLogs(isAutoPoll = false) {
   }
 }
 
-function updateDateDropdown(dates, currentDate) {
-  const select = document.getElementById('log-date-select');
-  if (!select || !dates || dates.length === 0) return;
-
-  const currentVal = state.logDate || select.value || currentDate;
-  const existingOptions = Array.from(select.options).map(o => o.value);
-  const isSame = dates.length === existingOptions.length && dates.every((d, i) => d === existingOptions[i]);
-
-  if (!isSame) {
-    select.innerHTML = '';
-    dates.forEach(d => {
-      const opt = document.createElement('option');
-      opt.value = d;
-      opt.textContent = d;
-      if (d === currentVal) {
-        opt.selected = true;
-      }
-      select.appendChild(opt);
-    });
-  } else if (currentVal && select.value !== currentVal) {
-    select.value = currentVal;
-  }
-}
-
 function renderLogs(isAutoPoll = false) {
   const body = document.getElementById('terminal-log-body');
   if (!body) return;
 
-  if (!state.logs || state.logs.length === 0) {
+  const totalCount = state.logs ? state.logs.length : 0;
+  const pageSize = state.logPageSize || 200;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  if (state.logPage > totalPages) {
+    state.logPage = totalPages;
+  }
+  if (state.logPage < 1) {
+    state.logPage = 1;
+  }
+
+  // Update total count and total pages display
+  const totalEl = document.getElementById('log-total-count');
+  if (totalEl) {
+    totalEl.textContent = totalCount;
+  }
+
+  const totalPagesEl = document.getElementById('log-total-pages');
+  if (totalPagesEl) {
+    totalPagesEl.textContent = totalPages;
+  }
+
+  // Update page select dropdown
+  const pageSelect = document.getElementById('log-page-select');
+  if (pageSelect) {
+    const currentSelected = String(state.logPage);
+    if (pageSelect.options.length !== totalPages || pageSelect.value !== currentSelected) {
+      pageSelect.innerHTML = '';
+      for (let p = 1; p <= totalPages; p++) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        if (p === state.logPage) {
+          opt.selected = true;
+        }
+        pageSelect.appendChild(opt);
+      }
+    }
+  }
+
+  if (!state.logs || totalCount === 0) {
     body.innerHTML = '<div class="log-empty-state">暂无日志记录</div>';
     return;
   }
 
-  const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+  const startIndex = (state.logPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalCount);
+  const pagedLogs = state.logs.slice(startIndex, endIndex);
 
-  const html = state.logs.map((entry, idx) => {
-    const lineNum = idx + 1;
-    const level = entry.level || 'INFO';
-    const badgeClass = `log-badge-${level.toLowerCase()}`;
+  const html = pagedLogs.map((entry, idx) => {
+    const lineNum = startIndex + idx + 1;
+    const level = (entry.level || 'info').toLowerCase();
+    const source = (entry.source || 'app').toLowerCase();
+    const badgeClass = `log-badge-${level}`;
+    const sourceClass = `log-source-${source}`;
     return `<div class="log-line">
       <span class="log-num">${lineNum}</span>
       <span class="log-time">${escapeHtml(entry.timestamp || '')}</span>
+      <span class="log-source-tag ${sourceClass}">${escapeHtml(source)}</span>
       <span class="log-badge ${badgeClass}">${escapeHtml(level)}</span>
       <span class="log-text">${escapeHtml(entry.message || entry.raw)}</span>
     </div>`;
@@ -4800,27 +4829,14 @@ function renderLogs(isAutoPoll = false) {
 
   body.innerHTML = html;
 
-  if (!isAutoPoll || wasAtBottom) {
-    body.scrollTop = body.scrollHeight;
-  }
-}
-
-function scrollLogsToBottom() {
-  const body = document.getElementById('terminal-log-body');
-  if (body) {
-    body.scrollTop = body.scrollHeight;
+  if (!isAutoPoll) {
+    body.scrollTop = 0;
   }
 }
 
 function downloadLogFile() {
-  const source = state.logSource || 'app';
-  if (source === 'lifecycle') {
-    window.open(apiUrl('/api/logs/download?source=lifecycle'), '_blank');
-    return;
-  }
-  const select = document.getElementById('log-date-select');
-  const date = select ? select.value : '';
-  window.open(apiUrl(`/api/logs/download?date=${encodeURIComponent(date)}`), '_blank');
+  const source = state.logSource || 'ALL';
+  window.open(apiUrl(`/api/logs/download?source=${encodeURIComponent(source)}`), '_blank');
 }
 
 // --- Toast Notifications System ---
