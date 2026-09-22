@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.39">
+  <link rel="stylesheet" href="style.css?v=1.1.40">
 </head>
 <body>
   <!-- Header Bar -->
@@ -26,8 +26,9 @@
         <span>桌面图标</span>
         <span class="badge" id="desktop-count-badge">0</span>
       </button>
-      <button class="nav-tab" data-tab="about">
+      <button class="nav-tab" data-tab="about" id="tab-about">
         <span>关于</span>
+        <span class="badge-dot" id="about-update-dot" style="display: none;" title="发现新版本可用"></span>
       </button>
       <div class="nav-spacer"></div>
       <button class="nav-tab" data-tab="processes">
@@ -477,7 +478,33 @@
     <section class="tab-pane" id="pane-about">
       <div class="about-container">
         <div class="about-content">
-          <h3 class="about-md-h3">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.39</span></h3>
+          <div class="about-header-row">
+            <h3 class="about-md-h3" style="margin-bottom: 0;">把 Docker 放到桌面 (fn-docker-to-desktop) <span id="about-app-version">v1.1.40</span></h3>
+            <div class="version-check-bar" id="version-check-bar">
+              <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
+              <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
+            </div>
+          </div>
+
+          <!-- 新版本提示卡片 (检测到新版本时动态展示) -->
+          <div class="update-notice-card" id="update-notice-card" style="display: none;">
+            <div class="update-notice-header">
+              <div class="update-notice-title">
+                <span class="update-tag">🎉 发现新版本</span>
+                <strong id="update-new-version">vX.X.X</strong>
+                <span class="update-time" id="update-published-time"></span>
+              </div>
+              <div class="update-actions">
+                <a href="#" class="btn btn-sm btn-primary" id="btn-download-fpk" target="_blank" rel="noopener noreferrer">下载 .fpk 安装包</a>
+                <a href="#" class="btn btn-sm btn-secondary" id="btn-download-accelerated" target="_blank" rel="noopener noreferrer">国内镜像高速下载</a>
+              </div>
+            </div>
+            <div class="update-changelog-title">更新日志：</div>
+            <div class="update-changelog-body" id="update-changelog-body"></div>
+            <div class="update-guide-tip">
+              💡 <strong>飞牛 OS 覆盖升级说明</strong>：点击上方按钮下载 <code>.fpk</code> 安装包后，打开飞牛桌面「应用中心」➔ 点击右上角「手动安装」选择该文件即可。程序已针对覆盖安装进行秒级优化，无需卸载旧版，3 秒完成平滑升级，所有已配置的桌面图标与参数设置 100% 完整保留！
+            </div>
+          </div>
           <p class="about-md-p">本项目灵感及代码参考了项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。</p>
           <p class="about-md-p">本项目还处于 beta 测试版，可能会有很多 bug 和功能调整。欢迎提 <a href="https://github.com/67373net/fn-docker-to-desktop/issues" target="_blank" rel="noopener noreferrer" class="about-link">issues</a></p>
           <hr class="about-md-hr">
@@ -495,12 +522,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.39" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.40" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.39" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.40" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -902,6 +929,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.39"></script>
+  <script src="app.js?v=1.1.40"></script>
 </body>
 </html>

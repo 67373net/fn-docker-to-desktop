@@ -485,7 +485,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.39",
+		AppVersion: "1.1.40",
 	})
 
 	mux := http.NewServeMux()
@@ -600,7 +600,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.39",
+		AppVersion: "1.1.40",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -630,6 +630,74 @@ func TestDeleteIcon(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(iconsDir, unusedIcon)); !os.IsNotExist(err) {
 		t.Errorf("Expected file %s to be removed", unusedIcon)
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		v1, v2   string
+		expected int
+	}{
+		{"1.1.39", "1.1.39", 0},
+		{"v1.1.39", "1.1.39", 0},
+		{"1.1.39", "v1.1.40", -1},
+		{"1.1.40", "1.1.39", 1},
+		{"1.1.39", "1.2.0", -1},
+		{"1.2.0", "1.1.99", 1},
+		{"v2.0.0", "v1.9.9", 1},
+	}
+	for _, tc := range cases {
+		got := compareVersions(tc.v1, tc.v2)
+		if got != tc.expected {
+			t.Errorf("compareVersions(%q, %q) = %d, expected %d", tc.v1, tc.v2, got, tc.expected)
+		}
+	}
+}
+
+func TestCheckUpdateEndpoint(t *testing.T) {
+	tempDir := t.TempDir()
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.40",
+	})
+	// Pre-populate cache to simulate cached update response
+	handler.versionCheckCached = &VersionCheckResponse{
+		CurrentVersion: "1.1.40",
+		LatestVersion:  "1.1.40",
+		HasUpdate:      false,
+		Arch:           "x86",
+	}
+	handler.versionCheckExp = time.Now().Add(10 * time.Minute)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/api/system/version-check", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp VersionCheckResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp.CurrentVersion != "1.1.40" {
+		t.Errorf("Expected current version 1.1.40, got %s", resp.CurrentVersion)
+	}
+	if resp.HasUpdate != false {
+		t.Errorf("Expected has_update to be false")
 	}
 }
 

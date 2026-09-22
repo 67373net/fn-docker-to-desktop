@@ -216,7 +216,11 @@ function switchTab(tab) {
 
   state.currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === tab);
+    const isActive = b.dataset.tab === tab;
+    b.classList.toggle('active', isActive);
+    if (isActive && typeof b.scrollIntoView === 'function') {
+      b.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+    }
   });
   document.querySelectorAll('.tab-pane').forEach(p => {
     p.classList.toggle('active', p.id === `pane-${tab}`);
@@ -233,6 +237,8 @@ function switchTab(tab) {
   } else if (tab === 'settings') {
     fetchSettings();
     fetchHost();
+  } else if (tab === 'about') {
+    checkAppUpdate(false);
   }
 
   requestAnimationFrame(adjustAllTableWrapping);
@@ -504,12 +510,100 @@ async function fetchSettings() {
   }
 }
 
+let isCheckingUpdate = false;
+let updateCheckResult = null;
+
+async function checkAppUpdate(force = false) {
+  if (isCheckingUpdate) return;
+  const btn = document.getElementById('btn-check-update');
+  const badge = document.getElementById('version-status-badge');
+  const dot = document.getElementById('about-update-dot');
+  const card = document.getElementById('update-notice-card');
+
+  isCheckingUpdate = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '正在检查...';
+  }
+  if (badge) {
+    badge.style.display = 'inline-block';
+    badge.className = 'version-status-badge';
+    badge.textContent = '正在检查更新...';
+  }
+
+  try {
+    const res = await fetch(apiUrl('/api/system/version-check' + (force ? '?force=true' : '')));
+    if (res.ok) {
+      const data = await res.json();
+      updateCheckResult = data;
+      if (data.has_update) {
+        if (dot) dot.style.display = 'inline-block';
+        if (badge) {
+          badge.className = 'version-status-badge has-update';
+          badge.textContent = `发现新版本 v${data.latest_version}`;
+        }
+        if (card) {
+          card.style.display = 'block';
+          const newVerEl = document.getElementById('update-new-version');
+          if (newVerEl) newVerEl.textContent = `v${data.latest_version}`;
+          const timeEl = document.getElementById('update-published-time');
+          if (timeEl && data.published_at) {
+            const d = new Date(data.published_at);
+            timeEl.textContent = isNaN(d.getTime()) ? '' : `(发布于 ${d.toLocaleDateString()})`;
+          }
+          const dlBtn = document.getElementById('btn-download-fpk');
+          if (dlBtn && data.download_url) {
+            dlBtn.href = data.download_url;
+          }
+          const accBtn = document.getElementById('btn-download-accelerated');
+          if (accBtn && data.accelerated_url) {
+            accBtn.href = data.accelerated_url;
+          }
+          const changelogEl = document.getElementById('update-changelog-body');
+          if (changelogEl) {
+            changelogEl.textContent = (data.release_notes || '').trim() || '暂无更新日志说明';
+          }
+        }
+      } else {
+        if (dot) dot.style.display = 'none';
+        if (card) card.style.display = 'none';
+        if (badge) {
+          if (data.error) {
+            badge.className = 'version-status-badge';
+            badge.textContent = data.error;
+          } else {
+            badge.className = 'version-status-badge up-to-date';
+            badge.textContent = '当前已是最新版本';
+          }
+        }
+      }
+    } else {
+      if (badge) {
+        badge.className = 'version-status-badge';
+        badge.textContent = '检查更新失败';
+      }
+    }
+  } catch (err) {
+    console.error('Check update error:', err);
+    if (badge) {
+      badge.className = 'version-status-badge';
+      badge.textContent = '网络连接异常';
+    }
+  } finally {
+    isCheckingUpdate = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '检查更新';
+    }
+  }
+}
+
 function updateSettingsForm() {
   const portalName = '把 Docker 放到桌面';
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.39';
+  const ver = state.settings?.version || '1.1.40';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4211,7 +4305,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.39';
+      const ver = state.settings?.version || '1.1.40';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4529,11 +4623,21 @@ function initApp() {
     adjustTableWrapping(portsTable);
   }
 
+  const btnCheckUpdate = document.getElementById('btn-check-update');
+  if (btnCheckUpdate) {
+    btnCheckUpdate.addEventListener('click', () => checkAppUpdate(true));
+  }
+
   fetchPorts();
   fetchDesktopItems();
   fetchHost();
   initEventSource();
   initLogViewer();
+
+  // Automatically check for updates after 2 seconds
+  setTimeout(() => {
+    checkAppUpdate(false);
+  }, 2000);
 }
 
 // --- System Logs Viewer (8 Days Retention) ---

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,8 +51,11 @@ type Handler struct {
 	appVersion     string
 	inFlightOps    sync.Map
 	dockLabelMu    sync.Mutex
-	dockLabelItems []desktop.DockLabelItem
-	dockLabelExp   time.Time
+	dockLabelItems      []desktop.DockLabelItem
+	dockLabelExp        time.Time
+	versionCheckMu      sync.Mutex
+	versionCheckCached  *VersionCheckResponse
+	versionCheckExp     time.Time
 }
 
 // Config holds configuration to instantiate API Handler.
@@ -98,6 +102,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ports", h.handleGetPorts)
 	mux.HandleFunc("GET /api/processes", h.handleGetProcesses)
 	mux.HandleFunc("GET /api/system", h.handleGetSystem)
+	mux.HandleFunc("GET /api/system/version-check", h.handleCheckUpdate)
 	mux.HandleFunc("GET /api/host", h.handleGetHost)
 	mux.HandleFunc("GET /api/events", h.handleEvents)
 
@@ -2464,4 +2469,177 @@ func (h *Handler) handleGetDockLabelIcon(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	h.serveDefaultItemIcon(w, r)
+}
+
+// VersionCheckResponse represents the response of checking for application updates.
+type VersionCheckResponse struct {
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	HasUpdate      bool   `json:"has_update"`
+	ReleaseName    string `json:"release_name"`
+	ReleaseNotes   string `json:"release_notes"`
+	PublishedAt    string `json:"published_at"`
+	HTMLURL        string `json:"html_url"`
+	Arch           string `json:"arch"`
+	DownloadURL    string `json:"download_url"`
+	AcceleratedURL string `json:"accelerated_url"`
+	CheckedAt      string `json:"checked_at"`
+	Error          string `json:"error,omitempty"`
+}
+
+type ghReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+type ghReleaseResponse struct {
+	TagName     string           `json:"tag_name"`
+	Name        string           `json:"name"`
+	Body        string           `json:"body"`
+	PublishedAt string           `json:"published_at"`
+	HTMLURL     string           `json:"html_url"`
+	Assets      []ghReleaseAsset `json:"assets"`
+}
+
+func compareVersions(v1, v2 string) int {
+	clean := func(s string) []int {
+		s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+		parts := strings.Split(s, ".")
+		res := make([]int, 0, 3)
+		for _, p := range parts {
+			num := 0
+			hasNum := false
+			for _, r := range p {
+				if r >= '0' && r <= '9' {
+					num = num*10 + int(r-'0')
+					hasNum = true
+				} else {
+					break
+				}
+			}
+			if hasNum {
+				res = append(res, num)
+			}
+		}
+		for len(res) < 3 {
+			res = append(res, 0)
+		}
+		return res
+	}
+
+	p1 := clean(v1)
+	p2 := clean(v2)
+	for i := 0; i < len(p1) && i < len(p2); i++ {
+		if p1[i] < p2[i] {
+			return -1
+		}
+		if p1[i] > p2[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+
+	h.versionCheckMu.Lock()
+	if !force && h.versionCheckCached != nil && time.Now().Before(h.versionCheckExp) {
+		cached := *h.versionCheckCached
+		h.versionCheckMu.Unlock()
+		h.jsonResponse(w, r, cached, http.StatusOK)
+		return
+	}
+	h.versionCheckMu.Unlock()
+
+	arch := "x86"
+	if runtime.GOARCH == "arm64" || runtime.GOARCH == "arm" {
+		arch = "arm"
+	}
+
+	res := VersionCheckResponse{
+		CurrentVersion: h.appVersion,
+		Arch:           arch,
+		CheckedAt:      time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	fetchRelease := func(endpoint string) (*ghReleaseResponse, error) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "fn-docker-to-desktop/"+h.appVersion)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
+		}
+
+		var ghResp ghReleaseResponse
+		if err := json.NewDecoder(resp.Body).Decode(&ghResp); err != nil {
+			return nil, err
+		}
+		return &ghResp, nil
+	}
+
+	// Try direct GitHub API first
+	ghRelease, err := fetchRelease("https://api.github.com/repos/67373net/fn-docker-to-desktop/releases/latest")
+	if err != nil {
+		slog.Debug("Direct GitHub releases query failed, trying mirror fallback", "error", err)
+		// Fallback to proxy mirror
+		ghRelease, err = fetchRelease("https://ghproxy.net/https://api.github.com/repos/67373net/fn-docker-to-desktop/releases/latest")
+	}
+
+	if err != nil {
+		slog.Warn("Version check failed", "error", err)
+		res.Error = "检测新版本失败，网络连接超时或无法访问 GitHub (请稍后重试)"
+		h.jsonResponse(w, r, res, http.StatusOK)
+		return
+	}
+
+	latestTag := strings.TrimPrefix(ghRelease.TagName, "v")
+	res.LatestVersion = latestTag
+	res.ReleaseName = ghRelease.Name
+	res.ReleaseNotes = ghRelease.Body
+	res.PublishedAt = ghRelease.PublishedAt
+	res.HTMLURL = ghRelease.HTMLURL
+
+	if compareVersions(h.appVersion, latestTag) < 0 {
+		res.HasUpdate = true
+	}
+
+	// Match download URL for host architecture
+	targetAsset := fmt.Sprintf("fn-docker-to-desktop-%s.fpk", arch)
+	for _, asset := range ghRelease.Assets {
+		if asset.Name == targetAsset {
+			res.DownloadURL = asset.BrowserDownloadURL
+			break
+		}
+	}
+	if res.DownloadURL == "" {
+		res.DownloadURL = fmt.Sprintf("https://github.com/67373net/fn-docker-to-desktop/releases/download/%s/%s", ghRelease.TagName, targetAsset)
+	}
+	res.AcceleratedURL = fmt.Sprintf("https://mirror.ghproxy.com/%s", res.DownloadURL)
+
+	h.versionCheckMu.Lock()
+	h.versionCheckCached = &res
+	h.versionCheckExp = time.Now().Add(15 * time.Minute)
+	h.versionCheckMu.Unlock()
+
+	h.jsonResponse(w, r, res, http.StatusOK)
 }

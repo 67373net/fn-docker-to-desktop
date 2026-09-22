@@ -3982,3 +3982,53 @@ INFO
    - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+---
+
+## Turn 55 - v1.1.40 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **自动检测新版本与更新能力支持**：
+   - 用户咨询并要求支持自动检测新版本，以及一键更新的功能，并询问飞牛应用体系能否支持一键更新。
+2. **移动端标题栏背景截断与 Tab 溢出排版 Bug 修复**：
+   - 用户反馈在移动端视频中，标题栏白色背景宽度仅与手机屏幕一样宽；当右侧“日志”与“设置”两个 Tab 溢出到屏幕外时，右侧溢出区域的背景色变成了灰色（底层 body 的灰色），且排版错位。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+
+1. **新版本自动检测与极速更新工作流设计 (`internal/api/handler.go`, `web/index.html`, `web/style.css`, `web/app.js`)**：
+   - **飞牛更新机制与一键更新客观分析**：
+     - **飞牛 OS 体系现状**：飞牛 OS 对第三方应用（非官方商店）的标准安装/升级流程是用户通过「应用中心」->「手动安装」上传 `.fpk` 文件。若应用内部自发杀进程替换二进制，不仅会与飞牛底层 AppCenter 数据库（SQLite）版本记录脱节，且在进程自我重启过程中容易因断电、国内 GitHub 网络超时等引发“变砖”风险；
+     - **最佳落地方案**：我们在 v1.1.38 中已优化了飞牛覆盖升级机制（毫秒级跳过注销，3 秒完成无损升级且 100% 保留配置与桌面图标）。在此基础上，实现**“全自动新版本检测 + 更新日志直观展示 + 适配架构一键下载（含国内镜像加速）+ 3秒极速覆盖”**的最佳体验闭环。
+   - **版本检测后端服务 (`internal/api/handler.go`)**：
+     - 新增 `GET /api/system/version-check` API 端点，支持带缓存（TTL 15 分钟）异步请求 GitHub Releases API（超时 5 秒），支持 `?force=true` 强制刷新；
+     - 集成国内高速代理镜像降级拉取（`ghproxy.net` / `mirror.ghproxy.com`），有效抵御 NAS 位于国内无代理网络下的超时与 DNS 污染；
+     - 实现语义化版本比对（`compareVersions`）及主机架构探测（`x86_64` ➔ `x86`, `arm64` ➔ `arm`），自动匹配对应架构的 `.fpk` 官方直连下载 URL 与镜像加速下载 URL。
+   - **前端交互与更新提醒卡片 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+     - “关于”Tab 按钮增加红点徽标（`.badge-dot`，带平滑呼吸动画），检测到新版本时自动亮起；
+     - “关于”面板新增版本检查状态栏与“检查更新”按钮；检测到新版本时展示高亮更新卡片（`update-notice-card`），包含新版本号、发布时间、格式化更新日志（Changelog）、**「下载 .fpk 安装包」**与**「国内镜像高速下载」**双按钮，以及安心升级操作指引；
+     - 页面初始化后 2 秒自动在后台静默检测，并在切换至“关于”页时按需拉取。
+
+2. **移动端标题栏背景截断与 Tab 横向平滑滚动修复 (`web/style.css`, `web/app.js`)**：
+   - **根因分析**：
+     - 在此前样式中，`.header-nav` 作为 flex 子项未声明 `min-width: 0` 与 `overflow-x: auto`，6 个 Tab 连同 `.nav-spacer` 的内在内容宽度（> 600px）强行撑开了顶层 `body`；
+     - 开启 sticky 的 `.app-header` 在手机上计算的 `width: 100%` 仅匹配首屏视口（如 375px），向右横向滑动时超出视口的区域失去白色背景，直接露出底层 body 的灰色背景（`var(--bg-app)`），导致“白色背景只有屏幕宽、溢出 Tab 悬空在灰色上”。
+   - **全面修复**：
+     - **锁定全局视口**：`html, body` 统一添加 `max-width: 100% !important; overflow-x: hidden;`，杜绝任何子组件将整屏视口意外撑出横向滚动条；
+     - **标题栏绝对自适应**：`.app-header` 设置 `box-sizing: border-box; max-width: 100% !important; overflow: hidden;`；
+     - **导航栏移动端自适应滚动**：`.header-nav` 补充 `min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none;`，让导航 Tab 在手机视口内平滑横向滑移；
+     - **Tab 元素防挤压**：`.nav-tab` 设置 `flex-shrink: 0;`，确保各 Tab 文字与图标永不挤压折行；
+     - **移动端媒体查询 (`@media (max-width: 768px)`)**：隐藏占用巨幅空间的 `.nav-spacer`，使 Tab 紧凑相连；微调移动端边距；在 `switchTab()` 切换标签页时自动调用 `scrollIntoView({ behavior: smooth, inline: nearest })`，保证所选 Tab 自动移入视野正中。
+
+3. **全链路版本升级至 `v1.1.40`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html`、`web/app.js` 至 `1.1.40`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 新增 `TestCompareVersions` 与 `TestCheckUpdateEndpoint`，覆盖版本字符串大小比对（包括 `v` 前缀兼容、主次修订号差异）与更新检测端点测试；
+   - 在 `golang:1.22-alpine` 容器环境下运行 `go test -v ./...`，全量测试用例全部 PASS；
+   - `go build -v -o /dev/null ./cmd/server` 编译通过。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
