@@ -4173,4 +4173,61 @@ INFO
    - `go build -v -o /dev/null ./cmd/server` 编译通过。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 58 - v1.1.43 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **日志默认全部来源**：
+   - 日志页面默认选中的来源由“运行日志”调整为“全部来源”（`ALL`）。
+2. **新版本发布时间相对化与文案格式化**：
+   - 移除标题中 Emoji 装饰及旧日期格式，由 `🎉 发现新版本 v1.1.42 (发布于 9/23/2026)` 改为 `新版本 v1.1.43 发布于 x秒/x分钟/x小时/x天/x月/x年前`。
+3. **升级说明文案精简与步骤化**：
+   - 升级说明替换为精简的两步操作指引：
+     ```text
+     升级说明：
+     1. 点击上方按钮下载 .fpk 安装包；
+     2. 打开飞牛桌面「应用中心」➔ 点击左下角「手动安装」选择该文件即可。
+     ```
+4. **关于页面标题与更新状态栏严格水平居中对齐**：
+   - 修复“把 Docker 放到桌面 vX.X.X”主标题、“发现新版本 vX.X.X / 当前已是最新版本”状态标签与“检查更新”按钮三者垂直未居中在同一水平线上的排版缺陷。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **日志默认全部来源与多流归并保证 (`web/index.html`, `web/app.js`, `internal/logger/logger.go`)**：
+   - **前端标签激活**：`#log-source-chips` 中将 `data-log-source="ALL"`（全部来源）排在第一位并设为默认 `active`；
+   - **状态初始设定**：`state.logSource` 默认值设为 `'ALL'`，页面首次载入与过滤重置时默认请求全量来源；
+   - **后端读取逻辑兼容**：`internal/logger/logger.go` 的 `ReadLogs` 方法中，读取生命周期日志条件补充为空字符串处理（`sourceFilter == "lifecycle" || sourceFilter == "all" || sourceFilter == ""`），保证无论是传参 `ALL`、`all` 还是空值时均能正确聚合应用日志与生命周期日志并按精确时间戳严格倒序输出。
+2. **相对时间计算与发布时间动态展示 (`web/index.html`, `web/app.js`)**：
+   - **结构精简**：HTML 中将 `.update-tag` 由 `🎉 发现新版本` 净化为 `新版本`；
+   - **相对时间算法 (`formatRelativeTime`)**：
+     - 在 `web/app.js` 中新增纯原生 `formatRelativeTime(dateInput)` 工具函数；
+     - 准确解析 GitHub Release API 返回的 UTC 时间戳，计算与当前时间的秒数差（`diffSec`）；
+     - 分级映射并返回：`< 10s`（`刚刚`）、`< 60s`（`x秒前`）、`< 3600s`（`x分钟前`）、`< 86400s`（`x小时前`）、`< 30天`（`x天前`）、`< 365天`（`x个月前`）以及 `>= 365天`（`x年前`）；
+     - 更新提示条中动态拼接为 `发布于 ${relTime}`，保持清晰直观。
+3. **升级说明步骤化指引 (`web/index.html`)**：
+   - `.update-guide-tip` 替换为精简的两步步骤列表，重点突出点击飞牛桌面应用中心“左下角「手动安装」”。
+4. **多元素垂直基线与水平居中彻底对齐 (`web/style.css`, `web/index.html`, `web/app.js`)**：
+   - **根因分析**：
+     - `.about-md-h3` 继承全局 `h3` 的 `margin: 1.5rem 0 0.75rem 0`，虽然行内覆盖了 `margin-bottom: 0`，但顶部 `margin-top: 1.5rem`（24px）造成标题文字整体严重下沉；
+     - 徽标 `.version-status-badge` 原为 inline 行内元素且有不同 padding，而按钮 `#btn-check-update` 为特定高度的块级内联控件，导致两者垂直对齐基线产生跳动与偏移；
+   - **对齐治理**：
+     - `.about-header-row .about-md-h3` 增加 `margin: 0 !important; line-height: 1.3; display: inline-flex; align-items: center;`，彻底去除多余外边距；
+     - `.version-check-bar` 调整为 `display: inline-flex; align-items: center; gap: 0.6rem;`；
+     - `.version-status-badge` 与 `#btn-check-update` 统一设置固定高度 `height: 32px;`、`box-sizing: border-box;`、`display: inline-flex !important;`、`align-items: center; justify-content: center;`、`vertical-align: middle;` 和 `line-height: 1;`；
+     - JS 动态更新时，徽标显隐统一使用 `badge.style.display = 'inline-flex'` 替换旧有的 `inline-block`，彻底消除不同显示模式下的垂直落差。
+5. **全链路版本升级至 `v1.1.43`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.43`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
+   - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
+   - 验证版本比较单元测试（`TestCompareVersions`）及更新检查 API 单元测试（`TestCheckUpdateEndpoint`）在 `1.1.43` 版本下正常运作。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 

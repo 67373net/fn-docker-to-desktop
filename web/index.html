@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.42">
+  <link rel="stylesheet" href="style.css?v=1.1.43">
 </head>
 <body>
   <!-- Header Bar -->
@@ -174,9 +174,9 @@
       <!-- Logs Toolbar -->
       <div class="toolbar">
         <div class="filter-chips" id="log-source-chips">
-          <button class="chip active" data-log-source="app">运行日志</button>
+          <button class="chip active" data-log-source="ALL">全部来源</button>
+          <button class="chip" data-log-source="app">运行日志</button>
           <button class="chip" data-log-source="lifecycle">生命周期</button>
-          <button class="chip" data-log-source="ALL">全部来源</button>
         </div>
 
         <div class="filter-chips" id="log-level-chips">
@@ -468,7 +468,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin-bottom: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.42</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.43</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -479,7 +479,7 @@
           <div class="update-notice-card" id="update-notice-card" style="display: none;">
             <div class="update-notice-header">
               <div class="update-notice-title">
-                <span class="update-tag">🎉 发现新版本</span>
+                <span class="update-tag">新版本</span>
                 <strong id="update-new-version">vX.X.X</strong>
                 <span class="update-time" id="update-published-time"></span>
               </div>
@@ -490,7 +490,9 @@
             <div class="update-changelog-title">更新日志：</div>
             <div class="update-changelog-body" id="update-changelog-body"></div>
             <div class="update-guide-tip">
-              💡 <strong>飞牛 OS 覆盖升级说明</strong>：点击上方按钮下载 <code>.fpk</code> 安装包后，打开飞牛桌面「应用中心」➔ 点击右上角「手动安装」选择该文件即可。程序已针对覆盖安装进行秒级优化，无需卸载旧版，3 秒完成平滑升级，所有已配置的桌面图标与参数设置 100% 完整保留！
+              <strong>升级说明：</strong><br>
+              1. 点击上方按钮下载 .fpk 安装包；<br>
+              2. 打开飞牛桌面「应用中心」➔ 点击左下角「手动安装」选择该文件即可。
             </div>
           </div>
           <p class="about-md-p">本项目灵感及代码参考了项目 <a href="https://github.com/tf4fun/watchcow" target="_blank" rel="noopener noreferrer" class="about-link">watchcow</a>。</p>
@@ -510,12 +512,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.42" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.43" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.42" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.43" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -917,6 +919,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.42"></script>
+  <script src="app.js?v=1.1.43"></script>
 </body>
 </html>

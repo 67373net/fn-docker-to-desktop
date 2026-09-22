@@ -2406,20 +2406,34 @@ tr.row-updating {
   margin-bottom: 0.75rem;
 }
 
+.about-header-row .about-md-h3 {
+  margin: 0 !important;
+  line-height: 1.3;
+  display: inline-flex;
+  align-items: center;
+}
+
 .version-check-bar {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.6rem;
 }
 
 .version-status-badge {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  box-sizing: border-box;
   font-size: 0.8rem;
-  padding: 0.2rem 0.65rem;
+  padding: 0 0.75rem;
   border-radius: 20px;
   background-color: var(--bg-surface-subtle);
   color: var(--text-muted);
   border: 1px solid var(--border-color);
   white-space: nowrap;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .version-status-badge.has-update {
@@ -2433,6 +2447,19 @@ tr.row-updating {
   background-color: rgba(34, 197, 94, 0.1);
   color: #16a34a;
   border-color: rgba(34, 197, 94, 0.3);
+}
+
+#btn-check-update {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 0.85rem;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .update-notice-card {

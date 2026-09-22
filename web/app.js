@@ -153,7 +153,7 @@ let state = {
   isSettingsDirty: false,
   eventSource: null,
   activeMode: 'local',
-  logSource: 'app',
+  logSource: 'ALL',
   logLevel: 'ALL',
   logSearch: '',
   logPage: 1,
@@ -512,6 +512,26 @@ async function fetchSettings() {
   }
 }
 
+function formatRelativeTime(dateInput) {
+  if (!dateInput) return '';
+  const date = new Date(dateInput);
+  if (isNaN(date.getTime())) return '';
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diffSec < 0) return '刚刚';
+  if (diffSec < 60) return `${Math.max(1, diffSec)}秒前`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}分钟前`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}小时前`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay < 30) return `${diffDay}天前`;
+  const diffMonth = Math.floor(diffDay / 30);
+  if (diffMonth < 12) return `${diffMonth}个月前`;
+  const diffYear = Math.floor(diffDay / 365);
+  return `${Math.max(1, diffYear)}年前`;
+}
+
 let isCheckingUpdate = false;
 let updateCheckResult = null;
 
@@ -528,7 +548,7 @@ async function checkAppUpdate(force = false) {
     btn.textContent = '正在检查...';
   }
   if (badge) {
-    badge.style.display = 'inline-block';
+    badge.style.display = 'inline-flex';
     badge.className = 'version-status-badge';
     badge.textContent = '正在检查更新...';
   }
@@ -541,6 +561,7 @@ async function checkAppUpdate(force = false) {
       if (data.has_update) {
         if (dot) dot.style.display = 'inline-block';
         if (badge) {
+          badge.style.display = 'inline-flex';
           badge.className = 'version-status-badge has-update';
           badge.textContent = `发现新版本 v${data.latest_version}`;
         }
@@ -549,9 +570,9 @@ async function checkAppUpdate(force = false) {
           const newVerEl = document.getElementById('update-new-version');
           if (newVerEl) newVerEl.textContent = `v${data.latest_version}`;
           const timeEl = document.getElementById('update-published-time');
-          if (timeEl && data.published_at) {
-            const d = new Date(data.published_at);
-            timeEl.textContent = isNaN(d.getTime()) ? '' : `(发布于 ${d.toLocaleDateString()})`;
+          if (timeEl) {
+            const relTime = formatRelativeTime(data.published_at);
+            timeEl.textContent = relTime ? `发布于 ${relTime}` : '';
           }
           const dlBtn = document.getElementById('btn-download-fpk');
           if (dlBtn && data.download_url) {
@@ -566,6 +587,7 @@ async function checkAppUpdate(force = false) {
         if (dot) dot.style.display = 'none';
         if (card) card.style.display = 'none';
         if (badge) {
+          badge.style.display = 'inline-flex';
           if (data.error) {
             badge.className = 'version-status-badge';
             badge.textContent = data.error;
@@ -577,6 +599,7 @@ async function checkAppUpdate(force = false) {
       }
     } else {
       if (badge) {
+        badge.style.display = 'inline-flex';
         badge.className = 'version-status-badge';
         badge.textContent = '检查更新失败';
       }
@@ -601,7 +624,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.42';
+  const ver = state.settings?.version || '1.1.43';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4303,7 +4326,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.42';
+      const ver = state.settings?.version || '1.1.43';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

@@ -402,8 +402,8 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 		}
 	}
 
-	// Read lifecycle logs if sourceFilter is "lifecycle" or "all"
-	if sourceFilter == "lifecycle" || sourceFilter == "all" {
+	// Read lifecycle logs if sourceFilter is "lifecycle", "all", or ""
+	if sourceFilter == "lifecycle" || sourceFilter == "all" || sourceFilter == "" {
 		candidates := []string{
 			filepath.Join(l.logDir, "lifecycle.log"),
 			"/tmp/fn-docker-to-desktop-lifecycle.log",
