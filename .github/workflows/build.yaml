@@ -103,28 +103,7 @@ jobs:
             echo "release_name=Latest Build (master)" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
-          python3 -c "
-import re, os
-tag = '${TAG_NAME}'
-notes = ''
-if os.path.exists('docs/CONVERSATION_HISTORY.md'):
-    with open('docs/CONVERSATION_HISTORY.md', 'r', encoding='utf-8') as f:
-        content = f.read()
-    pattern = rf'## Turn \d+ - {re.escape(tag)} 发布记录([\s\S]*?)(?=\n---\n\n## Turn|\Z)'
-    m = re.search(pattern, content)
-    if not m:
-        matches = list(re.finditer(r'## Turn \d+ - (v[0-9.]+) 发布记录([\s\S]*?)(?=\n---\n\n## Turn|\Z)', content))
-        if matches:
-            m = matches[-1]
-    if m:
-        notes = m.group(1).strip()
-
-with open('release_notes.md', 'w', encoding='utf-8') as out:
-    if notes:
-        out.write(notes + '\n')
-    else:
-        out.write('版本更新与系统优化\n')
-"
+          python3 scripts/extract_release_notes.py "${TAG_NAME}"
 
       - name: Create or Update Release
         uses: softprops/action-gh-release@v2
