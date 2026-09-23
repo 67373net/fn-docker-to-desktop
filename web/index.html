@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.47">
+  <link rel="stylesheet" href="style.css?v=1.1.48">
 </head>
 <body>
   <!-- Header Bar -->
@@ -468,7 +468,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.47</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.48</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -547,7 +547,7 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">应用包名标识 (fnOS Package ID，以字母数字开头，仅含字母数字点号短横线，3-32位)</label>
+            <label class="form-label">应用包名标识（建议保持默认）</label>
             <input type="text" id="item-app-name" class="form-input" placeholder="例如：fndocker.my-app-123456" autocomplete="off" spellcheck="false">
             <div id="item-app-name-duplicate-tip" style="display: none; color: var(--danger, #ef4444); font-size: 0.82rem; margin-top: 4px;"></div>
           </div>
@@ -771,8 +771,8 @@
           </div>
 
             <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label">开屏提示（可选）</label>
-              <textarea id="item-notice-content" class="form-input" rows="3" placeholder="留空则不设置提示" style="resize: vertical; min-height: 60px;"></textarea>
+              <label class="form-label">开屏弹窗（可选）</label>
+              <textarea id="item-notice-content" class="form-input" rows="3" placeholder="留空则无弹窗" style="resize: vertical; min-height: 60px;"></textarea>
             </div>
 
             <div class="form-group" id="form-group-file-types" style="margin-top: 1rem;">
