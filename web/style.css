@@ -2524,44 +2524,6 @@ tr.row-updating {
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.08);
 }
 
-.update-notice-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.update-notice-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.update-tag {
-  background-color: rgba(59, 130, 246, 0.12);
-  color: var(--primary);
-  padding: 0.2rem 0.55rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.update-time {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.update-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
 
 .update-changelog-title {
   font-size: 0.88rem;
@@ -2633,11 +2595,6 @@ tr.row-updating {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
-  }
-
-  .update-notice-header {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 

@@ -43,9 +43,17 @@ const (
 	TargetPruneSizeBytes = 24 * 1024 * 1024 // 24MB 淘汰目标体积 (超限后淘汰最老日志并预留缓冲空间)
 )
 
+type parsedLogCache struct {
+	modTime time.Time
+	size    int64
+	entries []LogEntry
+}
+
 // Logger manages multi-destination streaming logging and auto-pruning.
 type Logger struct {
 	mu            sync.Mutex
+	fileCacheMu   sync.RWMutex
+	fileCache     map[string]parsedLogCache
 	logDir        string
 	currentFile   *os.File
 	fallbackFile  *os.File
@@ -100,6 +108,7 @@ func Init(dataDir string, retentionDays int) (*Logger, error) {
 		outWriter:     os.Stdout,
 		fallbackFile:  fallbackFile,
 		currentFile:   currentFile,
+		fileCache:     make(map[string]parsedLogCache),
 		stopChan:      make(chan struct{}),
 	}
 
@@ -382,23 +391,23 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 		}
 		sort.Strings(legacyFiles)
 		for _, f := range legacyFiles {
-			readLinesFromFile(f, "app", matchAndAdd)
+			l.readLinesFromFile(f, "app", matchAndAdd)
 		}
 
 		// Also check rotated app.log.old
 		oldAppLog := filepath.Join(l.logDir, "app.log.old")
 		if fi, err := os.Stat(oldAppLog); err == nil && !fi.IsDir() {
-			readLinesFromFile(oldAppLog, "app", matchAndAdd)
+			l.readLinesFromFile(oldAppLog, "app", matchAndAdd)
 		}
 
 		// Read current streaming app.log
 		if fi, err := os.Stat(filePath); err == nil {
 			resp.FileSize += fi.Size()
-			readLinesFromFile(filePath, "app", matchAndAdd)
+			l.readLinesFromFile(filePath, "app", matchAndAdd)
 		} else if fallbackFi, err := os.Stat("/tmp/fn-docker-to-desktop.log"); err == nil {
 			resp.FileSize += fallbackFi.Size()
 			// Fallback if app.log not yet created
-			readLinesFromFile("/tmp/fn-docker-to-desktop.log", "app", matchAndAdd)
+			l.readLinesFromFile("/tmp/fn-docker-to-desktop.log", "app", matchAndAdd)
 		}
 	}
 
@@ -416,7 +425,7 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 					resp.LogPath = c
 					resp.FileSize = fi.Size()
 				}
-				readLinesFromFile(c, "lifecycle", matchAndAdd)
+				l.readLinesFromFile(c, "lifecycle", matchAndAdd)
 			}
 		}
 	}
@@ -453,34 +462,71 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 	return resp, nil
 }
 
-func readLinesFromFile(path string, source string, handler func(LogEntry)) {
-	f, err := os.Open(path)
-	if err != nil {
+func (l *Logger) readLinesFromFile(path string, source string, handler func(LogEntry)) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
 		return
 	}
-	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 128*1024)
-	scanner.Buffer(buf, 1024*1024)
+	var entries []LogEntry
+	if l != nil {
+		l.fileCacheMu.RLock()
+		if l.fileCache != nil {
+			cached, ok := l.fileCache[path]
+			if ok && cached.modTime.Equal(fi.ModTime()) && cached.size == fi.Size() {
+				entries = cached.entries
+			}
+		}
+		l.fileCacheMu.RUnlock()
+	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || isCliSpinnerLine(trimmed) {
-			continue
+	if entries == nil {
+		f, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		buf := make([]byte, 128*1024)
+		scanner.Buffer(buf, 1024*1024)
+
+		entries = make([]LogEntry, 0, 128)
+		for scanner.Scan() {
+			line := scanner.Text()
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || isCliSpinnerLine(trimmed) {
+				continue
+			}
+
+			var entry LogEntry
+			if source == "lifecycle" {
+				entry = parseLifecycleLogLine(line)
+			} else {
+				entry = parseLogLine(line)
+			}
+			if entry.Raw == "" {
+				continue
+			}
+			entry.Source = source
+			entries = append(entries, entry)
 		}
 
-		var entry LogEntry
-		if source == "lifecycle" {
-			entry = parseLifecycleLogLine(line)
-		} else {
-			entry = parseLogLine(line)
+		if l != nil {
+			l.fileCacheMu.Lock()
+			if l.fileCache == nil {
+				l.fileCache = make(map[string]parsedLogCache)
+			}
+			l.fileCache[path] = parsedLogCache{
+				modTime: fi.ModTime(),
+				size:    fi.Size(),
+				entries: entries,
+			}
+			l.fileCacheMu.Unlock()
 		}
-		if entry.Raw == "" {
-			continue
-		}
-		entry.Source = source
+	}
+
+	for _, entry := range entries {
 		handler(entry)
 	}
 }

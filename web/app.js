@@ -535,7 +535,7 @@ function formatRelativeTime(dateInput) {
 let isCheckingUpdate = false;
 let updateCheckResult = null;
 
-async function checkAppUpdate(force = false) {
+async function checkAppUpdate(force = false, triggerDownload = false) {
   if (isCheckingUpdate) return;
   const btn = document.getElementById('btn-check-update');
   const badge = document.getElementById('version-status-badge');
@@ -545,7 +545,7 @@ async function checkAppUpdate(force = false) {
   isCheckingUpdate = true;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '正在检查...';
+    btn.textContent = triggerDownload ? '正在获取下载链接...' : '正在检查...';
   }
   if (badge) {
     badge.style.display = 'inline-flex';
@@ -560,27 +560,31 @@ async function checkAppUpdate(force = false) {
       updateCheckResult = data;
       if (data.has_update) {
         if (dot) dot.style.display = 'inline-block';
+        const relTime = formatRelativeTime(data.published_at);
         if (badge) {
           badge.style.display = 'inline-flex';
           badge.className = 'version-status-badge has-update';
-          badge.textContent = `发现新版本 v${data.latest_version}`;
+          badge.textContent = `发现新版本 v${data.latest_version}${relTime ? ' ' + relTime : ''}`;
         }
         if (card) {
           card.style.display = 'block';
-          const newVerEl = document.getElementById('update-new-version');
-          if (newVerEl) newVerEl.textContent = `v${data.latest_version}`;
-          const timeEl = document.getElementById('update-published-time');
-          if (timeEl) {
-            const relTime = formatRelativeTime(data.published_at);
-            timeEl.textContent = relTime ? `发布于 ${relTime}` : '';
-          }
-          const dlBtn = document.getElementById('btn-download-fpk');
-          if (dlBtn && data.download_url) {
-            dlBtn.href = data.download_url;
-          }
           const changelogEl = document.getElementById('update-changelog-body');
           if (changelogEl) {
             changelogEl.textContent = (data.release_notes || '').trim() || '暂无更新日志说明';
+          }
+        }
+
+        if (triggerDownload) {
+          if (data.download_url) {
+            const dlLink = document.createElement('a');
+            dlLink.href = data.download_url;
+            dlLink.target = '_blank';
+            dlLink.rel = 'noopener noreferrer';
+            document.body.appendChild(dlLink);
+            dlLink.click();
+            dlLink.remove();
+          } else {
+            showToast('未找到安装包下载链接', 'warn');
           }
         }
       } else {
@@ -596,12 +600,18 @@ async function checkAppUpdate(force = false) {
             badge.textContent = '当前已是最新版本';
           }
         }
+        if (triggerDownload) {
+          showToast('当前已是最新版本，无需下载', 'info');
+        }
       }
     } else {
       if (badge) {
         badge.style.display = 'inline-flex';
         badge.className = 'version-status-badge';
         badge.textContent = '检查更新失败';
+      }
+      if (triggerDownload) {
+        showToast('获取更新下载链接失败', 'error');
       }
     }
   } catch (err) {
@@ -610,11 +620,22 @@ async function checkAppUpdate(force = false) {
       badge.className = 'version-status-badge';
       badge.textContent = '网络连接异常';
     }
+    if (triggerDownload) {
+      showToast('网络连接异常，无法获取下载链接', 'error');
+    }
   } finally {
     isCheckingUpdate = false;
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '检查更新';
+      if (updateCheckResult && updateCheckResult.has_update) {
+        btn.textContent = '从 github 下载安装包';
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+      } else {
+        btn.textContent = '检查更新';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+      }
     }
   }
 }
@@ -624,7 +645,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.46';
+  const ver = state.settings?.version || '1.1.47';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4326,7 +4347,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.46';
+      const ver = state.settings?.version || '1.1.47';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4652,7 +4673,10 @@ function initApp() {
 
   const btnCheckUpdate = document.getElementById('btn-check-update');
   if (btnCheckUpdate) {
-    btnCheckUpdate.addEventListener('click', () => checkAppUpdate(true));
+    btnCheckUpdate.addEventListener('click', () => {
+      const isDownload = !!(updateCheckResult && updateCheckResult.has_update);
+      checkAppUpdate(true, isDownload);
+    });
   }
 
   fetchPorts();
@@ -4668,15 +4692,58 @@ function initApp() {
 }
 
 // --- System Logs Viewer (Streaming & Paginated) ---
+function applyLogFiltersAndRender(isAutoPoll = false) {
+  const body = document.getElementById('terminal-log-body');
+  if (!body) return;
+
+  const source = (state.logSource || 'ALL').toLowerCase();
+  const level = (state.logLevel || 'ALL').toLowerCase();
+  const search = (state.logSearch || '').toLowerCase().trim();
+
+  let filtered = state.allFetchedLogs || [];
+
+  // Filter by source if data contains entries from multiple sources
+  if (source !== 'all' && source !== '') {
+    filtered = filtered.filter(item => {
+      const s = (item.source || 'app').toLowerCase();
+      return s === source;
+    });
+  }
+
+  // Filter by level
+  if (level !== 'all' && level !== '') {
+    filtered = filtered.filter(item => {
+      const l = (item.level || 'info').toLowerCase();
+      return l === level;
+    });
+  }
+
+  // Filter by search keyword
+  if (search) {
+    filtered = filtered.filter(item => {
+      const msg = (item.message || '').toLowerCase();
+      const raw = (item.raw || '').toLowerCase();
+      return msg.includes(search) || raw.includes(search);
+    });
+  }
+
+  state.logs = filtered;
+  renderLogs(isAutoPoll);
+}
+
 function initLogViewer() {
   const sourceBtns = document.querySelectorAll('#log-source-segments .segment-btn, #log-source-chips .chip');
   sourceBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       sourceBtns.forEach(c => c.classList.remove('active'));
       btn.classList.add('active');
-      state.logSource = btn.dataset.logSource || 'ALL';
-      state.logPage = 1;
-      fetchLogs();
+      const newSource = btn.dataset.logSource || 'ALL';
+      if (state.logSource !== newSource) {
+        state.logSource = newSource;
+        state.logPage = 1;
+        applyLogFiltersAndRender(false);
+        fetchLogs(false);
+      }
     });
   });
 
@@ -4685,29 +4752,28 @@ function initLogViewer() {
     btn.addEventListener('click', () => {
       levelBtns.forEach(c => c.classList.remove('active'));
       btn.classList.add('active');
-      state.logLevel = btn.dataset.logLevel || 'ALL';
-      state.logPage = 1;
-      fetchLogs();
+      const newLevel = btn.dataset.logLevel || 'ALL';
+      if (state.logLevel !== newLevel) {
+        state.logLevel = newLevel;
+        state.logPage = 1;
+        applyLogFiltersAndRender(false);
+      }
     });
   });
 
-  let searchTimeout = null;
   const searchInput = document.getElementById('log-search-input');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        state.logSearch = e.target.value.trim();
-        state.logPage = 1;
-        fetchLogs();
-      }, 300);
+      state.logSearch = e.target.value.trim();
+      state.logPage = 1;
+      applyLogFiltersAndRender(false);
     });
   }
 
   const btnRefresh = document.getElementById('btn-refresh-logs');
   if (btnRefresh) {
     btnRefresh.addEventListener('click', () => {
-      fetchLogs();
+      fetchLogs(false);
     });
   }
 
@@ -4759,25 +4825,28 @@ function initLogViewer() {
   }
 }
 
+let isFetchingLogs = false;
+
 async function fetchLogs(isAutoPoll = false) {
+  if (isFetchingLogs && isAutoPoll) return;
+  isFetchingLogs = true;
+
   try {
     const source = state.logSource || 'ALL';
-    const level = state.logLevel || 'ALL';
-    let url = apiUrl(`/api/logs?source=${encodeURIComponent(source)}&level=${encodeURIComponent(level)}`);
-    if (state.logSearch) {
-      url += `&search=${encodeURIComponent(state.logSearch)}`;
-    }
+    // Always fetch level=all so all levels are cached in memory for instant 0ms switching
+    const url = apiUrl(`/api/logs?source=${encodeURIComponent(source)}&level=all&limit=5000`);
 
     const res = await fetch(url);
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const data = await res.json();
-      state.logs = data.lines || [];
-
-      renderLogs(isAutoPoll);
+      state.allFetchedLogs = data.lines || [];
+      applyLogFiltersAndRender(isAutoPoll);
     }
   } catch (err) {
     console.error('Fetch logs error:', err);
+  } finally {
+    isFetchingLogs = false;
   }
 }
 

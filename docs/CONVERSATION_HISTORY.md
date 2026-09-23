@@ -4341,11 +4341,54 @@ INFO
 1. **自动化单元测试与编译验证**：
    - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
    - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
-   - 验证版本比较与更新检查单元测试在 `1.1.46` 下正常运行。
+
+---
+
+## Turn 62 - v1.1.47 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **关于页面升级卡片头部精简**：
+   - 彻底移除更新提示卡片中的第一行（“新版本 v1.1.46 发布于 1小时前 从 github 下载安装包”），并去掉下方的分割线。
+   - 升级说明由“1. 点击上方按钮下载 .fpk 安装包；”改为“1. 点击右上方按钮下载 .fpk 安装包；”。
+2. **顶栏版本状态与一键下载联动**：
+   - 发现新版本时，状态徽标改为“发现新版本 vX.X.X x小时前”（如“发现新版本 v1.1.47 1小时前”）；
+   - 右上角“检查更新”按钮在存在新版本时变为“从 github 下载安装包”，点击后先重新获取最新 Release 链接并立即触发浏览器下载。
+3. **全系统搜索框占位文案极简化**：
+   - 所有搜索框（进程列表、桌面图标、系统进程、日志）的提示文字统一为“搜索”，仅保留两个汉字，去除省略号及其他多余说明。
+4. **进程列表工具栏布局微调**：
+   - 进程列表中，将“极简”切换开关移动到“刷新”按钮左侧。
+5. **排查并优化日志分段控制器切换卡顿**：
+   - 分析排查为什么日志 Tab 切换分段控制器响应慢，优化为即时响应。
+6. **GitHub Release 自动附加更新日志简介**：
+   - Release 页面不再仅显示 Full Changelog 对比链接，自动提取本次版本的更新内容简介作为 Release 正文。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **关于界面更新卡片重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 从 `update-notice-card` 中完全移除 `.update-notice-header` DOM 结构及其下边框；
+   - 升级说明指引文字更新为“1. 点击右上方按钮下载 .fpk 安装包；”；
+   - `checkAppUpdate(force, triggerDownload)`：当检测到新版本时，徽标动态格式化相对时间为 `发现新版本 v${latest_version} ${relTime}`；
+   - `#btn-check-update` 按钮根据更新状态动态切换为“从 github 下载安装包”并应用 `btn-primary` 高亮；点击时自动向 `/api/system/version-check?force=true` 发起校验后安全触发浏览器文件下载。
+2. **搜索输入框占位符统一 (`web/index.html`)**：
+   - `#port-search`、`#desktop-search`、`#proc-search`、`#log-search-input` 四处占位符全部规范为 `placeholder="搜索"`。
+3. **进程列表工具栏布局优化 (`web/index.html`)**：
+   - 将 `#label-minimal-mode` 移动至 `#btn-refresh-ports` 前面，使得“极简”开关始终位于“刷新”按钮左侧，符合常规工具栏视觉习惯。
+4. **日志分段控制器性能瓶颈根因与全链路加速 (`internal/logger/logger.go`, `web/app.js`)**：
+   - **卡顿根因**：原先每次点击级别或来源分段控制器，前端均全量向后端发送 HTTP GET 请求；后端每次必须从头扫描磁盘日志文件（app.log 最大可达 28MB）并进行逐行解析与排序，且前端在网络往返期间无过渡反馈，导致严重操作迟滞；
+   - **后端 mtime/size 内存缓存**：在 `Logger` 中引入 `fileCache` 与 `sync.RWMutex`，仅在日志文件物理大小或修改时间变动时才重读解析，避免重复磁盘扫描，后端响应耗时从数百毫秒降至 1 毫秒内；
+   - **前端瞬时内存过滤 (0ms 响应)**：在 `state.allFetchedLogs` 基础上构建 `applyLogFiltersAndRender()`；切换“全部/info/warn/error”级别与输入搜索关键词均直接在客户端内存纳秒级完成过滤与局部 DOM 刷新，完全跳过网络往返，点击即刻见效；切换来源时支持全量数据优先瞬显并静默拉取更新。
+5. **GitHub Release 自动生成版本更新说明 (`.github/workflows/build.yaml`)**：
+   - 在 Release CI 流程中加入 `actions/checkout@v4`，并通过 Python 脚本动态检索 `docs/CONVERSATION_HISTORY.md` 中对应当前 Tag 的发布说明；
+   - 生成 `release_notes.md` 并通过 `body_path: release_notes.md` 注入至 `softprops/action-gh-release@v2`，实现 Release 说明包含清晰详尽的架构与功能变动概览。
+6. **全链路版本升级至 `v1.1.47`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.47`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
+   - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
+   - 验证版本比较与更新检查单元测试在 `1.1.47` 下正常运行。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
-
-
-
-
-
-

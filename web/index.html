@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.46">
+  <link rel="stylesheet" href="style.css?v=1.1.47">
 </head>
 <body>
   <!-- Header Bar -->
@@ -51,7 +51,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="port-search" placeholder="搜索...">
+          <input type="text" id="port-search" placeholder="搜索">
         </div>
         <div class="segmented-control" id="port-source-segments" role="radiogroup" aria-label="来源筛选">
           <button type="button" class="segment-btn" data-value="all">全部</button>
@@ -67,12 +67,12 @@
           <span>置底</span>
         </button>
         <div class="toolbar-spacer"></div>
-        <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
         <label class="toggle-minimal-mode-label" id="label-minimal-mode" title="极简模式下仅显示核心列（端口、容器/进程、桌面图标、操作）">
           <input type="checkbox" id="toggle-minimal-mode" checked>
           <span class="toggle-switch-track"><span class="toggle-switch-thumb"></span></span>
           <span class="toggle-switch-text">极简</span>
         </label>
+        <button class="btn btn-secondary" id="btn-refresh-ports" title="刷新进程列表">刷新</button>
         <button class="btn btn-primary" id="btn-quick-add-desktop">
           <span>添加桌面图标</span>
         </button>
@@ -105,7 +105,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="desktop-search" placeholder="搜索已创建的桌面图标...">
+          <input type="text" id="desktop-search" placeholder="搜索">
         </div>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
@@ -140,7 +140,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="proc-search" placeholder="搜索进程名称、PID、用户...">
+          <input type="text" id="proc-search" placeholder="搜索">
         </div>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-procs" title="刷新系统进程">刷新</button>
@@ -175,7 +175,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="log-search-input" placeholder="搜索...">
+          <input type="text" id="log-search-input" placeholder="搜索">
         </div>
 
         <div class="segmented-control" id="log-source-segments" role="radiogroup" aria-label="日志来源筛选">
@@ -468,7 +468,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.46</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.47</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -477,21 +477,11 @@
 
           <!-- 新版本提示卡片 (检测到新版本时动态展示) -->
           <div class="update-notice-card" id="update-notice-card" style="display: none;">
-            <div class="update-notice-header">
-              <div class="update-notice-title">
-                <span class="update-tag">新版本</span>
-                <strong id="update-new-version">vX.X.X</strong>
-                <span class="update-time" id="update-published-time"></span>
-              </div>
-              <div class="update-actions">
-                <a href="#" class="btn btn-sm btn-primary" id="btn-download-fpk" target="_blank" rel="noopener noreferrer">从 github 下载安装包</a>
-              </div>
-            </div>
             <div class="update-changelog-title">更新日志：</div>
             <div class="update-changelog-body" id="update-changelog-body"></div>
             <div class="update-guide-tip">
               <strong>升级说明：</strong><br>
-              1. 点击上方按钮下载 .fpk 安装包；<br>
+              1. 点击右上方按钮下载 .fpk 安装包；<br>
               2. 打开飞牛桌面「应用中心」➔ 点击左下角「手动安装」选择该文件即可。
             </div>
           </div>
