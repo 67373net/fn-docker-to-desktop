@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.45">
+  <link rel="stylesheet" href="style.css?v=1.1.46">
 </head>
 <body>
   <!-- Header Bar -->
@@ -51,18 +51,18 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="port-search" placeholder="搜索端口、进程名、容器名...">
+          <input type="text" id="port-search" placeholder="搜索...">
         </div>
-        <select id="port-filter-source" class="toolbar-select" title="来源筛选">
-          <option value="all">全部来源</option>
-          <option value="docker" selected>Docker 容器</option>
-          <option value="host">系统原生</option>
-        </select>
-        <select id="port-filter-proto" class="toolbar-select" title="协议筛选">
-          <option value="all" selected>全部</option>
-          <option value="tcp">TCP</option>
-          <option value="udp">UDP</option>
-        </select>
+        <div class="segmented-control" id="port-source-segments" role="radiogroup" aria-label="来源筛选">
+          <button type="button" class="segment-btn" data-value="all">全部</button>
+          <button type="button" class="segment-btn active" data-value="docker">Docker</button>
+          <button type="button" class="segment-btn" data-value="host">系统</button>
+        </div>
+        <div class="segmented-control" id="port-proto-segments" role="radiogroup" aria-label="协议筛选">
+          <button type="button" class="segment-btn active" data-value="all">全部</button>
+          <button type="button" class="segment-btn" data-value="tcp">TCP</button>
+          <button type="button" class="segment-btn" data-value="udp">UDP</button>
+        </div>
         <button class="btn btn-secondary" id="btn-open-sink-modal" title="设置需要置底排布的 Docker 容器或进程名单">
           <span>置底</span>
         </button>
@@ -178,17 +178,17 @@
           <input type="text" id="log-search-input" placeholder="搜索...">
         </div>
 
-        <div class="filter-chips" id="log-source-chips">
-          <button class="chip active" data-log-source="ALL">全部来源</button>
-          <button class="chip" data-log-source="app">运行日志</button>
-          <button class="chip" data-log-source="lifecycle">生命周期</button>
+        <div class="segmented-control" id="log-source-segments" role="radiogroup" aria-label="日志来源筛选">
+          <button type="button" class="segment-btn active" data-log-source="ALL">全部</button>
+          <button type="button" class="segment-btn" data-log-source="app">运行</button>
+          <button type="button" class="segment-btn" data-log-source="lifecycle">安装</button>
         </div>
 
-        <div class="filter-chips" id="log-level-chips">
-          <button class="chip active" data-log-level="ALL">全部</button>
-          <button class="chip" data-log-level="info">info</button>
-          <button class="chip" data-log-level="warn">warn</button>
-          <button class="chip" data-log-level="error">error</button>
+        <div class="segmented-control" id="log-level-segments" role="radiogroup" aria-label="日志级别筛选">
+          <button type="button" class="segment-btn active" data-log-level="ALL">全部</button>
+          <button type="button" class="segment-btn" data-log-level="info">info</button>
+          <button type="button" class="segment-btn" data-log-level="warn">warn</button>
+          <button type="button" class="segment-btn" data-log-level="error">error</button>
         </div>
 
         <div class="toolbar-spacer"></div>
@@ -468,7 +468,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.45</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.46</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -512,12 +512,12 @@
             <div class="donate-qr-grid">
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_wechat.jpg?v=1.1.45" alt="微信收款码" class="donate-qr-img">
+                  <img src="donate_wechat.jpg?v=1.1.46" alt="微信收款码" class="donate-qr-img">
                 </div>
               </div>
               <div class="donate-qr-item">
                 <div class="donate-qr-frame">
-                  <img src="donate_alipay.jpg?v=1.1.45" alt="支付宝收款码" class="donate-qr-img">
+                  <img src="donate_alipay.jpg?v=1.1.46" alt="支付宝收款码" class="donate-qr-img">
                 </div>
               </div>
             </div>
@@ -919,6 +919,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.45"></script>
+  <script src="app.js?v=1.1.46"></script>
 </body>
 </html>

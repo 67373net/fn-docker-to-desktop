@@ -353,6 +353,59 @@ html, body {
   font-weight: 600;
 }
 
+/* --- Segmented Control --- */
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
+  box-sizing: border-box;
+  height: 34px;
+  user-select: none;
+}
+
+.segmented-control .segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 0.75rem;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease-in-out;
+}
+
+.segmented-control .segment-btn:hover:not(.active) {
+  color: var(--text-main);
+  background-color: var(--bg-hover);
+}
+
+.segmented-control .segment-btn.active {
+  background-color: var(--bg-surface);
+  color: var(--primary-text);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .segmented-control .segment-btn.active {
+    background-color: var(--bg-hover);
+    color: var(--primary);
+    border-color: var(--border-strong);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+}
+
 .toolbar-spacer {
   flex: 1;
 }

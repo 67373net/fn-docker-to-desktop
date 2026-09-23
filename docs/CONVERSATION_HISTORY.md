@@ -4300,6 +4300,51 @@ INFO
    - 验证版本比较与更新检查单元测试在 `1.1.45` 下正常运行。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 61 - v1.1.46 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **进程列表搜索框占位文案**：
+   - 进程列表工具栏中的搜索框占位文字由“搜索端口、进程名、容器名...”精简为“搜索...”。
+2. **进程列表筛选控件改造为分段控制器 (Segmented Control)**：
+   - 来源筛选：改造为分段控制器，选项为“全部”、“Docker”、“系统”，默认选中“Docker”；
+   - 协议筛选：改造为分段控制器，选项为“全部”、“TCP”、“UDP”，默认选中“全部”。
+3. **日志筛选控件改造为分段控制器与 Tag 文本规范化**：
+   - 来源筛选：改造为分段控制器，选项为“全部”、“运行”、“安装”，默认选中“全部”；
+   - 级别筛选：改造为分段控制器，选项为“全部”、“info”、“warn”、“error”，默认选中“全部”；
+   - 日志条目中的来源 Tag：由英文标识 `app` / `lifecycle` 汉化改为 `运行` / `安装`。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **分段控制器设计系统样式 (`web/style.css`)**：
+   - 新增 `.segmented-control` 容器与 `.segment-btn` 选项组件样式；
+   - 采用标准胶囊内联轨道（高度 34px、`bg-surface-subtle` 背景、细边框与圆角）；
+   - 激活项（`.active`）提供浮动卡片式微投影与文字高亮效果，在浅色与深色主题下均呈现自然现代的交互质感。
+2. **进程列表面板筛选与搜索精简 (`web/index.html`, `web/app.js`)**：
+   - 将原 `<select id="port-filter-source">` 和 `<select id="port-filter-proto">` 替换为 `#port-source-segments` 与 `#port-proto-segments` 分段控制器；
+   - 选项文字规范为：`全部`、`Docker`（默认激活）、`系统` 以及 `全部`（默认激活）、`TCP`、`UDP`；
+   - 搜索框占位符统一为 `搜索...`；
+   - 在 `initApp()` 中对分段控制器的按钮点击事件进行双向绑定并即时调用 `renderPortsTable()`。
+3. **日志面板分段筛选与条目 Tag 映射 (`web/index.html`, `web/app.js`)**：
+   - 将原 `#log-source-chips` 和 `#log-level-chips` 升级为 `#log-source-segments` 与 `#log-level-segments`；
+   - 来源选项精简为 `全部`（默认激活）、`运行`、`安装`；级别选项精简为 `全部`（默认激活）、`info`、`warn`、`error`；
+   - 在 `renderLogLines()` 中，通过 `sourceNameMap` 将数据源代码 `app` 动态渲染为 `运行`，将 `lifecycle` 动态渲染为 `安装`，保留原有色彩标签样式（紫蓝色/青绿色）；
+   - 在 `initLogViewer()` 中全面适配分段控制器切换逻辑与分页重置。
+4. **全链路版本升级至 `v1.1.46`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.46`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
+   - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
+   - 验证版本比较与更新检查单元测试在 `1.1.46` 下正常运行。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 

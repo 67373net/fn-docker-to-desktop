@@ -624,7 +624,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.45';
+  const ver = state.settings?.version || '1.1.46';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4326,7 +4326,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.45';
+      const ver = state.settings?.version || '1.1.46';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4460,22 +4460,28 @@ function initApp() {
   initModals();
   initTableAutoWrapObservers();
 
-  // Dropdown filters in Ports tab (Docker 容器/系统原生, TCP/UDP)
-  const portFilterSource = document.getElementById('port-filter-source');
-  if (portFilterSource) {
-    portFilterSource.value = state.portFilterSource;
-    portFilterSource.addEventListener('change', (e) => {
-      state.portFilterSource = e.target.value;
-      renderPortsTable();
+  // Segmented filters in Ports tab (Docker/系统, TCP/UDP)
+  const portSourceSegments = document.getElementById('port-source-segments');
+  if (portSourceSegments) {
+    portSourceSegments.querySelectorAll('.segment-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        portSourceSegments.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.portFilterSource = btn.dataset.value;
+        renderPortsTable();
+      });
     });
   }
 
-  const portFilterProto = document.getElementById('port-filter-proto');
-  if (portFilterProto) {
-    portFilterProto.value = state.portFilterProto;
-    portFilterProto.addEventListener('change', (e) => {
-      state.portFilterProto = e.target.value;
-      renderPortsTable();
+  const portProtoSegments = document.getElementById('port-proto-segments');
+  if (portProtoSegments) {
+    portProtoSegments.querySelectorAll('.segment-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        portProtoSegments.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.portFilterProto = btn.dataset.value;
+        renderPortsTable();
+      });
     });
   }
 
@@ -4663,21 +4669,23 @@ function initApp() {
 
 // --- System Logs Viewer (Streaming & Paginated) ---
 function initLogViewer() {
-  document.querySelectorAll('#log-source-chips .chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('#log-source-chips .chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.logSource = chip.dataset.logSource || 'ALL';
+  const sourceBtns = document.querySelectorAll('#log-source-segments .segment-btn, #log-source-chips .chip');
+  sourceBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      sourceBtns.forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      state.logSource = btn.dataset.logSource || 'ALL';
       state.logPage = 1;
       fetchLogs();
     });
   });
 
-  document.querySelectorAll('#log-level-chips .chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('#log-level-chips .chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.logLevel = chip.dataset.logLevel || 'ALL';
+  const levelBtns = document.querySelectorAll('#log-level-segments .segment-btn, #log-level-chips .chip');
+  levelBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      levelBtns.forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      state.logLevel = btn.dataset.logLevel || 'ALL';
       state.logPage = 1;
       fetchLogs();
     });
@@ -4824,6 +4832,11 @@ function renderLogs(isAutoPoll = false) {
     const lineNum = startIndex + idx + 1;
     const level = (entry.level || 'info').toLowerCase();
     const source = (entry.source || 'app').toLowerCase();
+    const sourceNameMap = {
+      app: '运行',
+      lifecycle: '安装'
+    };
+    const sourceLabel = sourceNameMap[source] || source;
     const badgeClass = `log-badge-${level}`;
     const sourceClass = `log-source-${source}`;
     let timeStr = entry.timestamp || '';
@@ -4833,7 +4846,7 @@ function renderLogs(isAutoPoll = false) {
     return `<div class="log-line">
       <span class="log-num">${lineNum}</span>
       <span class="log-time">${escapeHtml(timeStr)}</span>
-      <span class="log-source-tag ${sourceClass}">${escapeHtml(source)}</span>
+      <span class="log-source-tag ${sourceClass}">${escapeHtml(sourceLabel)}</span>
       <span class="log-badge ${badgeClass}">${escapeHtml(level)}</span>
       <span class="log-text">${escapeHtml(entry.message || entry.raw)}</span>
     </div>`;
