@@ -597,11 +597,11 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
             badge.textContent = data.error;
           } else {
             badge.className = 'version-status-badge up-to-date';
-            badge.textContent = '当前已是最新版本';
+            badge.textContent = '已是最新版';
           }
         }
         if (triggerDownload) {
-          showToast('当前已是最新版本，无需下载', 'info');
+          showToast('已是最新版，无需下载', 'info');
         }
       }
     } else {
@@ -645,7 +645,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.48';
+  const ver = state.settings?.version || '1.1.49';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4347,7 +4347,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.48';
+      const ver = state.settings?.version || '1.1.49';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

@@ -4420,3 +4420,29 @@ INFO
    - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
    - 验证版本比较与更新检查单元测试在 `1.1.48` 下正常运行。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+---
+
+## Turn 64 - v1.1.49 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **文案精简**：
+   - 将“当前已是最新版本”修改为“已是最新版”。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **版本更新状态文案精简 (`web/app.js`)**：
+   - 版本检查通过且无需升级时，将状态徽标提示由“当前已是最新版本”精简为“已是最新版”；
+   - 触发下载检查更新的轻提示（toast）同步优化为“已是最新版，无需下载”。
+2. **全链路版本升级至 `v1.1.49`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.49`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/logger` 等）全部 PASS（100% 通过）；
+   - 验证版本比较与更新检查单元测试在 `1.1.49` 下正常运行。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
