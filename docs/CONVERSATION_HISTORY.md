@@ -4270,6 +4270,37 @@ INFO
    - 验证版本比较与更新检查单元测试在 `1.1.44` 下正常运行。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 60 - v1.1.45 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **日志搜索框位置与占位文案调整**：
+   - 日志工具栏中的搜索框移至最左侧首位；
+   - 搜索框内的占位文字由“按关键字搜索日志...”修改为“搜索...”。
+2. **下载日志按钮文案修改**：
+   - 日志工具栏右侧的“下载日志”按钮文本修改为“导出”。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **日志工具栏布局对齐与文案精简 (`web/index.html`)**：
+   - 调整 `#pane-logs .toolbar` 的 DOM 结构顺序，将 `.search-box` 挪至工具栏第一个子元素，与「进程列表」、「桌面图标」、「系统进程」三个主要面板的工具栏排版风格（搜索框居左）保持高度统一；
+   - 将 `#log-search-input` 的 `placeholder` 简化为 `搜索...`；
+   - 将 `#btn-download-logs` 按钮显示文本从“下载日志”修改为“导出”，同时更新 `title="导出当前日志文件"`。
+2. **全链路版本升级至 `v1.1.45`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.45`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
+   - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
+   - 验证版本比较与更新检查单元测试在 `1.1.45` 下正常运行。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 
