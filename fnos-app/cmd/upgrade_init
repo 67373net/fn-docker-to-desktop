@@ -1,7 +1,7 @@
 #!/bin/bash
 LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
 UPGRADE_FLAG="/tmp/fn-docker-to-desktop-upgrading"
-ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+ts="$(date '+%Y-%m-%d %H:%M:%S')"
 msg="[${ts}] [upgrade_init] START (PID: $$, Args: $*)"
 echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
 echo "$(date +%s)" > "${UPGRADE_FLAG}" 2>/dev/null || true

@@ -4229,5 +4229,47 @@ INFO
    - 验证版本比较单元测试（`TestCompareVersions`）及更新检查 API 单元测试（`TestCheckUpdateEndpoint`）在 `1.1.43` 版本下正常运作。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 59 - v1.1.44 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **进程列表中“已在桌面”改为“已配置”**：
+   - 进程列表中，对于已经创建并添加到飞牛桌面的端口/服务，操作列按钮文本由“已在桌面”修改为“已配置”（保留 Badge 数量展示）。
+2. **统一日志时间戳显示精度（统一为秒级）**：
+   - 修复生命周期日志显示到毫秒（如 `2026-09-18 13:27:04.522`）而运行日志只显示到秒（如 `2026-09-18 13:27:04`）的不一致问题；
+   - 将所有来源的日志时间戳统一格式化并显示到秒级精度。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **进程列表按钮文本规范 (`web/app.js`, `web/style.css`)**：
+   - 在 `renderPortRowHtml` 中，将 `<span class="btn-text">已在桌面</span>` 修改为 `<span class="btn-text">已配置</span>`；
+   - 更新 CSS 注释标记为 `/* ==================== Button Badge (for 已配置 N) ==================== */`；
+   - 维持绿色高亮按钮与 Badge 数量徽章交互行为不变。
+2. **日志时间戳秒级规范化与清洗 (`internal/logger/logger.go`, `internal/logger/logger_test.go`, `web/app.js`, `fnos-app/cmd/*`)**：
+   - **后端解析清洗 (`cleanTimestampToSeconds`)**：
+     - 在 `internal/logger/logger.go` 中新增 `cleanTimestampToSeconds(ts string) string`，自动剔除包含毫秒在内的小数部分（`.xxx`）；
+     - `parseLifecycleLogLine` 与 `parseLogLine` 统一调用该函数进行时间戳规范化；
+     - 后端返回的 `LogEntry.Timestamp` 统一为 `YYYY-MM-DD HH:MM:SS`，确保合并排序（`sort.SliceStable`）与时间对比高度一致；
+   - **前端防御性渲染 (`web/app.js`)**：
+     - 在 `renderLogLines` 模板生成时增加秒级校验截断逻辑（`if (timeStr.includes('.')) timeStr = timeStr.split('.')[0]`），杜绝任何历史残留或缓存日志显示毫秒；
+   - **生命周期脚本写入源头统一 (`fnos-app/cmd/*`)**：
+     - 同步修改 `fnos-app/cmd/main`、`install_init`、`install_callback`、`upgrade_init`、`upgrade_callback`、`uninstall_init` 以及 `uninstall_callback`，统一将 `date '+%Y-%m-%d %H:%M:%S.%3N'` 调整为标准秒级时间戳 `date '+%Y-%m-%d %H:%M:%S'`；
+   - **自动化单元测试适配 (`internal/logger/logger_test.go`)**：
+     - 更新 `TestParseLifecycleLogLine` 与 `TestStreamingReadLogsDescending` 的断言，验证秒级时间戳输出。
+3. **全链路版本升级至 `v1.1.44`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.44`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/desktop`, `internal/logger`）全部 PASS（100% 通过）；
+   - Go 静态构建（`go build -v -o /dev/null ./cmd/server`）零警告零错误通过；
+   - 验证版本比较与更新检查单元测试在 `1.1.44` 下正常运行。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 

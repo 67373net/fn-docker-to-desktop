@@ -10,8 +10,8 @@ import (
 func TestParseLifecycleLogLine(t *testing.T) {
 	raw1 := "[2026-09-18 13:27:04.522] [main] Stopping fn-docker-to-desktop..."
 	entry1 := parseLifecycleLogLine(raw1)
-	if entry1.Timestamp != "2026-09-18 13:27:04.522" {
-		t.Errorf("Expected timestamp 2026-09-18 13:27:04.522, got %s", entry1.Timestamp)
+	if entry1.Timestamp != "2026-09-18 13:27:04" {
+		t.Errorf("Expected timestamp 2026-09-18 13:27:04, got %s", entry1.Timestamp)
 	}
 	if entry1.Level != "info" {
 		t.Errorf("Expected level info, got %s", entry1.Level)
@@ -119,8 +119,8 @@ func TestStreamingReadLogsDescending(t *testing.T) {
 		t.Errorf("Expected source app, got %s", resp.Lines[0].Source)
 	}
 
-	if resp.Lines[1].Timestamp != "2026-09-22 10:08:00.123" {
-		t.Errorf("Expected index 1 timestamp 2026-09-22 10:08:00.123, got %s", resp.Lines[1].Timestamp)
+	if resp.Lines[1].Timestamp != "2026-09-22 10:08:00" {
+		t.Errorf("Expected index 1 timestamp 2026-09-22 10:08:00, got %s", resp.Lines[1].Timestamp)
 	}
 	if resp.Lines[1].Source != "lifecycle" {
 		t.Errorf("Expected source lifecycle, got %s", resp.Lines[1].Source)

@@ -7,7 +7,7 @@ LOG_FILE="/tmp/fn-docker-to-desktop-uninstall.log"
 LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
 
 log_msg() {
-    local ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+    local ts="$(date '+%Y-%m-%d %H:%M:%S')"
     local msg="[${ts}] [uninstall_callback] $1"
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
     echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true

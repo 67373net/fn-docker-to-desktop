@@ -1,6 +1,6 @@
 #!/bin/bash
 LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
-ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+ts="$(date '+%Y-%m-%d %H:%M:%S')"
 msg="[${ts}] [install_callback] START (PID: $$, Args: $*)"
 echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
 chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true

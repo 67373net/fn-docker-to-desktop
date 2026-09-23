@@ -1476,7 +1476,7 @@ tr.row-updating {
   line-height: 1.4;
 }
 
-/* ==================== Button Badge (for 已在桌面 N) ==================== */
+/* ==================== Button Badge (for 已配置 N) ==================== */
 .btn .btn-badge {
   display: inline-flex;
   align-items: center;

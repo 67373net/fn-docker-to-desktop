@@ -624,7 +624,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.43';
+  const ver = state.settings?.version || '1.1.44';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -919,7 +919,7 @@ function renderPortRowHtml(p) {
     desktopCell = `
       <div class="desktop-btn-group">
         <button class="btn btn-sm btn-success btn-manage-desktop-port" data-port="${p.local_port}" data-count="${count}" title="点击查看或编辑已创建的桌面图标">
-          <span class="btn-text">已在桌面</span><span class="btn-badge">${count}</span>
+          <span class="btn-text">已配置</span><span class="btn-badge">${count}</span>
         </button>
         <button class="btn btn-sm btn-outline-primary btn-add-another-desktop" data-port="${p.local_port}" data-name="${escapeHtml(procDisplayName)}" data-container="${escapeHtml(isDocker ? p.docker.container_name : '')}" data-image="${escapeHtml(isDocker && p.docker.image ? p.docker.image : '')}" title="为此端口添加另一个不同路径或名称的桌面图标">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -4326,7 +4326,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.43';
+      const ver = state.settings?.version || '1.1.44';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4826,9 +4826,13 @@ function renderLogs(isAutoPoll = false) {
     const source = (entry.source || 'app').toLowerCase();
     const badgeClass = `log-badge-${level}`;
     const sourceClass = `log-source-${source}`;
+    let timeStr = entry.timestamp || '';
+    if (timeStr.includes('.')) {
+      timeStr = timeStr.split('.')[0];
+    }
     return `<div class="log-line">
       <span class="log-num">${lineNum}</span>
-      <span class="log-time">${escapeHtml(entry.timestamp || '')}</span>
+      <span class="log-time">${escapeHtml(timeStr)}</span>
       <span class="log-source-tag ${sourceClass}">${escapeHtml(source)}</span>
       <span class="log-badge ${badgeClass}">${escapeHtml(level)}</span>
       <span class="log-text">${escapeHtml(entry.message || entry.raw)}</span>

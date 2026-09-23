@@ -504,6 +504,14 @@ func (l *Logger) ReadLifecycleLogs(levelFilter, search string, limit int) (*LogR
 	return l.ReadLogs("lifecycle", levelFilter, search, limit)
 }
 
+func cleanTimestampToSeconds(ts string) string {
+	ts = strings.TrimSpace(ts)
+	if dotIdx := strings.Index(ts, "."); dotIdx > 0 {
+		return ts[:dotIdx]
+	}
+	return ts
+}
+
 func parseLifecycleLogLine(raw string) LogEntry {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || isCliSpinnerLine(trimmed) {
@@ -524,13 +532,13 @@ func parseLifecycleLogLine(raw string) LogEntry {
 	if strings.HasPrefix(trimmed, "[") {
 		idx := strings.Index(trimmed, "]")
 		if idx > 1 {
-			entry.Timestamp = trimmed[1:idx]
+			entry.Timestamp = cleanTimestampToSeconds(trimmed[1:idx])
 			entry.Message = strings.TrimSpace(trimmed[idx+1:])
 		}
 	} else {
 		parts := strings.SplitN(trimmed, " ", 3)
 		if len(parts) >= 2 {
-			entry.Timestamp = parts[0] + " " + parts[1]
+			entry.Timestamp = cleanTimestampToSeconds(parts[0] + " " + parts[1])
 		}
 		if len(parts) >= 3 {
 			entry.Message = parts[2]
@@ -571,7 +579,7 @@ func parseLogLine(raw string) LogEntry {
 	// Format: 2026-09-08 17:15:30 [LEVEL] message...
 	parts := strings.SplitN(raw, " ", 3)
 	if len(parts) >= 2 {
-		entry.Timestamp = parts[0] + " " + parts[1]
+		entry.Timestamp = cleanTimestampToSeconds(parts[0] + " " + parts[1])
 	}
 
 	upper := strings.ToUpper(raw)

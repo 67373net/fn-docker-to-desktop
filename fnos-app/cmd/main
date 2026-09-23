@@ -16,7 +16,7 @@ LIFECYCLE_LOG="/tmp/fn-docker-to-desktop-lifecycle.log"
 
 log_msg() {
     mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
-    local ts="$(date '+%Y-%m-%d %H:%M:%S.%3N')"
+    local ts="$(date '+%Y-%m-%d %H:%M:%S')"
     local msg="[${ts}] [main] $1"
     echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
     echo "${msg}" >> "${FALLBACK_LOG}" 2>/dev/null || true
