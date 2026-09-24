@@ -131,6 +131,11 @@ window.addEventListener('unhandledrejection', function (event) {
 
 let state = {
   currentTab: 'ports',
+  currentHostId: 'localhost',
+  hosts: [],
+  lanHosts: [],
+  lanScanning: false,
+  localPorts: [],
   ports: [],
   desktopItems: [],
   desktopItemsLoaded: false,
@@ -248,11 +253,19 @@ function switchTab(tab) {
 
 // --- Data Fetching ---
 async function fetchPorts() {
+  if (state.currentHostId && state.currentHostId !== 'localhost') {
+    if (state.currentHostId.startsWith('lan:')) {
+      renderLANUnconfiguredPrompt(state.currentHostId.slice(4));
+      return;
+    }
+    return fetchRemoteHostPorts(state.currentHostId);
+  }
   try {
     const res = await fetch(apiUrl('/api/ports'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       state.ports = await res.json();
+      state.localPorts = state.ports;
       renderPortsTable();
       updatePortCountBadge();
     }
@@ -564,7 +577,7 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
         if (badge) {
           badge.style.display = 'inline-flex';
           badge.className = 'version-status-badge has-update';
-          badge.textContent = `发现新版本 v${data.latest_version}${relTime ? ' ' + relTime : ''}`;
+          badge.textContent = relTime ? `${relTime}｜有新版本 v${data.latest_version}` : `有新版本 v${data.latest_version}`;
         }
         if (card) {
           card.style.display = 'block';
@@ -645,7 +658,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.49';
+  const ver = state.settings?.version || '1.1.50';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -767,11 +780,14 @@ function initEventSource() {
         updateSystemMetrics(data);
       }
       if (data.snapshot) {
-        state.ports = data.snapshot;
-        if (state.currentTab === 'ports') {
-          renderPortsTable();
+        state.localPorts = data.snapshot;
+        if (!state.currentHostId || state.currentHostId === 'localhost') {
+          state.ports = data.snapshot;
+          if (state.currentTab === 'ports') {
+            renderPortsTable();
+          }
+          updatePortCountBadge();
         }
-        updatePortCountBadge();
       }
       if (data && data.type === 'docklabel_update') {
         fetchDesktopItems();
@@ -925,7 +941,20 @@ function matchSinkRule(targetStr, rule) {
 }
 
 function renderPortRowHtml(p) {
-  const portUrl = getHostTargetUrl(p.local_port, 'http', '/');
+  const isRemote = state.currentHostId && state.currentHostId !== 'localhost';
+  let portUrl = '';
+  if (isRemote) {
+    let hostAddr = '';
+    if (state.currentHostId.startsWith('lan:')) {
+      hostAddr = state.currentHostId.slice(4);
+    } else {
+      const h = (state.hosts || []).find(x => x.id === state.currentHostId);
+      if (h) hostAddr = h.host;
+    }
+    portUrl = `http://${hostAddr || 'localhost'}:${p.local_port}/`;
+  } else {
+    portUrl = getHostTargetUrl(p.local_port, 'http', '/');
+  }
   const isDocker = p.docker && p.docker.is_docker;
   const procDisplayName = isDocker ? p.docker.container_name : (p.process_name || '系统服务');
   const procTag = isDocker
@@ -3516,7 +3545,36 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
     }
   }
 
-  setDesktopModalMode('local');
+  const isRemote = state.currentHostId && state.currentHostId !== 'localhost';
+  if (isRemote) {
+    let hostAddr = '';
+    let hostAlias = '';
+    if (state.currentHostId.startsWith('lan:')) {
+      hostAddr = state.currentHostId.slice(4);
+    } else {
+      const h = (state.hosts || []).find(x => x.id === state.currentHostId);
+      if (h) {
+        hostAddr = h.host;
+        hostAlias = h.name;
+      }
+    }
+    setDesktopModalMode('proxy');
+    const elTarget = document.getElementById('item-target-url');
+    if (elTarget) elTarget.value = `http://${hostAddr}:${port}`;
+    if (hostAlias) {
+      document.getElementById('item-name').value = `${name} (${hostAlias})`;
+    }
+    fetch(apiUrl('/api/ports/available?base=18000'))
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.port) {
+          const elProxyPort = document.getElementById('item-proxy-port');
+          if (elProxyPort && !elProxyPort.value) elProxyPort.value = d.port;
+        }
+      }).catch(() => {});
+  } else {
+    setDesktopModalMode('local');
+  }
   collapseIconPicker('modal');
   saveIconSnapshot('modal');
   openModal('modal-desktop-item');
@@ -4347,7 +4405,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.49';
+      const ver = state.settings?.version || '1.1.50';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4475,36 +4533,441 @@ async function handleAuthLogin(e) {
   }
 }
 
+// --- Remote Hosts & LAN Scanner Frontend Module ---
+
+async function fetchRemoteHosts() {
+  try {
+    const res = await fetch(apiUrl('/api/remote/hosts'));
+    if (res.ok) {
+      state.hosts = await res.json();
+      updateHostSelectDropdown();
+    }
+  } catch (err) {
+    console.error('Fetch remote hosts error:', err);
+  }
+}
+
+let lanPollTimer = null;
+async function fetchLANHosts() {
+  try {
+    const res = await fetch(apiUrl('/api/remote/lan-hosts'));
+    if (res.ok) {
+      const data = await res.json();
+      state.lanScanning = !!data.scanning;
+      state.lanHosts = data.hosts || [];
+      updateHostSelectDropdown();
+      if (state.lanScanning) {
+        if (lanPollTimer) clearTimeout(lanPollTimer);
+        lanPollTimer = setTimeout(fetchLANHosts, 1500);
+      }
+    }
+  } catch (err) {
+    console.error('Fetch LAN hosts error:', err);
+  }
+}
+
+function updateHostSelectDropdown() {
+  const select = document.getElementById('port-host-select');
+  if (!select) return;
+
+  const currentVal = state.currentHostId || 'localhost';
+  let html = `<option value="localhost"${currentVal === 'localhost' ? ' selected' : ''}>本机</option>`;
+
+  // Configured remote hosts
+  if (state.hosts && state.hosts.length > 0) {
+    html += '<optgroup label="已配置主机">';
+    for (const h of state.hosts) {
+      let statusText = 'SSH未配置';
+      if (h.status === 'connected') {
+        statusText = 'SSH已连接';
+      } else if (h.status === 'failed') {
+        statusText = 'SSH连接失败';
+      }
+      const titleName = h.name ? `${h.name} (${h.host})` : h.host;
+      const label = `${titleName} [${statusText}]`;
+      const isSel = currentVal === h.id ? ' selected' : '';
+      html += `<option value="${escapeHtml(h.id)}"${isSel}>${escapeHtml(label)}</option>`;
+    }
+    html += '</optgroup>';
+  }
+
+  // LAN discovered hosts (skip those already configured)
+  const configuredAddrs = new Set((state.hosts || []).map(h => h.host));
+  const unconfiguredLAN = (state.lanHosts || []).filter(lh => !configuredAddrs.has(lh.ip));
+
+  if (unconfiguredLAN.length > 0) {
+    html += '<optgroup label="局域网发现">';
+    for (const lh of unconfiguredLAN) {
+      const val = `lan:${lh.ip}`;
+      const isSel = currentVal === val ? ' selected' : '';
+      html += `<option value="${escapeHtml(val)}"${isSel}>${escapeHtml(lh.ip)} [SSH未配置]</option>`;
+    }
+    html += '</optgroup>';
+  }
+
+  if (state.lanScanning) {
+    html += '<option value="__scanning__" disabled>🔍 扫描中...</option>';
+  }
+
+  html += '<option value="__add__">➕ 添加主机...</option>';
+  select.innerHTML = html;
+
+  // Toggle gear icon visibility
+  const btnGear = document.getElementById('btn-host-settings');
+  if (btnGear) {
+    btnGear.style.display = (currentVal !== 'localhost') ? 'inline-flex' : 'none';
+  }
+}
+
+function renderLANUnconfiguredPrompt(ip) {
+  const tbody = document.getElementById('ports-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ 已发现局域网主机 ${escapeHtml(ip)}</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">当前机器未配置 SSH 凭据，无法读取系统进程与 Docker 容器。<br>请点击上方 ⚙️ 齿轮配置 SSH 凭据，或直接点击右上角“添加桌面图标”添加该主机的网页快捷方式。</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-lan-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
+  document.getElementById('btn-prompt-config-lan-ssh')?.addEventListener('click', openHostSettingsModal);
+  state.ports = [];
+}
+
+async function fetchRemoteHostPorts(hostId) {
+  const tbody = document.getElementById('ports-tbody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接远程主机并读取端口与进程...</td></tr>';
+  }
+
+  try {
+    const res = await fetch(apiUrl(`/api/remote/hosts/${encodeURIComponent(hostId)}/ports`));
+    if (res.status === 401) return showAuthModal();
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'unconfigured') {
+        const host = (state.hosts || []).find(h => h.id === hostId);
+        const hostAddr = host ? (host.name ? `${host.name} (${host.host})` : host.host) : '目标主机';
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ 主机 ${escapeHtml(hostAddr)}</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">当前主机尚未配置 SSH 密码或私钥凭据，无法读取系统进程与 Docker 容器。<br>请点击右上角 ⚙️ 齿轮配置 SSH 凭据。</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
+          document.getElementById('btn-prompt-config-ssh')?.addEventListener('click', openHostSettingsModal);
+        }
+        state.ports = [];
+        return;
+      }
+      if (data.status === 'failed') {
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">🔴 SSH 连接失败</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">错误详情: ${escapeHtml(data.error || '连接超时或认证拒绝')}<br>请点击上方 ⚙️ 齿轮检查 SSH 端口、用户名与密码/私钥配置。</p><button type="button" class="btn btn-secondary btn-sm" id="btn-prompt-config-ssh">⚙️ 检查配置</button></div></td></tr>`;
+          document.getElementById('btn-prompt-config-ssh')?.addEventListener('click', openHostSettingsModal);
+        }
+        state.ports = [];
+        return;
+      }
+
+      state.ports = data.ports || [];
+      renderPortsTable();
+      updatePortCountBadge();
+    }
+  } catch (err) {
+    console.error('Fetch remote host ports error:', err);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+}
+
+function openHostModal(mode, hostData = null) {
+  const modal = document.getElementById('modal-host-settings');
+  if (!modal) return;
+
+  const titleEl = document.getElementById('host-modal-title');
+  const idEl = document.getElementById('host-form-id');
+  const nameEl = document.getElementById('host-form-name');
+  const addrEl = document.getElementById('host-form-addr');
+  const portEl = document.getElementById('host-form-ssh-port');
+  const userEl = document.getElementById('host-form-user');
+  const passEl = document.getElementById('host-form-password');
+  const keyEl = document.getElementById('host-form-key');
+  const passPhraseEl = document.getElementById('host-form-passphrase');
+  const deleteBtn = document.getElementById('btn-delete-host-confirm');
+  const testStatus = document.getElementById('host-test-status');
+
+  if (testStatus) testStatus.textContent = '';
+
+  if (mode === 'edit' && hostData) {
+    if (titleEl) titleEl.textContent = '主机设置';
+    if (idEl) idEl.value = hostData.id || '';
+    if (nameEl) nameEl.value = hostData.name || '';
+    if (addrEl) addrEl.value = hostData.host || '';
+    if (portEl) portEl.value = hostData.ssh_port || 22;
+    if (userEl) userEl.value = hostData.user || 'root';
+    if (passEl) passEl.value = hostData.password || '';
+    if (keyEl) keyEl.value = hostData.private_key || '';
+    if (passPhraseEl) passPhraseEl.value = hostData.passphrase || '';
+    if (deleteBtn) deleteBtn.style.display = 'inline-block';
+    setHostAuthMode(hostData.auth_type === 'key' ? 'key' : 'password');
+  } else {
+    if (titleEl) titleEl.textContent = '添加监控主机';
+    if (idEl) idEl.value = '';
+    if (nameEl) nameEl.value = (hostData && hostData.name) ? hostData.name : '';
+    if (addrEl) addrEl.value = (hostData && hostData.host) ? hostData.host : '';
+    if (portEl) portEl.value = 22;
+    if (userEl) userEl.value = 'root';
+    if (passEl) passEl.value = '';
+    if (keyEl) keyEl.value = '';
+    if (passPhraseEl) passPhraseEl.value = '';
+    if (deleteBtn) deleteBtn.style.display = 'none';
+    setHostAuthMode('password');
+  }
+
+  modal.classList.add('active');
+}
+
+function closeHostModal() {
+  const modal = document.getElementById('modal-host-settings');
+  if (modal) modal.classList.remove('active');
+}
+
+function setHostAuthMode(mode) {
+  document.querySelectorAll('.host-auth-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.auth === mode);
+  });
+  const passGroup = document.getElementById('host-auth-password-group');
+  const keyGroup = document.getElementById('host-auth-key-group');
+  if (passGroup) passGroup.style.display = (mode === 'password') ? 'block' : 'none';
+  if (keyGroup) keyGroup.style.display = (mode === 'key') ? 'block' : 'none';
+}
+
+function openHostSettingsModal() {
+  const currentVal = state.currentHostId;
+  if (!currentVal || currentVal === 'localhost') return;
+
+  if (currentVal.startsWith('lan:')) {
+    const ip = currentVal.slice(4);
+    openHostModal('add', { host: ip, name: '' });
+  } else {
+    const host = (state.hosts || []).find(h => h.id === currentVal);
+    if (host) {
+      openHostModal('edit', host);
+    }
+  }
+}
+
+function initHostManagement() {
+  const hostSelect = document.getElementById('port-host-select');
+  if (hostSelect) {
+    hostSelect.addEventListener('change', () => {
+      const val = hostSelect.value;
+      if (val === '__add__') {
+        hostSelect.value = state.currentHostId || 'localhost';
+        openHostModal('add');
+        return;
+      }
+      if (val === '__scanning__') {
+        hostSelect.value = state.currentHostId || 'localhost';
+        return;
+      }
+
+      state.currentHostId = val;
+      const btnGear = document.getElementById('btn-host-settings');
+      if (btnGear) {
+        btnGear.style.display = (val !== 'localhost') ? 'inline-flex' : 'none';
+      }
+
+      if (val === 'localhost') {
+        state.ports = state.localPorts || [];
+        renderPortsTable();
+        fetchPorts();
+      } else if (val.startsWith('lan:')) {
+        renderLANUnconfiguredPrompt(val.slice(4));
+      } else {
+        fetchRemoteHostPorts(val);
+      }
+    });
+  }
+
+  const btnGear = document.getElementById('btn-host-settings');
+  if (btnGear) {
+    btnGear.addEventListener('click', openHostSettingsModal);
+  }
+
+  // Modal close buttons
+  document.getElementById('btn-close-host-modal-x')?.addEventListener('click', closeHostModal);
+  document.getElementById('btn-cancel-host-modal')?.addEventListener('click', closeHostModal);
+
+  // Auth tabs switching
+  document.querySelectorAll('.host-auth-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      setHostAuthMode(tab.dataset.auth);
+    });
+  });
+
+  // Test connection button
+  const btnTest = document.getElementById('btn-test-host-conn');
+  if (btnTest) {
+    btnTest.addEventListener('click', async () => {
+      const statusEl = document.getElementById('host-test-status');
+      const host = (document.getElementById('host-form-addr')?.value || '').trim();
+      const sshPort = parseInt(document.getElementById('host-form-ssh-port')?.value, 10) || 22;
+      const user = (document.getElementById('host-form-user')?.value || 'root').trim();
+      const activeTab = document.querySelector('.host-auth-tab.active');
+      const authType = activeTab ? activeTab.dataset.auth : 'password';
+      const password = document.getElementById('host-form-password')?.value || '';
+      const privateKey = document.getElementById('host-form-key')?.value || '';
+      const passphrase = document.getElementById('host-form-passphrase')?.value || '';
+
+      if (!host) {
+        if (statusEl) {
+          statusEl.style.color = 'var(--error)';
+          statusEl.textContent = '请输入主机地址';
+        }
+        return;
+      }
+
+      if (statusEl) {
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = '正在测试连接...';
+      }
+
+      try {
+        const res = await fetch(apiUrl('/api/remote/hosts/test'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host,
+            ssh_port: sshPort,
+            user,
+            auth_type: authType,
+            password,
+            private_key: privateKey,
+            passphrase
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (statusEl) {
+            statusEl.style.color = 'var(--success)';
+            statusEl.textContent = `连接成功 (${data.latency_ms}ms, ${data.server_version || 'SSH'})`;
+          }
+        } else {
+          if (statusEl) {
+            statusEl.style.color = 'var(--error)';
+            statusEl.textContent = data.error || '连接失败';
+          }
+        }
+      } catch (err) {
+        if (statusEl) {
+          statusEl.style.color = 'var(--error)';
+          statusEl.textContent = '测试失败: ' + err.message;
+        }
+      }
+    });
+  }
+
+  // Save host submit button
+  const btnSave = document.getElementById('btn-save-host-submit');
+  if (btnSave) {
+    btnSave.addEventListener('click', async () => {
+      const id = document.getElementById('host-form-id')?.value || '';
+      const name = (document.getElementById('host-form-name')?.value || '').trim();
+      const host = (document.getElementById('host-form-addr')?.value || '').trim();
+      const sshPort = parseInt(document.getElementById('host-form-ssh-port')?.value, 10) || 22;
+      const user = (document.getElementById('host-form-user')?.value || 'root').trim();
+      const activeTab = document.querySelector('.host-auth-tab.active');
+      const authType = activeTab ? activeTab.dataset.auth : 'password';
+      const password = document.getElementById('host-form-password')?.value || '';
+      const privateKey = document.getElementById('host-form-key')?.value || '';
+      const passphrase = document.getElementById('host-form-passphrase')?.value || '';
+
+      if (!host) {
+        showToast('请输入主机地址', 'warn');
+        document.getElementById('host-form-addr')?.focus();
+        return;
+      }
+
+      try {
+        const res = await fetch(apiUrl('/api/remote/hosts'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            name,
+            host,
+            ssh_port: sshPort,
+            user,
+            auth_type: authType,
+            password,
+            private_key: privateKey,
+            passphrase
+          })
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          showToast(errData.error || '保存主机失败', 'error');
+          return;
+        }
+        const saved = await res.json();
+        showToast(`已成功保存主机 ${saved.name || saved.host}`, 'success');
+        closeHostModal();
+        await fetchRemoteHosts();
+        state.currentHostId = saved.id;
+        updateHostSelectDropdown();
+        fetchRemoteHostPorts(saved.id);
+      } catch (err) {
+        showToast('保存失败: ' + err.message, 'error');
+      }
+    });
+  }
+
+  // Delete host button
+  const btnDelete = document.getElementById('btn-delete-host-confirm');
+  if (btnDelete) {
+    btnDelete.addEventListener('click', async () => {
+      const id = document.getElementById('host-form-id')?.value || '';
+      if (!id) return;
+      if (!confirm('确定要删除此主机吗？已创建的关联桌面图标不会受影响。')) return;
+
+      try {
+        const res = await fetch(apiUrl(`/api/remote/hosts/${encodeURIComponent(id)}`), {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          showToast('已删除主机', 'info');
+          closeHostModal();
+          state.currentHostId = 'localhost';
+          await fetchRemoteHosts();
+          updateHostSelectDropdown();
+          fetchPorts();
+        } else {
+          showToast('删除主机失败', 'error');
+        }
+      } catch (err) {
+        showToast('删除异常: ' + err.message, 'error');
+      }
+    });
+  }
+}
+
 // --- Initialization ---
 function initApp() {
   initNavigation();
   initModals();
   initTableAutoWrapObservers();
 
-  // Segmented filters in Ports tab (Docker/系统, TCP/UDP)
-  const portSourceSegments = document.getElementById('port-source-segments');
-  if (portSourceSegments) {
-    portSourceSegments.querySelectorAll('.segment-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        portSourceSegments.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        state.portFilterSource = btn.dataset.value;
-        renderPortsTable();
-      });
+  // Dropdown filters in Ports tab (Docker/系统, TCP/UDP)
+  const portSourceSelect = document.getElementById('port-source-select');
+  if (portSourceSelect) {
+    portSourceSelect.value = state.portFilterSource || 'docker';
+    portSourceSelect.addEventListener('change', () => {
+      state.portFilterSource = portSourceSelect.value;
+      renderPortsTable();
     });
   }
 
-  const portProtoSegments = document.getElementById('port-proto-segments');
-  if (portProtoSegments) {
-    portProtoSegments.querySelectorAll('.segment-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        portProtoSegments.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        state.portFilterProto = btn.dataset.value;
-        renderPortsTable();
-      });
+  const portProtoSelect = document.getElementById('port-proto-select');
+  if (portProtoSelect) {
+    portProtoSelect.value = state.portFilterProto || 'all';
+    portProtoSelect.addEventListener('change', () => {
+      state.portFilterProto = portProtoSelect.value;
+      renderPortsTable();
     });
   }
+
+  // Host Selector & Settings Modal
+  initHostManagement();
 
   // Export desktop items button
   const btnExportDesktop = document.getElementById('btn-export-desktop');
@@ -4548,7 +5011,16 @@ function initApp() {
   const btnRefreshPorts = document.getElementById('btn-refresh-ports');
   if (btnRefreshPorts) {
     btnRefreshPorts.addEventListener('click', () => {
-      fetchPorts();
+      if (state.currentHostId && state.currentHostId !== 'localhost') {
+        if (state.currentHostId.startsWith('lan:')) {
+          renderLANUnconfiguredPrompt(state.currentHostId.slice(4));
+        } else {
+          fetchRemoteHostPorts(state.currentHostId);
+        }
+      } else {
+        fetchPorts();
+      }
+      fetchLANHosts();
     });
   }
 
@@ -4682,6 +5154,8 @@ function initApp() {
   fetchPorts();
   fetchDesktopItems();
   fetchHost();
+  fetchRemoteHosts();
+  fetchLANHosts();
   initEventSource();
   initLogViewer();
 

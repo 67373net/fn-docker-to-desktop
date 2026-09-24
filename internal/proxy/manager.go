@@ -24,19 +24,55 @@ type ProxyInstance struct {
 	listener      net.Listener
 }
 
+// DialContextFunc is a function signature for dialing network connections.
+type DialContextFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+type defaultBufferPool struct {
+	pool sync.Pool
+}
+
+func newDefaultBufferPool() *defaultBufferPool {
+	return &defaultBufferPool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, 32*1024)
+				return &b
+			},
+		},
+	}
+}
+
+func (bp *defaultBufferPool) Get() []byte {
+	return *bp.pool.Get().(*[]byte)
+}
+
+func (bp *defaultBufferPool) Put(b []byte) {
+	bp.pool.Put(&b)
+}
+
 // Manager manages dynamic reverse proxy listeners.
 type Manager struct {
-	mu        sync.RWMutex
-	instances map[string]*ProxyInstance // key: service ID
-	portMap   map[int]string            // key: port -> service ID
+	mu              sync.RWMutex
+	instances       map[string]*ProxyInstance // key: service ID
+	portMap         map[int]string            // key: port -> service ID
+	dialContextFunc DialContextFunc
+	bufferPool      httputil.BufferPool
 }
 
 // NewManager creates a new ProxyManager.
 func NewManager() *Manager {
 	return &Manager{
-		instances: make(map[string]*ProxyInstance),
-		portMap:   make(map[int]string),
+		instances:  make(map[string]*ProxyInstance),
+		portMap:    make(map[int]string),
+		bufferPool: newDefaultBufferPool(),
 	}
+}
+
+// SetDialContext sets custom dialer function (e.g. SmartDialer with SSH fallback).
+func (m *Manager) SetDialContext(fn DialContextFunc) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dialContextFunc = fn
 }
 
 // StartProxy starts a reverse proxy on specified local port pointing to targetURL.
@@ -76,14 +112,22 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 
 	// Create reverse proxy
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	
-	// Custom transport for TLS verification bypass and connection pooling
-	customTransport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
+	if m.bufferPool != nil {
+		proxy.BufferPool = m.bufferPool
+	}
+
+	dialer := m.dialContextFunc
+	if dialer == nil {
+		dialer = (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		}).DialContext
+	}
+
+	// Custom transport for TLS verification bypass and connection pooling
+	customTransport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,

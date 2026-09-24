@@ -34,6 +34,7 @@ import (
 	"fn-docker-to-desktop/internal/logger"
 	"fn-docker-to-desktop/internal/monitor"
 	"fn-docker-to-desktop/internal/proxy"
+	"fn-docker-to-desktop/internal/remote"
 )
 
 // Handler handles all HTTP API requests.
@@ -49,6 +50,10 @@ type Handler struct {
 	procPath       string
 	iconsDir       string
 	appVersion     string
+	remoteStorage  *remote.Storage
+	remoteSSH      *remote.SSHManager
+	remoteLAN      *remote.LANScanner
+	smartDialer    *remote.SmartDialer
 	inFlightOps    sync.Map
 	dockLabelMu    sync.Mutex
 	dockLabelItems      []desktop.DockLabelItem
@@ -60,17 +65,21 @@ type Handler struct {
 
 // Config holds configuration to instantiate API Handler.
 type Config struct {
-	Storage      *desktop.Storage
-	Installer    *desktop.Installer
-	ProxyMgr     *proxy.Manager
-	Watcher      *monitor.Watcher
-	SystemSample *monitor.SystemSampler
-	AuthMgr      *auth.Manager
-	Logger       *logger.Logger
-	WebFS        fs.FS
-	ProcPath     string
-	DataDir      string
-	AppVersion   string
+	Storage       *desktop.Storage
+	Installer     *desktop.Installer
+	ProxyMgr      *proxy.Manager
+	Watcher       *monitor.Watcher
+	SystemSample  *monitor.SystemSampler
+	AuthMgr       *auth.Manager
+	Logger        *logger.Logger
+	WebFS         fs.FS
+	ProcPath      string
+	DataDir       string
+	AppVersion    string
+	RemoteStorage *remote.Storage
+	RemoteSSH     *remote.SSHManager
+	RemoteLAN     *remote.LANScanner
+	SmartDialer   *remote.SmartDialer
 }
 
 // NewHandler creates a new API Handler.
@@ -79,6 +88,26 @@ func NewHandler(cfg Config) *Handler {
 	_ = os.MkdirAll(iconsDir, 0755)
 	if cfg.Installer != nil {
 		cfg.Installer.SetIconsDir(iconsDir)
+	}
+
+	remoteStorage := cfg.RemoteStorage
+	if remoteStorage == nil && cfg.DataDir != "" {
+		remoteStorage, _ = remote.NewStorage(cfg.DataDir)
+	}
+	remoteSSH := cfg.RemoteSSH
+	if remoteSSH == nil {
+		remoteSSH = remote.NewSSHManager()
+	}
+	remoteLAN := cfg.RemoteLAN
+	if remoteLAN == nil && remoteStorage != nil {
+		remoteLAN = remote.NewLANScanner(remoteStorage)
+	}
+	smartDialer := cfg.SmartDialer
+	if smartDialer == nil && remoteStorage != nil {
+		smartDialer = remote.NewSmartDialer(remoteStorage, remoteSSH)
+	}
+	if cfg.ProxyMgr != nil && smartDialer != nil {
+		cfg.ProxyMgr.SetDialContext(smartDialer.DialContext)
 	}
 
 	return &Handler{
@@ -93,11 +122,24 @@ func NewHandler(cfg Config) *Handler {
 		procPath:       cfg.ProcPath,
 		iconsDir:       iconsDir,
 		appVersion:     cfg.AppVersion,
+		remoteStorage:  remoteStorage,
+		remoteSSH:      remoteSSH,
+		remoteLAN:      remoteLAN,
+		smartDialer:    smartDialer,
 	}
 }
 
 // RegisterRoutes registers all routes on mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	// Remote hosts and LAN scan routes
+	mux.HandleFunc("GET /api/remote/hosts", h.handleGetRemoteHosts)
+	mux.HandleFunc("POST /api/remote/hosts", h.handleSaveRemoteHost)
+	mux.HandleFunc("POST /api/remote/hosts/test", h.handleTestRemoteHost)
+	mux.HandleFunc("DELETE /api/remote/hosts/{id}", h.handleDeleteRemoteHost)
+	mux.HandleFunc("GET /api/remote/hosts/{id}/ports", h.handleGetRemoteHostPorts)
+	mux.HandleFunc("GET /api/remote/lan-hosts", h.handleGetLANHosts)
+	mux.HandleFunc("POST /api/remote/lan-hosts/scan", h.handleTriggerLANScan)
+
 	// API routes
 	mux.HandleFunc("GET /api/ports", h.handleGetPorts)
 	mux.HandleFunc("GET /api/processes", h.handleGetProcesses)
@@ -2632,3 +2674,228 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 
 	h.jsonResponse(w, r, res, http.StatusOK)
 }
+
+// ==================== Remote Hosts & LAN API Handlers ====================
+
+func (h *Handler) handleGetRemoteHosts(w http.ResponseWriter, r *http.Request) {
+	if h.remoteStorage == nil {
+		h.jsonResponse(w, r, []remote.HostConfig{}, http.StatusOK)
+		return
+	}
+	hosts := h.remoteStorage.GetAllHosts()
+	// Sanitize sensitive credentials
+	sanitized := make([]remote.HostConfig, len(hosts))
+	for i, host := range hosts {
+		if host.Password != "" {
+			host.Password = "******"
+		}
+		if host.PrivateKey != "" {
+			host.PrivateKey = "******"
+		}
+		sanitized[i] = host
+	}
+	sort.Slice(sanitized, func(i, j int) bool {
+		return sanitized[i].CreatedAt.Before(sanitized[j].CreatedAt)
+	})
+	h.jsonResponse(w, r, sanitized, http.StatusOK)
+}
+
+func (h *Handler) handleSaveRemoteHost(w http.ResponseWriter, r *http.Request) {
+	if h.remoteStorage == nil {
+		h.jsonError(w, r, "远程主机存储未初始化", http.StatusInternalServerError)
+		return
+	}
+
+	var req remote.HostConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, r, "无效的主机配置 JSON", http.StatusBadRequest)
+		return
+	}
+
+	req.Host = strings.TrimSpace(req.Host)
+	if req.Host == "" {
+		h.jsonError(w, r, "主机地址不能为空", http.StatusBadRequest)
+		return
+	}
+
+	// If editing existing host and credentials were sent as masked, keep original
+	if req.ID != "" {
+		if existing, ok := h.remoteStorage.GetHost(req.ID); ok {
+			if req.Password == "******" || req.Password == "" {
+				req.Password = existing.Password
+			}
+			if req.PrivateKey == "******" || req.PrivateKey == "" {
+				req.PrivateKey = existing.PrivateKey
+			}
+		}
+	}
+
+	saved, err := h.remoteStorage.SaveHost(req)
+	if err != nil {
+		h.jsonError(w, r, fmt.Sprintf("保存主机失败: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Invalidate cached SSH client if host was modified
+	if h.remoteSSH != nil {
+		h.remoteSSH.CloseClient(saved.ID)
+	}
+
+	// Mask credentials in response
+	if saved.Password != "" {
+		saved.Password = "******"
+	}
+	if saved.PrivateKey != "" {
+		saved.PrivateKey = "******"
+	}
+
+	h.jsonResponse(w, r, saved, http.StatusOK)
+}
+
+func (h *Handler) handleTestRemoteHost(w http.ResponseWriter, r *http.Request) {
+	if h.remoteSSH == nil {
+		h.jsonError(w, r, "SSH 管理器未就绪", http.StatusInternalServerError)
+		return
+	}
+
+	var req remote.TestHostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, r, "无效的测试请求参数", http.StatusBadRequest)
+		return
+	}
+
+	req.Host = strings.TrimSpace(req.Host)
+	if req.Host == "" {
+		h.jsonError(w, r, "主机地址不能为空", http.StatusBadRequest)
+		return
+	}
+	if req.SSHPort <= 0 {
+		req.SSHPort = 22
+	}
+
+	// If credentials are empty or masked, check if there is an existing host by address
+	if (req.Password == "" || req.Password == "******") && (req.PrivateKey == "" || req.PrivateKey == "******") {
+		if h.remoteStorage != nil {
+			if existing, ok := h.remoteStorage.GetHostByAddress(req.Host); ok {
+				if req.Password == "" || req.Password == "******" {
+					req.Password = existing.Password
+				}
+				if req.PrivateKey == "" || req.PrivateKey == "******" {
+					req.PrivateKey = existing.PrivateKey
+				}
+			}
+		}
+	}
+
+	res := h.remoteSSH.TestConnection(req)
+	h.jsonResponse(w, r, res, http.StatusOK)
+}
+
+func (h *Handler) handleDeleteRemoteHost(w http.ResponseWriter, r *http.Request) {
+	if h.remoteStorage == nil {
+		h.jsonError(w, r, "远程主机存储未初始化", http.StatusInternalServerError)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		h.jsonError(w, r, "未指定主机 ID", http.StatusBadRequest)
+		return
+	}
+
+	if h.remoteSSH != nil {
+		h.remoteSSH.CloseClient(id)
+	}
+
+	if err := h.remoteStorage.DeleteHost(id); err != nil {
+		h.jsonError(w, r, fmt.Sprintf("删除主机失败: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
+}
+
+func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Request) {
+	if h.remoteStorage == nil || h.remoteSSH == nil {
+		h.jsonError(w, r, "远程主机服务未初始化", http.StatusInternalServerError)
+		return
+	}
+
+	id := r.PathValue("id")
+	host, ok := h.remoteStorage.GetHost(id)
+	if !ok {
+		h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
+		return
+	}
+
+	if host.Password == "" && host.PrivateKey == "" {
+		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
+			HostID:    id,
+			HostName:  host.Name,
+			Status:    "unconfigured",
+			Ports:     []monitor.PortEntry{},
+			Timestamp: time.Now().Unix(),
+		}, http.StatusOK)
+		return
+	}
+
+	ports, err := h.remoteSSH.FetchRemotePorts(host)
+	if err != nil {
+		h.remoteStorage.UpdateStatus(id, "failed", err.Error())
+		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
+			HostID:    id,
+			HostName:  host.Name,
+			Status:    "failed",
+			Error:     err.Error(),
+			Ports:     []monitor.PortEntry{},
+			Timestamp: time.Now().Unix(),
+		}, http.StatusOK)
+		return
+	}
+
+	h.remoteStorage.UpdateStatus(id, "connected", "")
+
+	// Check desktop items to mark HasDesktop flag
+	desktopItems := h.storage.GetAllItems()
+	for i := range ports {
+		for _, di := range desktopItems {
+			// For remote hosts, check if target_url contains this host IP and port
+			if di.Port == ports[i].LocalPort && di.Mode == desktop.ModeProxy {
+				ports[i].HasDesktop = true
+				ports[i].DesktopCount++
+				ports[i].DesktopName = di.Name
+			} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", ports[i].LocalPort)) {
+				ports[i].HasDesktop = true
+				ports[i].DesktopCount++
+				ports[i].DesktopName = di.Name
+			}
+		}
+	}
+
+	h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
+		HostID:    id,
+		HostName:  host.Name,
+		Status:    "connected",
+		Ports:     ports,
+		Timestamp: time.Now().Unix(),
+	}, http.StatusOK)
+}
+
+func (h *Handler) handleGetLANHosts(w http.ResponseWriter, r *http.Request) {
+	if h.remoteLAN == nil {
+		h.jsonResponse(w, r, remote.LANScanStatus{Scanning: false, Hosts: []remote.DiscoveredLANHost{}}, http.StatusOK)
+		return
+	}
+	status := h.remoteLAN.GetStatus()
+	h.jsonResponse(w, r, status, http.StatusOK)
+}
+
+func (h *Handler) handleTriggerLANScan(w http.ResponseWriter, r *http.Request) {
+	if h.remoteLAN == nil {
+		h.jsonError(w, r, "局域网扫描器未初始化", http.StatusInternalServerError)
+		return
+	}
+	h.remoteLAN.TriggerScan()
+	h.jsonResponse(w, r, map[string]string{"status": "scanning_started"}, http.StatusOK)
+}
+

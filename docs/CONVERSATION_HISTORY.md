@@ -4446,3 +4446,68 @@ INFO
    - 验证版本比较与更新检查单元测试在 `1.1.49` 下正常运行。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 65 - v1.1.50 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **版本更新文案调整**：
+   - “发现新版本 v1.1.49 2分钟前”改为“2分钟前｜有新版本 v1.1.49”。
+2. **筛选控件重构**：
+   - “进程列表”中，“全部 / docker / 系统”和“全部 / tcp / udp”改回下拉菜单，默认依然是 Docker 和 全部；
+   - 下拉菜单按钮和下拉弹层界面与整体 UI 保持视觉风格一致统一。
+3. **多主机管理与内网/公网智能穿透代理**：
+   - 搜索框最左边增加主机切换下拉框：“本机 / 192.168.1.xx / some_name / + 添加”；
+   - 默认展示“本机”；
+   - 静默异步扫描局域网中的机器，未扫描完成时提示“🔍 扫描中...”；
+   - 下拉选项清晰注明 SSH 连通状态（`SSH已连接` / `SSH未配置` / `SSH连接失败`）；
+   - 选中非本机时，下拉框右侧显示线稿齿轮设置按钮，点击弹出配置模态框，可配置别名、SSH 端口、认证方式（账号密码或私钥/私钥密码），并支持连通性测试与删除主机；
+   - 点击“➕ 添加主机”可手动录入公网 VPS 或局域网机器；
+   - 切换到非本机后，下方列表展示该机器的开放端口与对应进程/容器，并可一键通过反向代理方式创建飞牛桌面图标；
+   - **智能双模穿透与快速通道状态记忆（Sticky Cache）**：代理连接目标机器时，优先尝试普通直连（1.2s 超时）；若目标位于防火墙/安全组内或绑定在 `127.0.0.1` 导致直连失败，则自动回退至 SSH 隧道穿透；通过线程安全的状态记忆缓存（5~10 分钟 TTL），后续请求无缝走已验证通道，兼顾高性能与极致连通性。
+4. **README 与关于界面更新**：
+   - 核心功能特性第 2 项更新为：“局域网 / 公网服务反向代理：可自动扫描其他机器端口，可将内网 / 公网服务代理至本机，并生成桌面图标。”
+5. **对话与架构演进历史归档**：
+   - 在 `docs/CONVERSATION_HISTORY.md` 中记录本次完整对话与改动。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **多主机配置与存储架构 (`internal/remote/types.go`, `internal/remote/storage.go`)**：
+   - 定义 `HostConfig`、`DiscoveredLANHost`、`LANScanStatus` 等核心模型；
+   - 实现并发安全的 JSON 文件持久化存储（`data/hosts.json`），提供主机的增删改查。
+2. **SSH 连接池、命令执行与隧道转发 (`internal/remote/ssh.go`)**：
+   - 基于 `golang.org/x/crypto/ssh v0.26.0` 构建长连接池（`SSHClientPool`），支持密码认证与带 Passphrase 的私钥认证；
+   - 实现并发测试连接 `TestConnection`（输出延迟与服务端版本）；
+   - 执行远端探测命令（通过 `ss -tulpn` / `netstat -tulpn` 配合 `docker ps`），解析远端宿主机进程与容器映射端口；
+   - 提供 `DirectTCPIP` 隧道拨号器，将远端主机的 `127.0.0.1:port` 穿透出来。
+3. **局域网静默异步扫描引擎 (`internal/remote/lan.go`)**：
+   - 读取 `/proc/net/arp` 获取已发现局域网活跃 IP；
+   - 结合并发 Worker 池进行常见服务端口轻量探测（SSH 22、HTTP 80/8080/5000/5666 等），自动收集局域网活跃主机；
+   - 支持后端静默定期更新与前端主动触发重新探测。
+4. **智能拨号器与反向代理流式传输优化 (`internal/remote/smart_dialer.go`, `internal/proxy/manager.go`)**：
+   - 设计 `SmartDialer`：支持优先直连（1.2s 超时）+ 快速通道状态记忆（5~10 分钟 TTL）+ SSH 穿透兜底；
+   - 在 `proxy.Manager` 中集成 `SmartDialer`，支持代理远端非暴露服务；
+   - 引入 `sync.Pool` 的 `BufferPool`（32KB 缓冲区池），实现零内存分配的高性能双向流式转发。
+5. **API 端点挂载与安全脱敏 (`internal/api/handler.go`)**：
+   - 新增 `/api/remote/hosts`（GET/POST）、`/api/remote/hosts/test`（POST）、`/api/remote/hosts/{id}`（DELETE）、`/api/remote/hosts/{id}/ports`（GET）、`/api/remote/lan-hosts`（GET）、`/api/remote/lan-hosts/scan`（POST）；
+   - 返回主机列表时对密码及私钥进行安全脱敏；
+   - 针对远端端口自动注入桌面图标匹配与状态计算。
+6. **前端 UI/UX 与交互重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 工具栏最左侧集成主机切换下拉框 `#port-host-select` 与线稿齿轮设置按钮 `#btn-host-gear`；
+   - 恢复 Docker/系统、TCP/UDP 下拉筛选菜单，默认选中 Docker 和 全部，统一 `.toolbar-select` 视觉样式；
+   - 主机设置模态框 `#modal-host-settings`：支持主机别名、IP/域名、SSH 端口、密码/私钥切换、测试连接与删除主机；
+   - 远端主机端口创建桌面图标时，自动切换为 `proxy` 反向代理模式，预填远端目标地址与推荐端口。
+7. **全链路版本升级至 `v1.1.50`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.50`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/logger`, `internal/remote` 等）全部 PASS（100% 通过）；
+   - 验证版本比较与更新检查单元测试在 `1.1.50` 下正常运行；
+   - `golang:1.22-alpine` 编译 `cmd/server` 成功，无任何编译错误或警告。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+

@@ -2030,6 +2030,40 @@ tr.row-updating {
   font-size: 0.88rem;
 }
 
+/* ==================== Host Switcher Toolbar ==================== */
+.host-selector-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.host-select {
+  max-width: 220px;
+  min-width: 120px;
+  text-overflow: ellipsis;
+}
+
+.btn-host-gear {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.btn-host-gear:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background-color: var(--bg-hover);
+}
+
 /* ==================== Color Popover Component ==================== */
 .color-picker-trigger-wrapper {
   position: relative;

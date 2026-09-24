@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.49">
+  <link rel="stylesheet" href="style.css?v=1.1.50">
 </head>
 <body>
   <!-- Header Bar -->
@@ -49,20 +49,35 @@
     <section class="tab-pane active" id="pane-ports">
       <!-- Toolbar -->
       <div class="toolbar">
+        <!-- Host Switcher & Settings -->
+        <div class="host-selector-wrapper">
+          <select id="port-host-select" class="toolbar-select host-select" title="选择监控主机">
+            <option value="localhost">本机</option>
+          </select>
+          <button type="button" class="btn-host-gear" id="btn-host-settings" title="配置当前主机" style="display: none;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
+        </div>
+
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" id="port-search" placeholder="搜索">
         </div>
-        <div class="segmented-control" id="port-source-segments" role="radiogroup" aria-label="来源筛选">
-          <button type="button" class="segment-btn" data-value="all">全部</button>
-          <button type="button" class="segment-btn active" data-value="docker">Docker</button>
-          <button type="button" class="segment-btn" data-value="host">系统</button>
-        </div>
-        <div class="segmented-control" id="port-proto-segments" role="radiogroup" aria-label="协议筛选">
-          <button type="button" class="segment-btn active" data-value="all">全部</button>
-          <button type="button" class="segment-btn" data-value="tcp">TCP</button>
-          <button type="button" class="segment-btn" data-value="udp">UDP</button>
-        </div>
+
+        <select class="toolbar-select" id="port-source-select" aria-label="来源筛选">
+          <option value="all">全部</option>
+          <option value="docker" selected>Docker</option>
+          <option value="host">系统</option>
+        </select>
+
+        <select class="toolbar-select" id="port-proto-select" aria-label="协议筛选">
+          <option value="all" selected>全部</option>
+          <option value="tcp">TCP</option>
+          <option value="udp">UDP</option>
+        </select>
         <button class="btn btn-secondary" id="btn-open-sink-modal" title="设置需要置底排布的 Docker 容器或进程名单">
           <span>置底</span>
         </button>
@@ -468,7 +483,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.49</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.50</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -491,7 +506,7 @@
           <h3 class="about-md-h3">四大核心功能</h3>
           <ol class="about-md-ol">
             <li><strong>Docker 一键放桌面</strong>：自动识别容器，一键在飞牛桌面生成图标。</li>
-            <li><strong>局域网/公网服务反向代理</strong>：可将内网服务或公网服务代理至本机，并生成桌面图标。</li>
+            <li><strong>局域网 / 公网服务反向代理</strong>：可自动扫描其他机器端口，可将内网 / 公网服务代理至本机，并生成桌面图标。</li>
             <li>将任意<strong>网页快捷方式</strong>放置到飞牛桌面。</li>
             <li><strong>自动读取 Watchcow 配置</strong>：兼容 Docker compose 中的 Watchcow 标签配置，一键启用。</li>
           </ol>
@@ -906,9 +921,83 @@
     </div>
   </div>
 
+  <!-- Modal: 主机配置与管理 (Host Settings) -->
+  <div class="modal-overlay" id="modal-host-settings">
+    <div class="modal-dialog" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="host-modal-title">主机设置</h3>
+        <button class="btn btn-icon btn-secondary modal-close" id="btn-close-host-modal-x" type="button" title="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 1.25rem;">
+        <form id="form-host-settings" onsubmit="return false;">
+          <input type="hidden" id="host-form-id">
+          
+          <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label" for="host-form-name">主机别名（可选）</label>
+            <input type="text" id="host-form-name" class="form-input" placeholder="例如：我的VPS、主路由、开发机">
+          </div>
+
+          <div class="form-row" style="display: flex; gap: 12px; margin-bottom: 1rem;">
+            <div class="form-group" style="flex: 3; margin-bottom: 0;">
+              <label class="form-label" for="host-form-addr">主机地址（IP 或域名）<span style="color: var(--error);">*</span></label>
+              <input type="text" id="host-form-addr" class="form-input" placeholder="192.168.1.100 或 vps.example.com" required>
+            </div>
+            <div class="form-group" style="flex: 1.2; margin-bottom: 0;">
+              <label class="form-label" for="host-form-ssh-port">SSH 端口</label>
+              <input type="number" id="host-form-ssh-port" class="form-input" value="22" placeholder="22">
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label" for="host-form-user">SSH 用户名</label>
+            <input type="text" id="host-form-user" class="form-input" value="root" placeholder="root">
+          </div>
+
+          <div class="form-group" style="margin-bottom: 0.75rem;">
+            <label class="form-label">SSH 认证方式</label>
+            <div class="mode-tabs-container" style="margin-bottom: 0.75rem;">
+              <button type="button" class="mode-tab host-auth-tab active" data-auth="password">密码认证</button>
+              <button type="button" class="mode-tab host-auth-tab" data-auth="key">私钥认证</button>
+            </div>
+          </div>
+
+          <div id="host-auth-password-group" class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label" for="host-form-password">SSH 密码</label>
+            <input type="password" id="host-form-password" class="form-input" placeholder="输入远程主机 SSH 密码">
+          </div>
+
+          <div id="host-auth-key-group" class="form-group" style="display: none; margin-bottom: 1rem;">
+            <label class="form-label" for="host-form-key">SSH 私钥 (PEM / OpenSSH)</label>
+            <textarea id="host-form-key" class="form-input" rows="4" style="font-family: monospace; font-size: 0.82rem;" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+            <label class="form-label" for="host-form-passphrase" style="margin-top: 8px;">私钥 Passphrase（若无密码请留空）</label>
+            <input type="password" id="host-form-passphrase" class="form-input" placeholder="私钥密码（可选）">
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 4px;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-test-host-conn">
+              <span>测试连接</span>
+            </button>
+            <span id="host-test-status" style="font-size: 0.82rem; font-weight: 500;"></span>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem 1.25rem 1.25rem;">
+        <div>
+          <button type="button" class="btn btn-danger" id="btn-delete-host-confirm" style="display: none;">删除主机</button>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-host-modal">取消</button>
+          <button type="button" class="btn btn-primary" id="btn-save-host-submit">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.46"></script>
+  <script src="app.js?v=1.1.50"></script>
 </body>
 </html>
