@@ -137,6 +137,7 @@ let state = {
   lanScanning: false,
   localPorts: [],
   ports: [],
+  hostPortsCache: {}, // [hostId]: { ports: Array, timestamp: number }
   desktopItems: [],
   desktopItemsLoaded: false,
   watchcowItems: [],
@@ -201,6 +202,53 @@ function getHostTargetUrl(port, protocol = 'http', path = '/') {
   if (hostname.includes(':') && !hostname.startsWith('[')) hostname = `[${hostname}]`;
   if (!path.startsWith('/')) path = '/' + path;
   return `${protocol}://${hostname}:${port}${path}`;
+}
+
+// Parse target_url to extract exact hostname and port number
+function parseUrlHostAndPort(targetUrl) {
+  if (!targetUrl) return null;
+  try {
+    const urlStr = targetUrl.includes('://') ? targetUrl : 'http://' + targetUrl;
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname;
+    let port = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80);
+    return { host, port };
+  } catch (_) {
+    return null;
+  }
+}
+
+// Accurately find desktop items matching a given port based on the active host context
+function getMatchingDesktopItems(portNumber) {
+  const currentVal = state.currentHostId || 'localhost';
+  const allItems = state.desktopItems || [];
+
+  if (currentVal === 'localhost') {
+    return allItems.filter(item => {
+      // Local mode item matching local port
+      if (item.mode === 'local' && item.port === portNumber) return true;
+      // Or proxy mode listening on this local port
+      if (item.mode === 'proxy' && item.port === portNumber) return true;
+      return false;
+    });
+  }
+
+  // Remote host: match proxy or shortcut items targeting this remote host IP/hostname & port
+  let hostAddr = '';
+  if (currentVal.startsWith('lan:')) {
+    hostAddr = currentVal.slice(4);
+  } else {
+    const h = (state.hosts || []).find(x => x.id === currentVal);
+    if (h) hostAddr = h.host;
+  }
+  if (!hostAddr) return [];
+
+  return allItems.filter(item => {
+    if (!item.target_url) return false;
+    const target = parseUrlHostAndPort(item.target_url);
+    if (!target) return false;
+    return (target.host === hostAddr || target.host.toLowerCase() === hostAddr.toLowerCase()) && target.port === portNumber;
+  });
 }
 
 // --- Host Dropdown Menu Controls ---
@@ -445,7 +493,22 @@ function switchTab(tab) {
   });
 
   if (tab === 'ports') {
-    fetchPorts();
+    const currentHost = state.currentHostId || 'localhost';
+    const cached = state.hostPortsCache[currentHost];
+    if (cached && cached.ports) {
+      state.ports = cached.ports;
+      if (currentHost === 'localhost') {
+        state.localPorts = cached.ports;
+      }
+      renderPortsTable();
+      updatePortCountBadge();
+      const age = Date.now() - (cached.timestamp || 0);
+      if (age > 60000) {
+        fetchPorts({ force: false, silent: true });
+      }
+    } else {
+      fetchPorts({ force: false, silent: false });
+    }
   } else if (tab === 'desktop') {
     fetchDesktopItems();
   } else if (tab === 'processes') {
@@ -463,18 +526,43 @@ function switchTab(tab) {
 }
 
 // --- Data Fetching ---
-async function fetchPorts() {
-  if (state.currentHostId && state.currentHostId !== 'localhost') {
-    return fetchRemoteHostPorts(state.currentHostId);
+async function fetchPorts(options = {}) {
+  const force = options.force || false;
+  let silent = options.silent || false;
+  const currentHost = state.currentHostId || 'localhost';
+
+  if (currentHost !== 'localhost') {
+    return fetchRemoteHostPorts(currentHost, { force, silent });
   }
+
+  const cached = state.hostPortsCache['localhost'];
+  if (cached && !force) {
+    state.ports = cached.ports || [];
+    state.localPorts = state.ports;
+    renderPortsTable();
+    updatePortCountBadge();
+    const cacheAgeMs = Date.now() - (cached.timestamp || 0);
+    if (!silent && cacheAgeMs < 30000) {
+      return;
+    }
+    silent = true;
+  }
+
   try {
     const res = await fetch(apiUrl('/api/ports'));
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
-      state.ports = await res.json();
-      state.localPorts = state.ports;
-      renderPortsTable();
-      updatePortCountBadge();
+      const freshPorts = await res.json();
+      state.hostPortsCache['localhost'] = {
+        ports: freshPorts,
+        timestamp: Date.now()
+      };
+      if (!state.currentHostId || state.currentHostId === 'localhost') {
+        state.ports = freshPorts;
+        state.localPorts = freshPorts;
+        renderPortsTable();
+        updatePortCountBadge();
+      }
     }
   } catch (err) {
     console.error('Fetch ports error:', err);
@@ -865,7 +953,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.53';
+  const ver = state.settings?.version || '1.1.54';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1173,8 +1261,8 @@ function renderPortRowHtml(p) {
       ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
       : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`);
 
-  const matchingItems = (state.desktopItems || []).filter(item => item.port === p.local_port);
-  const count = matchingItems.length || p.desktop_count || (p.has_desktop ? 1 : 0);
+  const matchingItems = getMatchingDesktopItems(p.local_port);
+  const count = matchingItems.length || (state.desktopItemsLoaded ? 0 : (p.desktop_count || (p.has_desktop ? 1 : 0)));
 
   let desktopCell = '';
   if (count > 0) {
@@ -1302,9 +1390,13 @@ function renderPortsTable() {
     }
 
     // Dropdown 1: Source filter ('all' | 'docker' | 'host')
-    const isDocker = !!(p.docker && p.docker.is_docker);
-    if (state.portFilterSource === 'docker' && !isDocker) return false;
-    if (state.portFilterSource === 'host' && isDocker) return false;
+    // When needs_ssh is true (e.g. unconfigured host), container vs system cannot be determined yet, so keep visible
+    const isNeedsSSH = !!p.needs_ssh;
+    const isDocker = !isNeedsSSH && p.docker && p.docker.is_docker;
+    if (!isNeedsSSH) {
+      if (state.portFilterSource === 'docker' && !isDocker) return false;
+      if (state.portFilterSource === 'host' && isDocker) return false;
+    }
 
     // Dropdown 2: Protocol filter ('all' | 'tcp' | 'udp')
     const protoStr = (p.protocol || '').toLowerCase();
@@ -1395,7 +1487,7 @@ function renderPortsTable() {
   tbody.querySelectorAll('.btn-manage-desktop-port').forEach(btn => {
     btn.addEventListener('click', () => {
       const port = parseInt(btn.dataset.port, 10);
-      const matching = (state.desktopItems || []).filter(i => i.port === port);
+      const matching = getMatchingDesktopItems(port);
       if (matching.length === 1) {
         openEditDesktopModal(matching[0].id);
       } else if (matching.length > 1) {
@@ -4639,7 +4731,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.53';
+      const ver = state.settings?.version || '1.1.54';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4934,21 +5026,48 @@ function updateHostSelectDropdown() {
 function selectHost(val) {
   state.currentHostId = val;
   updateHostSelectDropdown();
-  switchTab('ports');
 
-  if (val === 'localhost') {
-    state.ports = state.localPorts || [];
+  // If we have cached ports for this host, render immediately!
+  const cached = state.hostPortsCache[val];
+  if (cached && cached.ports) {
+    state.ports = cached.ports;
+    if (val === 'localhost') {
+      state.localPorts = cached.ports;
+    }
     renderPortsTable();
     updatePortCountBadge();
-    fetchPorts();
+  }
+
+  switchTab('ports');
+
+  // Background refresh if stale or initial load
+  if (val === 'localhost') {
+    fetchPorts({ force: false, silent: !!cached });
   } else {
-    fetchRemoteHostPorts(val);
+    fetchRemoteHostPorts(val, { force: false, silent: !!cached });
   }
 }
 
-async function fetchRemoteHostPorts(hostId) {
+async function fetchRemoteHostPorts(hostId, options = {}) {
+  const force = options.force || false;
+  let silent = options.silent || false;
   const tbody = document.getElementById('ports-tbody');
-  if (tbody) {
+  const cached = state.hostPortsCache[hostId];
+
+  if (cached && !force) {
+    if (state.currentHostId === hostId) {
+      state.ports = cached.ports || [];
+      renderPortsTable();
+      updatePortCountBadge();
+    }
+    const cacheAgeMs = Date.now() - (cached.timestamp || 0);
+    if (!silent && cacheAgeMs < 60000) {
+      return;
+    }
+    silent = true;
+  }
+
+  if (!silent && !cached && tbody && state.currentHostId === hostId) {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接主机并探测端口与进程...</td></tr>';
   }
 
@@ -4957,27 +5076,39 @@ async function fetchRemoteHostPorts(hostId) {
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const data = await res.json();
-      state.ports = data.ports || [];
-      if (state.ports.length === 0) {
-        if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 0.95rem; font-weight: 500; margin-bottom: 0.6rem; color: var(--text-muted);">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">设置SSH</button></div></td></tr>`;
-          tbody.querySelectorAll('.link-config-ssh-inline, #btn-prompt-config-ssh').forEach(el => {
-            el.addEventListener('click', (e) => {
-              e.preventDefault();
-              openHostSettingsModal();
-            });
-          });
-        }
-        updatePortCountBadge();
-        return;
-      }
+      const freshPorts = data.ports || [];
+      state.hostPortsCache[hostId] = {
+        ports: freshPorts,
+        timestamp: Date.now()
+      };
 
-      renderPortsTable();
-      updatePortCountBadge();
+      if (state.currentHostId === hostId) {
+        state.ports = freshPorts;
+        if (state.ports.length === 0) {
+          if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 0.95rem; font-weight: 500; margin-bottom: 0.6rem; color: var(--text-muted);">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">设置SSH</button></div></td></tr>`;
+            tbody.querySelectorAll('.link-config-ssh-inline, #btn-prompt-config-ssh').forEach(el => {
+              el.addEventListener('click', (e) => {
+                e.preventDefault();
+                openHostSettingsModal();
+              });
+            });
+          }
+          updatePortCountBadge();
+          return;
+        }
+
+        renderPortsTable();
+        updatePortCountBadge();
+      }
+    } else {
+      if (!cached && tbody && state.currentHostId === hostId) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败</td></tr>';
+      }
     }
   } catch (err) {
     console.error('Fetch remote host ports error:', err);
-    if (tbody) {
+    if (!cached && tbody && state.currentHostId === hostId) {
       tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
@@ -5282,11 +5413,7 @@ function initApp() {
   const btnRefreshPorts = document.getElementById('btn-refresh-ports');
   if (btnRefreshPorts) {
     btnRefreshPorts.addEventListener('click', () => {
-      if (state.currentHostId && state.currentHostId !== 'localhost') {
-        fetchRemoteHostPorts(state.currentHostId);
-      } else {
-        fetchPorts();
-      }
+      fetchPorts({ force: true, silent: false });
       fetchLANHosts();
     });
   }

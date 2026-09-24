@@ -22,6 +22,7 @@ import (
 
 	"fn-docker-to-desktop/internal/auth"
 	"fn-docker-to-desktop/internal/desktop"
+	"fn-docker-to-desktop/internal/monitor"
 )
 
 func TestHandleExportDesktopItems(t *testing.T) {
@@ -485,7 +486,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.53",
+		AppVersion: "1.1.54",
 	})
 
 	mux := http.NewServeMux()
@@ -600,7 +601,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.53",
+		AppVersion: "1.1.54",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -640,8 +641,8 @@ func TestCompareVersions(t *testing.T) {
 	}{
 		{"1.1.47", "1.1.47", 0},
 		{"v1.1.47", "1.1.47", 0},
-		{"1.1.52", "v1.1.53", -1},
-		{"1.1.53", "1.1.52", 1},
+		{"1.1.53", "v1.1.54", -1},
+		{"1.1.54", "1.1.53", 1},
 		{"1.1.47", "1.2.0", -1},
 		{"1.2.0", "1.1.99", 1},
 		{"v2.0.0", "v1.9.9", 1},
@@ -665,12 +666,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.53",
+		AppVersion: "1.1.54",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.53",
-		LatestVersion:  "1.1.53",
+		CurrentVersion: "1.1.54",
+		LatestVersion:  "1.1.54",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -693,11 +694,76 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.53" {
-		t.Errorf("Expected current version 1.1.53, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.54" {
+		t.Errorf("Expected current version 1.1.54, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
 	}
 }
+
+func TestParseTargetHostAndPortAndMarkRemotePortsDesktop(t *testing.T) {
+	// Test 1: parseTargetHostAndPort
+	tests := []struct {
+		url      string
+		expectedHost string
+		expectedPort int
+	}{
+		{"http://192.168.1.63:8080/path", "192.168.1.63", 8080},
+		{"https://vps.example.com", "vps.example.com", 443},
+		{"http://192.168.1.63", "192.168.1.63", 80},
+		{"192.168.1.63:9000", "192.168.1.63", 9000},
+		{"", "", 0},
+	}
+	for _, tc := range tests {
+		h, p := parseTargetHostAndPort(tc.url)
+		if h != tc.expectedHost || p != tc.expectedPort {
+			t.Errorf("parseTargetHostAndPort(%q) = (%q, %d), expected (%q, %d)", tc.url, h, p, tc.expectedHost, tc.expectedPort)
+		}
+	}
+
+	// Test 2: markRemotePortsDesktop exact matching
+	desktopItems := []desktop.DesktopItem{
+		{
+			ID:        "item-remote-8080",
+			Name:      "Remote Service 8080",
+			Mode:      desktop.ModeProxy,
+			TargetURL: "http://192.168.1.63:8080",
+			Port:      18000, // local proxy port
+		},
+		{
+			ID:        "item-local-80",
+			Name:      "Local Nginx",
+			Mode:      desktop.ModeLocalPort,
+			TargetURL: "",
+			Port:      80, // local port
+		},
+	}
+
+	// Test matching on host 192.168.1.63
+	ports := []monitor.PortEntry{
+		{LocalPort: 80},
+		{LocalPort: 8080},
+		{LocalPort: 18000},
+	}
+	markRemotePortsDesktop(ports, desktopItems, "192.168.1.63")
+
+	if ports[0].HasDesktop {
+		t.Errorf("Port 80 should NOT match local item")
+	}
+	if !ports[1].HasDesktop || ports[1].DesktopCount != 1 || ports[1].DesktopName != "Remote Service 8080" {
+		t.Errorf("Port 8080 SHOULD match remote item, got HasDesktop=%v, Count=%d, Name=%s", ports[1].HasDesktop, ports[1].DesktopCount, ports[1].DesktopName)
+	}
+	if ports[2].HasDesktop {
+		t.Errorf("Port 18000 should NOT match proxy port on remote host")
+	}
+
+	// Test substring protection: 192.168.1.6 should NOT match 192.168.1.63
+	subPorts := []monitor.PortEntry{{LocalPort: 8080}}
+	markRemotePortsDesktop(subPorts, desktopItems, "192.168.1.6")
+	if subPorts[0].HasDesktop {
+		t.Errorf("Host 192.168.1.6 should NOT match item with target 192.168.1.63")
+	}
+}
+
 

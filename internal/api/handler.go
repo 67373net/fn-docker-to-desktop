@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2815,6 +2816,50 @@ func (h *Handler) handleDeleteRemoteHost(w http.ResponseWriter, r *http.Request)
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
 }
 
+func parseTargetHostAndPort(targetURL string) (string, int) {
+	if targetURL == "" {
+		return "", 0
+	}
+	if !strings.Contains(targetURL, "://") {
+		targetURL = "http://" + targetURL
+	}
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return "", 0
+	}
+	hostname := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		if strings.EqualFold(u.Scheme, "https") {
+			return hostname, 443
+		}
+		return hostname, 80
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0
+	}
+	return hostname, port
+}
+
+func markRemotePortsDesktop(ports []monitor.PortEntry, desktopItems []desktop.DesktopItem, hostAddr string) {
+	for i := range ports {
+		for _, di := range desktopItems {
+			if di.TargetURL == "" {
+				continue
+			}
+			tHost, tPort := parseTargetHostAndPort(di.TargetURL)
+			if tHost != "" && strings.EqualFold(tHost, hostAddr) && tPort == ports[i].LocalPort {
+				ports[i].HasDesktop = true
+				ports[i].DesktopCount++
+				if ports[i].DesktopName == "" {
+					ports[i].DesktopName = di.Name
+				}
+			}
+		}
+	}
+}
+
 func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Request) {
 	if h.remoteStorage == nil || h.remoteSSH == nil {
 		h.jsonError(w, r, "远程主机服务未初始化", http.StatusInternalServerError)
@@ -2845,19 +2890,7 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 		if h.remoteLAN != nil {
 			ports = h.remoteLAN.ProbeHostPorts(host.Host)
 		}
-		for i := range ports {
-			for _, di := range desktopItems {
-				if di.Port == ports[i].LocalPort && di.Mode == desktop.ModeProxy {
-					ports[i].HasDesktop = true
-					ports[i].DesktopCount++
-					ports[i].DesktopName = di.Name
-				} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", ports[i].LocalPort)) {
-					ports[i].HasDesktop = true
-					ports[i].DesktopCount++
-					ports[i].DesktopName = di.Name
-				}
-			}
-		}
+		markRemotePortsDesktop(ports, desktopItems, host.Host)
 
 		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
 			HostID:    id,
@@ -2876,19 +2909,7 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 		if h.remoteLAN != nil {
 			fallbackPorts = h.remoteLAN.ProbeHostPorts(host.Host)
 		}
-		for i := range fallbackPorts {
-			for _, di := range desktopItems {
-				if di.Port == fallbackPorts[i].LocalPort && di.Mode == desktop.ModeProxy {
-					fallbackPorts[i].HasDesktop = true
-					fallbackPorts[i].DesktopCount++
-					fallbackPorts[i].DesktopName = di.Name
-				} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", fallbackPorts[i].LocalPort)) {
-					fallbackPorts[i].HasDesktop = true
-					fallbackPorts[i].DesktopCount++
-					fallbackPorts[i].DesktopName = di.Name
-				}
-			}
-		}
+		markRemotePortsDesktop(fallbackPorts, desktopItems, host.Host)
 
 		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
 			HostID:    id,
@@ -2902,22 +2923,7 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.remoteStorage.UpdateStatus(id, "connected", "")
-
-	// Check desktop items to mark HasDesktop flag
-	for i := range ports {
-		for _, di := range desktopItems {
-			// For remote hosts, check if target_url contains this host IP and port
-			if di.Port == ports[i].LocalPort && di.Mode == desktop.ModeProxy {
-				ports[i].HasDesktop = true
-				ports[i].DesktopCount++
-				ports[i].DesktopName = di.Name
-			} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", ports[i].LocalPort)) {
-				ports[i].HasDesktop = true
-				ports[i].DesktopCount++
-				ports[i].DesktopName = di.Name
-			}
-		}
-	}
+	markRemotePortsDesktop(ports, desktopItems, host.Host)
 
 	h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
 		HostID:    id,

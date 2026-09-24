@@ -4653,3 +4653,55 @@ INFO
 
 
 
+
+---
+
+## Turn 69 - v1.1.54 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **修复进程列表界面点击“已配置”未弹出弹窗问题**：
+   - 用户反馈在进程列表界面点击“已配置”按钮没有任何弹窗响应；
+   - 根因排查：按钮点击事件处理器中原有逻辑过滤条件为 `item.port === p.local_port`，在远程主机端口场景下，桌面图标存储的是本地映射代理端口或目标 URL，导致 `matching` 匹配数组为空，进而未触发弹窗。
+2. **主机切换与 Tab 切换智能端口数据缓存 (消除重复加载与闪烁)**：
+   - 用户反馈每次切换主机或从其他 Tab（如“关于”、“桌面图标”）切回“进程列表”时，页面都会清空表格并重新显示 Loading 加载菊花，体验割裂卡顿；
+   - 需要引入智能缓存机制，在切换主机或切回进程列表 Tab 时立即呈现已有端口数据，并在后台平滑静默刷新，消除空白与等待感。
+3. **修复远程主机端口误匹配为“已配置”的规则缺陷**：
+   - 用户反馈在某些远程主机中莫名其妙显示“已配置”，但实际并未配置对应端口；
+   - 根因排查：
+     1) 后端 `internal/api/handler.go` 中将 `di.Port == ports[i].LocalPort`（本地反代监听端口）误与远程端口直接比较；且原字符串模糊匹配 `strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", ports[i].LocalPort))` 容易产生 IP 前缀或端口子串误判（如 `192.168.1.10` 误匹配 `192.168.1.100`，`:80` 误匹配 `:8080`）；
+     2) 前端 `web/app.js` 仅比对端口数值，跨主机共用相同端口时产生冲突。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **后端远程端口与桌面图标精准匹配算法 (`internal/api/handler.go`)**：
+   - 新增 `parseTargetHostAndPort(targetURL string) (string, int, error)`，基于标准库 `net/url` 精确解析目标主机（去除协议、路径与查询参数）与端口；
+   - 重构 `markRemotePortsDesktop`：对于远程主机端口，仅当桌面图标模式为 `desktop.ModeProxy` 且其 `TargetURL` 中的 Host 与 Port 与当前远程主机及端口完全相等时才判定为已配置（`HasDesktop = true`）；彻底剔除将本地代理端口与远程物理端口直接混用的错误逻辑。
+2. **前端主机级桌面图标精确绑定与弹窗唤起 (`web/app.js`)**：
+   - 新增 `parseUrlHostAndPort(targetUrl)` 与 `getMatchingDesktopItems(portNumber)`；
+   - 若当前为主机模式（`state.currentHostId !== 'localhost'`），精确比对桌面图标目标 URL 中的 host（支持 IP 或主机名）与端口；若为本机则精准比对 `item.port === portNumber`；
+   - 修正 `.btn-manage-desktop-port` 点击事件：使用 `getMatchingDesktopItems(port)` 过滤，单项直接调用 `openEditDesktopModal(matching[0].id)`，多项唤起快速选择模态框，确保“已配置”点击 100% 弹出正确编辑窗口。
+3. **多级端口数据智能缓存体系 (`web/app.js`)**：
+   - 在 `state` 中引入 `hostPortsCache: {}`（结构为 `{ [hostId]: { ports: Array, timestamp: number } }`）；
+   - `switchTab('ports')` 增强：若当前主机已在缓存中，立即直出渲染，杜绝表格清空与闪烁；当缓存有效期超过 60s 时在后台静默发起增量同步（`fetchPorts({ force: false, silent: true })`）；
+   - `selectHost(val)` 增强：切换至任意已访问过的主机时立即直出缓存数据，同时后台刷新；
+   - `fetchPorts` 与 `fetchRemoteHostPorts` 扩展 `{ force, silent }` 控制策略，手动点击工具栏刷新按钮触发强制刷新（`force: true`）。
+4. **未配置 SSH 主机端口在默认筛选下的可见性保护 (`web/app.js`)**：
+   - 在 `renderPortsTable` 来源筛选中，对标记 `needs_ssh: true` 的端口（未配置 SSH 的局域网主机）跳过系统进程与 Docker 容器的硬性过滤，确保用户能够一览全部扫描出来的开放端口。
+5. **全链路版本升级至 `v1.1.54`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.54`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化 Playwright 端到端浏览器验证 (`test_cache_and_matching.py`)**：
+   - 场景 1（本机精确匹配）：本机端口 8080 显示“已配置”，点击正常打开 `#modal-desktop-item` 弹窗；
+   - 场景 2（远程主机隔离）：切换至远程主机 192.168.1.63，只有目标 URL 为 `192.168.1.63:3000` 的端口标记为“已配置”，而本机配置的 8080 端口与远程 8080 端口互不干扰（远程 8080 保持“添加桌面”）；
+   - 场景 3（远程“已配置”点击弹窗）：点击远程主机 3000 端口的“已配置”，精确弹出对应的桌面应用编辑弹窗；
+   - 场景 4（Tab 切换缓存与零闪烁）：在“进程列表”与其他 Tab（如“关于”）之间来回切换，表格内容瞬时直出，无任何加载动画或清空过程；
+   - 场景 5（主机切换缓存）：在“本机”与“192.168.1.63”之间切换，缓存数据瞬时直出渲染；
+   - 运行结果：7 项端到端自动化测试 100% SUCCESS 通过。
+2. **Go 单元测试全量通过**：
+   - 新增 `TestParseTargetHostAndPortAndMarkRemotePortsDesktop` 覆盖 URL 主机与端口解析、精确匹配与边界情况；
+   - 容器内执行 `go test -count=1 ./...`，包含 `internal/api`、`internal/desktop`、`internal/remote`、`internal/logger` 等全包 100% 通过（Exit Code 0）。
+3. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
