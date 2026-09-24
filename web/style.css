@@ -278,7 +278,8 @@ html, body {
   display: flex;
   align-items: center;
   position: relative;
-  min-width: 280px;
+  min-width: 185px;
+  max-width: 210px;
 }
 
 .search-icon {
@@ -2030,38 +2031,83 @@ tr.row-updating {
   font-size: 0.88rem;
 }
 
-/* ==================== Host Switcher Toolbar ==================== */
-.host-selector-wrapper {
-  display: inline-flex;
+/* ==================== Host Switcher in Header Nav ==================== */
+.nav-tab-host {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0.35rem;
+  padding: 0.65rem 0.95rem 0.55rem;
+  cursor: pointer;
 }
 
-.host-select {
-  max-width: 220px;
-  min-width: 120px;
+.nav-host-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: inherit;
+  cursor: pointer;
+  padding: 0 1rem 0 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right center;
+  background-size: 10px;
+  max-width: 160px;
   text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.btn-host-gear {
-  width: 36px;
-  height: 36px;
+.nav-tab.active .nav-host-select {
+  font-weight: 600;
+  color: var(--primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%230284c7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.nav-host-select option,
+.nav-host-select optgroup {
+  background-color: var(--bg-surface, #ffffff);
+  color: var(--text-main, #1e293b);
+  font-weight: normal;
+}
+
+.btn-host-gear.nav-host-gear {
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s ease;
   padding: 0;
+  margin-left: -2px;
 }
 
-.btn-host-gear:hover {
+.btn-host-gear.nav-host-gear:hover {
   color: var(--primary);
-  border-color: var(--primary);
-  background-color: var(--bg-hover);
+  background-color: rgba(2, 132, 199, 0.1);
+}
+
+.link-needs-ssh {
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.link-needs-ssh:hover {
+  color: #1d4ed8;
 }
 
 /* ==================== Color Popover Component ==================== */

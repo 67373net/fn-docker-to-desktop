@@ -2,7 +2,7 @@
 
 本项目灵感及代码参考了项目 [watchcow](https://github.com/tf4fun/watchcow)。
 
-本项目还处于 beta 测试版，可能会有很多 bug 和功能调整。欢迎提 issues
+本项目由一个三流代码吟唱师用三流agent开发，可能会有亿点点 bug 和调整。欢迎提 issues
 
 ---
 

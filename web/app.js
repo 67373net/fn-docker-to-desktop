@@ -206,9 +206,12 @@ function getHostTargetUrl(port, protocol = 'http', path = '/') {
 // --- Tab Navigation ---
 function initNavigation() {
   document.querySelectorAll('.nav-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('#btn-host-settings') || e.target.closest('#port-host-select')) {
+        return;
+      }
       const tab = btn.dataset.tab;
-      switchTab(tab);
+      if (tab) switchTab(tab);
     });
   });
 }
@@ -254,10 +257,6 @@ function switchTab(tab) {
 // --- Data Fetching ---
 async function fetchPorts() {
   if (state.currentHostId && state.currentHostId !== 'localhost') {
-    if (state.currentHostId.startsWith('lan:')) {
-      renderLANUnconfiguredPrompt(state.currentHostId.slice(4));
-      return;
-    }
     return fetchRemoteHostPorts(state.currentHostId);
   }
   try {
@@ -658,7 +657,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.50';
+  const ver = state.settings?.version || '1.1.51';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -955,11 +954,16 @@ function renderPortRowHtml(p) {
   } else {
     portUrl = getHostTargetUrl(p.local_port, 'http', '/');
   }
-  const isDocker = p.docker && p.docker.is_docker;
-  const procDisplayName = isDocker ? p.docker.container_name : (p.process_name || '系统服务');
-  const procTag = isDocker
-    ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
-    : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`;
+  const isNeedsSSH = !!p.needs_ssh;
+  const isDocker = !isNeedsSSH && p.docker && p.docker.is_docker;
+  const procDisplayName = isNeedsSSH
+    ? `端口-${p.local_port}`
+    : (isDocker ? p.docker.container_name : (p.process_name || '系统服务'));
+  const procTag = isNeedsSSH
+    ? `<span class="link-needs-ssh" title="未配置或无法连接 SSH，点击配置 SSH 凭据以读取容器与进程详情">需配置ssh</span>`
+    : (isDocker
+      ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
+      : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`);
 
   const matchingItems = (state.desktopItems || []).filter(item => item.port === p.local_port);
   const count = matchingItems.length || p.desktop_count || (p.has_desktop ? 1 : 0);
@@ -982,15 +986,17 @@ function renderPortRowHtml(p) {
       </button>`;
   }
 
-  const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '';
-  const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '';
   let resText = '';
-  if (cpuText && rssText) {
-    resText = `${cpuText} / ${rssText}`;
-  } else if (cpuText) {
-    resText = cpuText;
-  } else if (rssText) {
-    resText = rssText;
+  if (!isNeedsSSH) {
+    const cpuText = p.cpu_percent > 0.1 ? `${p.cpu_percent.toFixed(1)}%` : '';
+    const rssText = p.mem_rss_bytes > 0 ? formatBytes(p.mem_rss_bytes) : '';
+    if (cpuText && rssText) {
+      resText = `${cpuText} / ${rssText}`;
+    } else if (cpuText) {
+      resText = cpuText;
+    } else if (rssText) {
+      resText = rssText;
+    }
   }
 
   const protoUpper = (p.protocol || 'TCP').toUpperCase();
@@ -1197,6 +1203,13 @@ function renderPortsTable() {
     btn.addEventListener('click', () => {
       const port = parseInt(btn.dataset.port, 10);
       openPortDetailModal(port);
+    });
+  });
+
+  tbody.querySelectorAll('.link-needs-ssh').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openHostSettingsModal();
     });
   });
 
@@ -4405,7 +4418,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.50';
+      const ver = state.settings?.version || '1.1.51';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4451,6 +4464,24 @@ function openPortDetailModal(portNum) {
   const titleEl = document.getElementById('port-detail-title');
   const bodyEl = document.getElementById('port-detail-body');
   titleEl.textContent = `端口 :${port.local_port} 详细信息`;
+
+  if (port.needs_ssh) {
+    bodyEl.innerHTML = `
+      <div style="padding: 1.5rem 1rem; text-align: center;">
+        <p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ 未获取到系统进程与容器详情</p>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1.25rem; line-height: 1.6;">
+          此端口由 TCP 探活发现，尚未配置 SSH 凭据。<br>
+          配置 SSH 凭据后可穿透读取容器名称、绑定进程、镜像与资源消耗。
+        </p>
+        <button type="button" class="btn btn-primary" id="btn-detail-config-ssh">⚙️ 配置 SSH 凭据</button>
+      </div>`;
+    openModal('modal-port-detail');
+    document.getElementById('btn-detail-config-ssh')?.addEventListener('click', () => {
+      closeModal('modal-port-detail');
+      openHostSettingsModal();
+    });
+    return;
+  }
 
   const portUrl = getHostTargetUrl(port.local_port, 'http', '/');
 
@@ -4619,18 +4650,10 @@ function updateHostSelectDropdown() {
   }
 }
 
-function renderLANUnconfiguredPrompt(ip) {
-  const tbody = document.getElementById('ports-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ 已发现局域网主机 ${escapeHtml(ip)}</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">当前机器未配置 SSH 凭据，无法读取系统进程与 Docker 容器。<br>请点击上方 ⚙️ 齿轮配置 SSH 凭据，或直接点击右上角“添加桌面图标”添加该主机的网页快捷方式。</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-lan-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
-  document.getElementById('btn-prompt-config-lan-ssh')?.addEventListener('click', openHostSettingsModal);
-  state.ports = [];
-}
-
 async function fetchRemoteHostPorts(hostId) {
   const tbody = document.getElementById('ports-tbody');
   if (tbody) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接远程主机并读取端口与进程...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接主机并探测端口与进程...</td></tr>';
   }
 
   try {
@@ -4638,26 +4661,22 @@ async function fetchRemoteHostPorts(hostId) {
     if (res.status === 401) return showAuthModal();
     if (res.ok) {
       const data = await res.json();
-      if (data.status === 'unconfigured') {
-        const host = (state.hosts || []).find(h => h.id === hostId);
-        const hostAddr = host ? (host.name ? `${host.name} (${host.host})` : host.host) : '目标主机';
+      state.ports = data.ports || [];
+      if (state.ports.length === 0) {
+        let msg = '未探测到该主机的开放端口';
+        if (data.status === 'failed') {
+          msg = `SSH 连接失败 (${data.error || '连接超时'})，且未探测到开放端口`;
+        } else if (data.status === 'unconfigured') {
+          msg = '未探测到常见开放端口（可点击右上角 ⚙️ 齿轮配置 SSH 凭据以穿透读取全部内部端口）';
+        }
         if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ 主机 ${escapeHtml(hostAddr)}</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">当前主机尚未配置 SSH 密码或私钥凭据，无法读取系统进程与 Docker 容器。<br>请点击右上角 ⚙️ 齿轮配置 SSH 凭据。</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ ${escapeHtml(msg)}</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
           document.getElementById('btn-prompt-config-ssh')?.addEventListener('click', openHostSettingsModal);
         }
-        state.ports = [];
-        return;
-      }
-      if (data.status === 'failed') {
-        if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">🔴 SSH 连接失败</p><p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">错误详情: ${escapeHtml(data.error || '连接超时或认证拒绝')}<br>请点击上方 ⚙️ 齿轮检查 SSH 端口、用户名与密码/私钥配置。</p><button type="button" class="btn btn-secondary btn-sm" id="btn-prompt-config-ssh">⚙️ 检查配置</button></div></td></tr>`;
-          document.getElementById('btn-prompt-config-ssh')?.addEventListener('click', openHostSettingsModal);
-        }
-        state.ports = [];
+        updatePortCountBadge();
         return;
       }
 
-      state.ports = data.ports || [];
       renderPortsTable();
       updatePortCountBadge();
     }
@@ -4767,12 +4786,13 @@ function initHostManagement() {
         btnGear.style.display = (val !== 'localhost') ? 'inline-flex' : 'none';
       }
 
+      switchTab('ports');
+
       if (val === 'localhost') {
         state.ports = state.localPorts || [];
         renderPortsTable();
+        updatePortCountBadge();
         fetchPorts();
-      } else if (val.startsWith('lan:')) {
-        renderLANUnconfiguredPrompt(val.slice(4));
       } else {
         fetchRemoteHostPorts(val);
       }
@@ -4781,7 +4801,10 @@ function initHostManagement() {
 
   const btnGear = document.getElementById('btn-host-settings');
   if (btnGear) {
-    btnGear.addEventListener('click', openHostSettingsModal);
+    btnGear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openHostSettingsModal();
+    });
   }
 
   // Modal close buttons
@@ -5012,11 +5035,7 @@ function initApp() {
   if (btnRefreshPorts) {
     btnRefreshPorts.addEventListener('click', () => {
       if (state.currentHostId && state.currentHostId !== 'localhost') {
-        if (state.currentHostId.startsWith('lan:')) {
-          renderLANUnconfiguredPrompt(state.currentHostId.slice(4));
-        } else {
-          fetchRemoteHostPorts(state.currentHostId);
-        }
+        fetchRemoteHostPorts(state.currentHostId);
       } else {
         fetchPorts();
       }

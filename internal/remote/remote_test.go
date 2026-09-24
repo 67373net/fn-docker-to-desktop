@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,3 +212,38 @@ func TestParseARPTable(t *testing.T) {
 		t.Fatalf("unexpected parsed IPs: %v", hosts)
 	}
 }
+
+func TestProbeHostPorts(t *testing.T) {
+	tempDir := t.TempDir()
+	store, _ := NewStorage(tempDir)
+	scanner := &LANScanner{storage: store}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer l.Close()
+
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	pNum, _ := strconv.Atoi(portStr)
+
+	origPorts := commonProbePorts
+	commonProbePorts = append([]int{pNum}, origPorts...)
+	defer func() { commonProbePorts = origPorts }()
+
+	probed := scanner.ProbeHostPorts("127.0.0.1")
+	var found bool
+	for _, entry := range probed {
+		if entry.LocalPort == pNum {
+			found = true
+			if !entry.NeedsSSH {
+				t.Errorf("expected NeedsSSH to be true for probed port")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected port %d to be detected by ProbeHostPorts", pNum)
+	}
+}
+

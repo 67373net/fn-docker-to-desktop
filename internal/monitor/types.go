@@ -46,6 +46,7 @@ type PortEntry struct {
 	HasDesktop   bool            `json:"has_desktop"`             // Whether this port has a desktop icon configured
 	DesktopCount int             `json:"desktop_count"`           // Number of desktop icons for this port
 	DesktopName  string          `json:"desktop_name,omitempty"`  // Desktop icon title if configured
+	NeedsSSH     bool            `json:"needs_ssh,omitempty"`     // Whether process/docker details require SSH configuration
 }
 
 // ProcessDetail represents a full system process with detailed resource usage.

@@ -6,10 +6,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"fn-docker-to-desktop/internal/monitor"
 )
 
 // LANScanner scans local area network for active hosts.
@@ -246,3 +250,88 @@ func generateSubnetIPs(sub *net.IPNet) []string {
 	}
 	return ips
 }
+
+// commonProbePorts lists standard web, container, NAS and database ports to probe when SSH is not available.
+var commonProbePorts = []int{
+	// Popular Web & Reverse Proxy
+	80, 443, 8080, 8443, 8000, 8008, 8081, 8082, 8083, 8084, 8085, 8088, 8090, 8888,
+	// Popular Container Apps & Tools
+	3000, 3001, 3002, 5000, 5001, 5002, 5005, 5173, 5174, 5244, 5678, 6080, 7860, 7890, 7897,
+	8096, 8123, 8989, 7878, 8686, 9696, 9000, 9080, 9090, 9091, 9100, 9443, 9999, 10000, 10086, 11434, 32400, 50000,
+	// Databases / MQ / Cache
+	1433, 1521, 1883, 2379, 2380, 3306, 5432, 5672, 6379, 27017,
+	// System / File Sharing / Remote
+	21, 22, 23, 25, 53, 110, 139, 143, 445, 548, 993, 995, 2049, 2375, 2376, 3389, 5666, 5900, 5901, 6443, 6881, 6882, 7000, 7001,
+}
+
+// ProbeHostPorts scans common ports on a target IP when SSH is unconfigured or failed.
+func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
+	if ip == "" {
+		return nil
+	}
+
+	portSet := make(map[int]struct{})
+	// Include 1..1024 well-known ports
+	for p := 1; p <= 1024; p++ {
+		portSet[p] = struct{}{}
+	}
+	// Include popular container & NAS ports
+	for _, p := range commonProbePorts {
+		portSet[p] = struct{}{}
+	}
+
+	portsToScan := make([]int, 0, len(portSet))
+	for p := range portSet {
+		portsToScan = append(portsToScan, p)
+	}
+	sort.Ints(portsToScan)
+
+	var foundPorts []int
+	var mu sync.Mutex
+
+	workers := 80
+	timeout := 350 * time.Millisecond
+
+	portChan := make(chan int, len(portsToScan))
+	for _, p := range portsToScan {
+		portChan <- p
+	}
+	close(portChan)
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for port := range portChan {
+				addr := net.JoinHostPort(ip, strconv.Itoa(port))
+				conn, err := net.DialTimeout("tcp", addr, timeout)
+				if err == nil {
+					_ = conn.Close()
+					mu.Lock()
+					foundPorts = append(foundPorts, port)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	sort.Ints(foundPorts)
+
+	var entries []monitor.PortEntry
+	for _, p := range foundPorts {
+		entries = append(entries, monitor.PortEntry{
+			LocalPort:   p,
+			Protocol:    "tcp",
+			Protocols:   []string{"tcp"},
+			LocalIP:     ip,
+			LocalIPs:    []string{ip},
+			IPVersion:   "IPv4",
+			State:       "LISTEN",
+			ProcessName: "",
+			NeedsSSH:    true,
+		})
+	}
+	return entries
+}
+

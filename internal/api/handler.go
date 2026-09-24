@@ -2824,16 +2824,46 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	host, ok := h.remoteStorage.GetHost(id)
 	if !ok {
-		h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
-		return
+		if strings.HasPrefix(id, "lan:") {
+			ip := strings.TrimPrefix(id, "lan:")
+			host = remote.HostConfig{
+				ID:   id,
+				Host: ip,
+				Name: ip,
+			}
+		} else {
+			h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
+			return
+		}
 	}
 
+	desktopItems := h.storage.GetAllItems()
+
+	// If no SSH credentials configured, fall back to direct TCP port probing
 	if host.Password == "" && host.PrivateKey == "" {
+		var ports []monitor.PortEntry
+		if h.remoteLAN != nil {
+			ports = h.remoteLAN.ProbeHostPorts(host.Host)
+		}
+		for i := range ports {
+			for _, di := range desktopItems {
+				if di.Port == ports[i].LocalPort && di.Mode == desktop.ModeProxy {
+					ports[i].HasDesktop = true
+					ports[i].DesktopCount++
+					ports[i].DesktopName = di.Name
+				} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", ports[i].LocalPort)) {
+					ports[i].HasDesktop = true
+					ports[i].DesktopCount++
+					ports[i].DesktopName = di.Name
+				}
+			}
+		}
+
 		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
 			HostID:    id,
 			HostName:  host.Name,
 			Status:    "unconfigured",
-			Ports:     []monitor.PortEntry{},
+			Ports:     ports,
 			Timestamp: time.Now().Unix(),
 		}, http.StatusOK)
 		return
@@ -2842,12 +2872,30 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 	ports, err := h.remoteSSH.FetchRemotePorts(host)
 	if err != nil {
 		h.remoteStorage.UpdateStatus(id, "failed", err.Error())
+		var fallbackPorts []monitor.PortEntry
+		if h.remoteLAN != nil {
+			fallbackPorts = h.remoteLAN.ProbeHostPorts(host.Host)
+		}
+		for i := range fallbackPorts {
+			for _, di := range desktopItems {
+				if di.Port == fallbackPorts[i].LocalPort && di.Mode == desktop.ModeProxy {
+					fallbackPorts[i].HasDesktop = true
+					fallbackPorts[i].DesktopCount++
+					fallbackPorts[i].DesktopName = di.Name
+				} else if strings.Contains(di.TargetURL, host.Host) && strings.Contains(di.TargetURL, fmt.Sprintf(":%d", fallbackPorts[i].LocalPort)) {
+					fallbackPorts[i].HasDesktop = true
+					fallbackPorts[i].DesktopCount++
+					fallbackPorts[i].DesktopName = di.Name
+				}
+			}
+		}
+
 		h.jsonResponse(w, r, remote.RemoteHostPortsResponse{
 			HostID:    id,
 			HostName:  host.Name,
 			Status:    "failed",
 			Error:     err.Error(),
-			Ports:     []monitor.PortEntry{},
+			Ports:     fallbackPorts,
 			Timestamp: time.Now().Unix(),
 		}, http.StatusOK)
 		return
@@ -2856,7 +2904,6 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 	h.remoteStorage.UpdateStatus(id, "connected", "")
 
 	// Check desktop items to mark HasDesktop flag
-	desktopItems := h.storage.GetAllItems()
 	for i := range ports {
 		for _, di := range desktopItems {
 			// For remote hosts, check if target_url contains this host IP and port

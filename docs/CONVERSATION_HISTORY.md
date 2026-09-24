@@ -4510,4 +4510,51 @@ INFO
    - `golang:1.22-alpine` 编译 `cmd/server` 成功，无任何编译错误或警告。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 66 - v1.1.51 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **README 与关于页免责声明更新**：
+   - 将“本项目还处于 beta 测试版，可能会有很多 bug 和功能调整。欢迎提 issues”改为“本项目由一个三流代码吟唱师用三流agent开发，可能会有亿点点 bug 和调整。欢迎提 issues”。
+2. **Tab 栏与工具栏布局深度精简**：
+   - 将主机切换下拉框直接整合到头部导航栏“进程列表”Tab 处，展示为如“本机 62”，大幅释放下方工具栏横向空间；
+   - 搜索框宽度由 280px 缩减为 2/3（约 185px），彻底解决工具栏过于拥挤的问题。
+3. **未配置 SSH 机器的端口主动探测与降级显示**：
+   - 当选中的局域网或远程机器未配置 SSH 凭据（或 SSH 连接失败）时，后端通过高并发 TCP 探活引擎主动扫描该设备的开放端口；
+   - 端口列表显示基础信息（端口链接、协议、监听 IP、放到桌面按钮）；
+   - 在“容器 / 进程”列以蓝色文字显示“需配置ssh”，点击可直接弹出对应主机的 SSH 配置弹窗，配置后可无缝解锁进程、镜像及资源占用信息。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **免责声明更新 (`README.md`, `web/index.html`)**：
+   - 统一更新 README 与关于界面的诙谐版免责文案。
+2. **Header Tab 栏主机选择器重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 将原位于 `#pane-ports` 工具栏的 `#port-host-select` 与 `#btn-host-settings` 迁移至 Header Nav 首个 Tab；
+   - 首个 Tab 展现为透明自适应下拉选择框与端口计数徽标（如“本机 62”），选中非本机时右侧显现精致线稿齿轮设置按钮；
+   - 优化 Tab 点击冒泡与交互事件，切换主机时自动激活“进程列表”视图；
+   - 工具栏移除原有主机切换容器，并将 `.search-box` 的 `min-width` 由 280px 调整为 185px（最大 210px），各分辨率下工具栏舒展整齐。
+3. **未配置 SSH 场景下的高并发端口探测引擎 (`internal/remote/lan.go`, `internal/api/handler.go`)**：
+   - 在 `LANScanner` 中实现 `ProbeHostPorts(ip string) []monitor.PortEntry`；
+   - 预设 1~1024 知名端口 + 常用容器/Web/数据库/NAS 端口列表（约 1150 个端口），基于 80 个并发 Worker 与 350ms 超时快速扫描；
+   - `handleGetRemoteHostPorts` 在主机未配置 SSH 或 SSH 连接失败时，自动回退并调用 `ProbeHostPorts`，标记 `NeedsSSH = true` 并关联已有的桌面图标；
+   - 在 `internal/remote/remote_test.go` 中新增 `TestProbeHostPorts` 单元测试并通过验证。
+4. **前端降级呈现与 SSH 配置弹窗联动 (`web/app.js`, `web/style.css`)**：
+   - `renderPortRowHtml` 识别 `p.needs_ssh`：在“容器 / 进程”列渲染蓝色文字 `<span class="link-needs-ssh">需配置ssh</span>`；
+   - 绑定 `.link-needs-ssh` 点击事件，点击直接弹出 `#modal-host-settings`；
+   - “放到桌面”与“反向代理”能力依然完整可用，可直接为探测到的远端开放端口创建桌面快捷方式与反向代理；
+   - 端口详情弹窗识别 `needs_ssh` 状态并提供引导配置 SSH 按钮。
+5. **全链路版本升级至 `v1.1.51`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.51`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/remote`）全部 PASS（100% 通过）；
+   - `golang:1.22-alpine` 编译 `cmd/server` 成功，退出码 0，零警告。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
