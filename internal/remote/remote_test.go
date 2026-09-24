@@ -224,12 +224,18 @@ func TestProbeHostPorts(t *testing.T) {
 	}
 	defer l.Close()
 
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	pNum, _ := strconv.Atoi(portStr)
-
-	origPorts := commonProbePorts
-	commonProbePorts = append([]int{pNum}, origPorts...)
-	defer func() { commonProbePorts = origPorts }()
 
 	probed := scanner.ProbeHostPorts("127.0.0.1")
 	var found bool

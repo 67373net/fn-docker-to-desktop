@@ -264,39 +264,20 @@ var commonProbePorts = []int{
 	21, 22, 23, 25, 53, 110, 139, 143, 445, 548, 993, 995, 2049, 2375, 2376, 3389, 5666, 5900, 5901, 6443, 6881, 6882, 7000, 7001,
 }
 
-// ProbeHostPorts scans common ports on a target IP when SSH is unconfigured or failed.
+// ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
+// similar to "nmap -p-", using high concurrency goroutines.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	if ip == "" {
 		return nil
 	}
 
-	portSet := make(map[int]struct{})
-	// Include 1..1024 well-known ports
-	for p := 1; p <= 1024; p++ {
-		portSet[p] = struct{}{}
-	}
-	// Include popular container & NAS ports
-	for _, p := range commonProbePorts {
-		portSet[p] = struct{}{}
-	}
+	totalPorts := 65535
+	workers := 500
+	timeout := 200 * time.Millisecond
 
-	portsToScan := make([]int, 0, len(portSet))
-	for p := range portSet {
-		portsToScan = append(portsToScan, p)
-	}
-	sort.Ints(portsToScan)
-
+	portChan := make(chan int, 2000)
 	var foundPorts []int
 	var mu sync.Mutex
-
-	workers := 80
-	timeout := 350 * time.Millisecond
-
-	portChan := make(chan int, len(portsToScan))
-	for _, p := range portsToScan {
-		portChan <- p
-	}
-	close(portChan)
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -315,6 +296,12 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 			}
 		}()
 	}
+
+	for p := 1; p <= totalPorts; p++ {
+		portChan <- p
+	}
+	close(portChan)
+
 	wg.Wait()
 	sort.Ints(foundPorts)
 

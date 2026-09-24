@@ -4556,5 +4556,55 @@ INFO
    - `golang:1.22-alpine` 编译 `cmd/server` 成功，退出码 0，零警告。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 67 - v1.1.52 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **进程列表 Tab 计数徽标位置优化**：
+   - 徽标数字改为紧挨左侧文字（如 `本机 62`），不再推到最右侧。
+2. **下拉菜单与齿轮按钮 UI 视觉系统重构**：
+   - 彻底废弃浏览器原生灰色 select 下拉菜单，重构为符合系统现代风格的自定义浮动菜单（Custom Dropdown Popover）；
+   - 主机状态文本三色规范：`SSH未配置` 显示为蓝色文字（深色模式智能提亮），`SSH已连接` 显示为系统主色默认黑字，`SSH连接失败` 显示为醒目红字；
+   - 齿轮设置按钮强化：增加微底色、精致边框与柔和悬浮光影，视觉辨识度大幅提升；
+   - “添加主机”选项移除 emoji `➕`，采用利落线稿图标或文字加号。
+3. **全端口大范围并发扫描（类似 `nmap -p-`）**：
+   - 用户反馈自动扫描端口明显比真实端口少（实测发现大量高端口服务遗漏）；
+   - 将主动探活引擎升级为高并发（500 并发 Worker）全端口（1~65535）快速扫描，确保探测到局域网目标设备上的全部开放端口。
+4. **Tab 切换防误触交互**：
+   - 当当前处于其他 Tab（如“关于”、“桌面图标”等）时，点击“进程列表”Tab 仅执行切换视图，严禁弹出主机下拉菜单；只有在当前已处于“进程列表”Tab 时再次点击，才展开主机切换菜单。
+5. **未配置 SSH 主机空端口提示语优化**：
+   - 局域网未配置 SSH 的主机筛选无端口时，文案更新为：“没有符合条件的端口，设置SSH后可显示更多详情”，其中“设置SSH”为蓝色可点击链接，点击立即唤起主机设置弹窗。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **Tab 栏与自定义下拉组件重构 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 在 `#tab-nav-ports` 中将原生 `<select>` 替换为自适应触发器 `.nav-host-trigger`（包含 `#current-host-name`、紧挨的 `#port-count-badge` 和线稿下拉小箭头）；
+   - 新增自定义浮动菜单 `.nav-host-menu`，支持分组标题、主机名称、三色状态标签（`.status-unconfigured`, `.status-connected`, `.status-failed`），加号采用线稿 SVG 图标；
+   - 齿轮设置按钮 `.btn-host-gear` 升级为具备边框、圆角、背景色及明显 hover 效果的精致工具按钮；
+   - 优化 `.toolbar-select` 筛选下拉框，统一边框、阴影、背景及 hover/focus 样式。
+2. **精细化 Tab 切换与事件冒泡拦截 (`web/app.js`)**：
+   - `initNavigation` 增加状态判定：非 ports Tab 点击 `#tab-nav-ports` 仅切换 Tab 并关闭任何残留浮层；已在 ports Tab 时点击触发器才切换 `menu-open` 状态与展示菜单；
+   - 绑定全局点击事件，点击 Tab 外部区域自动收起主机下拉菜单。
+3. **全端口高并发主动探测引擎 (`internal/remote/lan.go`)**：
+   - 重构 `ProbeHostPorts(ip string)`：全量覆盖 1~65535 端口，采用 500 个并发 goroutine 与 200ms 超时快速扫描；
+   - 适配 Linux 容器环境的 ulimit (1024) 限制，有效避免高并发 socket 耗尽；
+   - 更新 `internal/remote/remote_test.go` 中的 `TestProbeHostPorts`，加入监听端异步 accept 循环，杜绝全端口洪峰下的 SYN 队列丢失。
+4. **未配置 SSH 主机空端口提示与引导弹窗联动 (`web/app.js`)**：
+   - `renderPortsTable` 判定未配置或局域网主机空端口时，渲染：“没有符合条件的端口，<span class="link-config-ssh-inline">设置SSH</span>后可显示更多详情”；
+   - `fetchRemoteHostPorts` 端口探测结果为空时同步呈现相同提示与按钮，点击均能直接弹出 `#modal-host-settings`。
+5. **全链路版本升级至 `v1.1.52`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.52`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试与编译验证**：
+   - 容器环境全量单元测试（`internal/api`, `internal/remote`, `internal/desktop`, `internal/logger` 等）全部 PASS（100% 通过）；
+   - `golang:alpine` 编译 `cmd/server` 成功，退出码 0，零警告。
+2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 

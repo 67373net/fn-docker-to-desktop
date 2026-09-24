@@ -203,16 +203,78 @@ function getHostTargetUrl(port, protocol = 'http', path = '/') {
   return `${protocol}://${hostname}:${port}${path}`;
 }
 
+// --- Host Dropdown Menu Controls ---
+function openHostMenu() {
+  const menu = document.getElementById('nav-host-menu');
+  const tabHost = document.getElementById('tab-nav-ports');
+  if (menu && tabHost) {
+    updateHostSelectDropdown();
+    menu.style.display = 'block';
+    tabHost.classList.add('menu-open');
+  }
+}
+
+function closeHostMenu() {
+  const menu = document.getElementById('nav-host-menu');
+  const tabHost = document.getElementById('tab-nav-ports');
+  if (menu && tabHost) {
+    menu.style.display = 'none';
+    tabHost.classList.remove('menu-open');
+  }
+}
+
+function toggleHostMenu() {
+  const menu = document.getElementById('nav-host-menu');
+  if (menu && menu.style.display === 'block') {
+    closeHostMenu();
+  } else {
+    openHostMenu();
+  }
+}
+
 // --- Tab Navigation ---
 function initNavigation() {
   document.querySelectorAll('.nav-tab').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      if (e.target.closest('#btn-host-settings') || e.target.closest('#port-host-select')) {
+      // 1. Gear button click: open host settings modal only
+      if (e.target.closest('#btn-host-settings')) {
+        e.stopPropagation();
+        openHostSettingsModal();
         return;
       }
+
+      // 2. Click inside the open host dropdown menu: don't bubble
+      if (e.target.closest('#nav-host-menu')) {
+        return;
+      }
+
       const tab = btn.dataset.tab;
+
+      // 3. Special handling for ports tab (contains host selector)
+      if (tab === 'ports') {
+        if (state.currentTab !== 'ports') {
+          // If currently NOT on ports tab, switch to ports tab ONLY.
+          // Do NOT open the host dropdown menu (Requirement 4)
+          closeHostMenu();
+          switchTab('ports');
+        } else {
+          // If ALREADY on ports tab, clicking toggles the host dropdown menu
+          toggleHostMenu();
+        }
+        return;
+      }
+
+      // Other tabs: close host menu and switch tab
+      closeHostMenu();
       if (tab) switchTab(tab);
     });
+  });
+
+  // Global click outside to close host dropdown menu
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#tab-nav-ports')) {
+      closeHostMenu();
+    }
   });
 }
 
@@ -657,7 +719,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.51';
+  const ver = state.settings?.version || '1.1.52';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1109,7 +1171,20 @@ function renderPortsTable() {
   });
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">没有符合条件的端口</td></tr>';
+    const isUnconfiguredRemote = state.currentHostId && (
+      state.currentHostId.startsWith('lan:') ||
+      (state.hosts || []).some(h => h.id === state.currentHostId && (h.status === 'unconfigured' || (!h.password && !h.private_key)))
+    );
+
+    if (isUnconfiguredRemote) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</td></tr>';
+      tbody.querySelector('.link-config-ssh-inline')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        openHostSettingsModal();
+      });
+    } else {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">没有符合条件的端口</td></tr>';
+    }
     return;
   }
 
@@ -4418,7 +4493,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.51';
+      const ver = state.settings?.version || '1.1.52';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4598,28 +4673,61 @@ async function fetchLANHosts() {
 }
 
 function updateHostSelectDropdown() {
-  const select = document.getElementById('port-host-select');
-  if (!select) return;
-
   const currentVal = state.currentHostId || 'localhost';
-  let html = `<option value="localhost"${currentVal === 'localhost' ? ' selected' : ''}>本机</option>`;
+
+  // 1. Update host name badge in Header Nav tab
+  const nameEl = document.getElementById('current-host-name');
+  if (nameEl) {
+    let displayName = '本机';
+    if (currentVal.startsWith('lan:')) {
+      displayName = currentVal.slice(4);
+    } else if (currentVal !== 'localhost') {
+      const h = (state.hosts || []).find(x => x.id === currentVal);
+      displayName = h ? (h.name || h.host) : currentVal;
+    }
+    nameEl.textContent = displayName;
+  }
+
+  // 2. Toggle gear icon visibility
+  const btnGear = document.getElementById('btn-host-settings');
+  if (btnGear) {
+    btnGear.style.display = (currentVal !== 'localhost') ? 'inline-flex' : 'none';
+  }
+
+  // 3. Render custom dropdown popover menu
+  const menu = document.getElementById('nav-host-menu');
+  if (!menu) return;
+
+  let html = '';
+
+  // Localhost option
+  const isLocalSel = currentVal === 'localhost';
+  html += `
+    <div class="host-menu-item${isLocalSel ? ' active' : ''}" data-host-id="localhost">
+      <span class="host-item-title">本机 (127.0.0.1)</span>
+    </div>`;
 
   // Configured remote hosts
   if (state.hosts && state.hosts.length > 0) {
-    html += '<optgroup label="已配置主机">';
+    html += '<div class="host-menu-group-title">已配置主机</div>';
     for (const h of state.hosts) {
       let statusText = 'SSH未配置';
+      let statusClass = 'status-unconfigured';
       if (h.status === 'connected') {
         statusText = 'SSH已连接';
+        statusClass = 'status-connected';
       } else if (h.status === 'failed') {
         statusText = 'SSH连接失败';
+        statusClass = 'status-failed';
       }
       const titleName = h.name ? `${h.name} (${h.host})` : h.host;
-      const label = `${titleName} [${statusText}]`;
-      const isSel = currentVal === h.id ? ' selected' : '';
-      html += `<option value="${escapeHtml(h.id)}"${isSel}>${escapeHtml(label)}</option>`;
+      const isSel = currentVal === h.id ? ' active' : '';
+      html += `
+        <div class="host-menu-item${isSel}" data-host-id="${escapeHtml(h.id)}">
+          <span class="host-item-title" title="${escapeHtml(titleName)}">${escapeHtml(titleName)}</span>
+          <span class="host-item-status ${statusClass}">${escapeHtml(statusText)}</span>
+        </div>`;
     }
-    html += '</optgroup>';
   }
 
   // LAN discovered hosts (skip those already configured)
@@ -4627,26 +4735,65 @@ function updateHostSelectDropdown() {
   const unconfiguredLAN = (state.lanHosts || []).filter(lh => !configuredAddrs.has(lh.ip));
 
   if (unconfiguredLAN.length > 0) {
-    html += '<optgroup label="局域网发现">';
+    html += '<div class="host-menu-group-title">局域网发现</div>';
     for (const lh of unconfiguredLAN) {
       const val = `lan:${lh.ip}`;
-      const isSel = currentVal === val ? ' selected' : '';
-      html += `<option value="${escapeHtml(val)}"${isSel}>${escapeHtml(lh.ip)} [SSH未配置]</option>`;
+      const isSel = currentVal === val ? ' active' : '';
+      html += `
+        <div class="host-menu-item${isSel}" data-host-id="${escapeHtml(val)}">
+          <span class="host-item-title" title="${escapeHtml(lh.ip)}">${escapeHtml(lh.ip)}</span>
+          <span class="host-item-status status-unconfigured">SSH未配置</span>
+        </div>`;
     }
-    html += '</optgroup>';
   }
 
   if (state.lanScanning) {
-    html += '<option value="__scanning__" disabled>🔍 扫描中...</option>';
+    html += `
+      <div class="host-menu-item host-menu-scanning">
+        <span class="spinner-small" style="margin-right: 4px;"></span>
+        <span>正在扫描局域网设备...</span>
+      </div>`;
   }
 
-  html += '<option value="__add__">➕ 添加主机...</option>';
-  select.innerHTML = html;
+  html += '<div class="host-menu-divider"></div>';
+  html += `
+    <div class="host-menu-item host-menu-add" data-host-id="__add__">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+      <span>添加主机</span>
+    </div>`;
 
-  // Toggle gear icon visibility
-  const btnGear = document.getElementById('btn-host-settings');
-  if (btnGear) {
-    btnGear.style.display = (currentVal !== 'localhost') ? 'inline-flex' : 'none';
+  menu.innerHTML = html;
+
+  // Bind click selection
+  menu.querySelectorAll('.host-menu-item[data-host-id]').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeHostMenu();
+      const val = item.dataset.hostId;
+      if (val === '__add__') {
+        openHostModal('add');
+        return;
+      }
+      selectHost(val);
+    });
+  });
+}
+
+function selectHost(val) {
+  state.currentHostId = val;
+  updateHostSelectDropdown();
+  switchTab('ports');
+
+  if (val === 'localhost') {
+    state.ports = state.localPorts || [];
+    renderPortsTable();
+    updatePortCountBadge();
+    fetchPorts();
+  } else {
+    fetchRemoteHostPorts(val);
   }
 }
 
@@ -4663,15 +4810,14 @@ async function fetchRemoteHostPorts(hostId) {
       const data = await res.json();
       state.ports = data.ports || [];
       if (state.ports.length === 0) {
-        let msg = '未探测到该主机的开放端口';
-        if (data.status === 'failed') {
-          msg = `SSH 连接失败 (${data.error || '连接超时'})，且未探测到开放端口`;
-        } else if (data.status === 'unconfigured') {
-          msg = '未探测到常见开放端口（可点击右上角 ⚙️ 齿轮配置 SSH 凭据以穿透读取全部内部端口）';
-        }
         if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">⚪ ${escapeHtml(msg)}</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">⚙️ 配置 SSH 凭据</button></div></td></tr>`;
-          document.getElementById('btn-prompt-config-ssh')?.addEventListener('click', openHostSettingsModal);
+          tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 0.95rem; font-weight: 500; margin-bottom: 0.6rem; color: var(--text-muted);">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">设置SSH</button></div></td></tr>`;
+          tbody.querySelectorAll('.link-config-ssh-inline, #btn-prompt-config-ssh').forEach(el => {
+            el.addEventListener('click', (e) => {
+              e.preventDefault();
+              openHostSettingsModal();
+            });
+          });
         }
         updatePortCountBadge();
         return;
@@ -4766,38 +4912,7 @@ function openHostSettingsModal() {
 }
 
 function initHostManagement() {
-  const hostSelect = document.getElementById('port-host-select');
-  if (hostSelect) {
-    hostSelect.addEventListener('change', () => {
-      const val = hostSelect.value;
-      if (val === '__add__') {
-        hostSelect.value = state.currentHostId || 'localhost';
-        openHostModal('add');
-        return;
-      }
-      if (val === '__scanning__') {
-        hostSelect.value = state.currentHostId || 'localhost';
-        return;
-      }
-
-      state.currentHostId = val;
-      const btnGear = document.getElementById('btn-host-settings');
-      if (btnGear) {
-        btnGear.style.display = (val !== 'localhost') ? 'inline-flex' : 'none';
-      }
-
-      switchTab('ports');
-
-      if (val === 'localhost') {
-        state.ports = state.localPorts || [];
-        renderPortsTable();
-        updatePortCountBadge();
-        fetchPorts();
-      } else {
-        fetchRemoteHostPorts(val);
-      }
-    });
-  }
+  updateHostSelectDropdown();
 
   const btnGear = document.getElementById('btn-host-settings');
   if (btnGear) {
