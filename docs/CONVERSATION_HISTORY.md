@@ -4605,6 +4605,51 @@ INFO
    - `golang:alpine` 编译 `cmd/server` 成功，退出码 0，零警告。
 2. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 68 - v1.1.53 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **修复点击“本机”无下拉菜单 Bug**：
+   - 用户反馈点击 Header 导航中的“本机”没有弹出下拉菜单；
+   - 根因分析：`.header-nav` 设置了 `overflow-y: hidden`，原有 `position: absolute; top: calc(100% + 2px)` 的 `#nav-host-menu` 在垂直方向被外层 Tab 栏直接裁切隐藏。
+2. **重构来源与协议筛选下拉框为系统统一风格**：
+   - 用户反馈点击“Docker”或“TCP”筛选框依然是操作系统默认的灰色丑陋原生 `<select>` 弹层；
+   - 彻底废除原生 HTML `<select>`，重构为与系统 UI 统一的自定义浮动下拉组件（Custom Dropdown Popover），具备圆角、微阴影、系统字号、主色激活态、深色模式适配与箭头平滑旋转。
+3. **前端数组安全性与容错加固**：
+   - 修复前端针对非数组返回数据（如网络错误响应）时由于 `(state.hosts || []).map` 导致的静默报错。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **主机浮动菜单采用 Viewport 级 Fixed 定位 (`web/style.css`, `web/app.js`)**：
+   - 将 `#nav-host-menu` 定位样式升级为 `position: fixed; z-index: 9999;`，彻底脱离 `.header-nav` 与 `.app-header` 的 `overflow` 裁切层级；
+   - 新增 `positionHostMenu()` 函数，基于触发器 `tabHost.getBoundingClientRect()` 精准计算 `top` 与 `left`，并加入视口右侧边界溢出保护；
+   - 在菜单开启、窗口 resize 以及页面 scroll 时动态自适应对齐。
+2. **自定义工具栏筛选组件 (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 替换原生 `<select>` 为 `.custom-dropdown` 架构（`.custom-dropdown-btn` + `.custom-dropdown-arrow` + `.custom-dropdown-menu` + `.custom-dropdown-item`）；
+   - 在 `web/app.js` 中新增 `initFilterDropdowns()`、`setPortFilterSource()`、`setPortFilterProto()`、`closeAllFilterDropdowns()`；
+   - 支持点击展开、点击选项切换状态与表格重绘、全局点击外部关闭、ESC 键快捷收起，完全适配明暗主题。
+3. **前端数据模型防御性解析 (`web/app.js`)**：
+   - `fetchRemoteHosts` 与 `fetchLANHosts` 引入 `Array.isArray` 严格守卫；
+   - `updateHostSelectDropdown` 中对 `state.hosts` 与 `state.lanHosts` 进行全局防御处理，杜绝任何 TypeError 阻断后续脚本执行。
+4. **全链路版本升级至 `v1.1.53`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.53`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化 Playwright 端到端浏览器验证 (`test_dropdowns.py`)**：
+   - 验证通过：点击“本机”弹出 `#nav-host-menu`，定位在视口 `y=59`（精准对齐 Header），可见度与尺寸完全正常；
+   - 验证通过：点击外部关闭 `#nav-host-menu`；
+   - 验证通过：来源筛选（全部 / Docker / 系统）与协议筛选（全部 / TCP / UDP）自定义下拉弹层展开与选择交互正常，label 动态响应更新；
+   - 验证通过：ESC 键快捷关闭所有菜单；
+   - 验证通过：从非 ports Tab 切换至 ports Tab 时不误开菜单，仅在已处于 ports Tab 再次点击时展开。
+2. **Go 单元测试全量通过**：
+   - 在 `golang:alpine` 容器中执行 `go test -count=1 ./...`，全包通过（Exit Code 0）。
+3. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+
 
 
 

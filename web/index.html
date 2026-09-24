@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.52">
+  <link rel="stylesheet" href="style.css?v=1.1.53">
 </head>
 <body>
   <!-- Header Bar -->
@@ -66,17 +66,35 @@
           <input type="text" id="port-search" placeholder="搜索">
         </div>
 
-        <select class="toolbar-select" id="port-source-select" aria-label="来源筛选">
-          <option value="all">全部</option>
-          <option value="docker" selected>Docker</option>
-          <option value="host">系统</option>
-        </select>
+        <!-- Custom Filter Dropdown: Source -->
+        <div class="custom-dropdown" id="dropdown-port-source">
+          <button type="button" class="custom-dropdown-btn" id="btn-dropdown-port-source" aria-haspopup="true" aria-expanded="false" title="筛选来源">
+            <span class="custom-dropdown-label" id="label-port-source">Docker</span>
+            <svg class="custom-dropdown-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="custom-dropdown-menu" id="menu-port-source" style="display: none;">
+            <div class="custom-dropdown-item" data-value="all">全部</div>
+            <div class="custom-dropdown-item active" data-value="docker">Docker</div>
+            <div class="custom-dropdown-item" data-value="host">系统</div>
+          </div>
+        </div>
 
-        <select class="toolbar-select" id="port-proto-select" aria-label="协议筛选">
-          <option value="all" selected>全部</option>
-          <option value="tcp">TCP</option>
-          <option value="udp">UDP</option>
-        </select>
+        <!-- Custom Filter Dropdown: Protocol -->
+        <div class="custom-dropdown" id="dropdown-port-proto">
+          <button type="button" class="custom-dropdown-btn" id="btn-dropdown-port-proto" aria-haspopup="true" aria-expanded="false" title="筛选协议">
+            <span class="custom-dropdown-label" id="label-port-proto">全部</span>
+            <svg class="custom-dropdown-arrow" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="custom-dropdown-menu" id="menu-port-proto" style="display: none;">
+            <div class="custom-dropdown-item active" data-value="all">全部</div>
+            <div class="custom-dropdown-item" data-value="tcp">TCP</div>
+            <div class="custom-dropdown-item" data-value="udp">UDP</div>
+          </div>
+        </div>
         <button class="btn btn-secondary" id="btn-open-sink-modal" title="设置需要置底排布的 Docker 容器或进程名单">
           <span>置底</span>
         </button>
@@ -482,7 +500,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.52</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.53</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -997,6 +1015,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.52"></script>
+  <script src="app.js?v=1.1.53"></script>
 </body>
 </html>

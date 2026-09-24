@@ -204,11 +204,31 @@ function getHostTargetUrl(port, protocol = 'http', path = '/') {
 }
 
 // --- Host Dropdown Menu Controls ---
+function positionHostMenu() {
+  const menu = document.getElementById('nav-host-menu');
+  const tabHost = document.getElementById('tab-nav-ports');
+  if (!menu || !tabHost) return;
+
+  const rect = tabHost.getBoundingClientRect();
+  const menuWidth = Math.min(320, Math.max(250, rect.width));
+  let left = rect.left;
+  if (left + menuWidth > window.innerWidth - 12) {
+    left = Math.max(12, window.innerWidth - menuWidth - 12);
+  }
+
+  menu.style.position = 'fixed';
+  menu.style.top = Math.round(rect.bottom + 4) + 'px';
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.zIndex = '9999';
+}
+
 function openHostMenu() {
   const menu = document.getElementById('nav-host-menu');
   const tabHost = document.getElementById('tab-nav-ports');
   if (menu && tabHost) {
+    closeAllFilterDropdowns();
     updateHostSelectDropdown();
+    positionHostMenu();
     menu.style.display = 'block';
     tabHost.classList.add('menu-open');
   }
@@ -230,6 +250,107 @@ function toggleHostMenu() {
   } else {
     openHostMenu();
   }
+}
+
+// --- Custom Filter Dropdowns Controls ---
+function closeAllFilterDropdowns() {
+  document.querySelectorAll('.custom-dropdown').forEach(dropdown => {
+    dropdown.classList.remove('open');
+    const menu = dropdown.querySelector('.custom-dropdown-menu');
+    if (menu) menu.style.display = 'none';
+    const btn = dropdown.querySelector('.custom-dropdown-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function toggleFilterDropdown(dropdownId) {
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+  const menu = dropdown.querySelector('.custom-dropdown-menu');
+  const btn = dropdown.querySelector('.custom-dropdown-btn');
+  const isOpen = dropdown.classList.contains('open');
+
+  // Close all other menus first
+  closeAllFilterDropdowns();
+  closeHostMenu();
+
+  if (!isOpen) {
+    dropdown.classList.add('open');
+    if (menu) menu.style.display = 'block';
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function setPortFilterSource(val) {
+  state.portFilterSource = val;
+  const menu = document.getElementById('menu-port-source');
+  const label = document.getElementById('label-port-source');
+  if (menu) {
+    menu.querySelectorAll('.custom-dropdown-item').forEach(item => {
+      const match = item.dataset.value === val;
+      item.classList.toggle('active', match);
+      if (match && label) label.textContent = item.textContent.trim();
+    });
+  }
+  renderPortsTable();
+}
+
+function setPortFilterProto(val) {
+  state.portFilterProto = val;
+  const menu = document.getElementById('menu-port-proto');
+  const label = document.getElementById('label-port-proto');
+  if (menu) {
+    menu.querySelectorAll('.custom-dropdown-item').forEach(item => {
+      const match = item.dataset.value === val;
+      item.classList.toggle('active', match);
+      if (match && label) label.textContent = item.textContent.trim();
+    });
+  }
+  renderPortsTable();
+}
+
+function initFilterDropdowns() {
+  // Source dropdown
+  const sourceBtn = document.getElementById('btn-dropdown-port-source');
+  const sourceMenu = document.getElementById('menu-port-source');
+  if (sourceBtn) {
+    sourceBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFilterDropdown('dropdown-port-source');
+    });
+  }
+  if (sourceMenu) {
+    sourceMenu.querySelectorAll('.custom-dropdown-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setPortFilterSource(item.dataset.value);
+        closeAllFilterDropdowns();
+      });
+    });
+  }
+
+  // Proto dropdown
+  const protoBtn = document.getElementById('btn-dropdown-port-proto');
+  const protoMenu = document.getElementById('menu-port-proto');
+  if (protoBtn) {
+    protoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFilterDropdown('dropdown-port-proto');
+    });
+  }
+  if (protoMenu) {
+    protoMenu.querySelectorAll('.custom-dropdown-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setPortFilterProto(item.dataset.value);
+        closeAllFilterDropdowns();
+      });
+    });
+  }
+
+  // Initial UI sync
+  setPortFilterSource(state.portFilterSource || 'docker');
+  setPortFilterProto(state.portFilterProto || 'all');
 }
 
 // --- Tab Navigation ---
@@ -270,12 +391,37 @@ function initNavigation() {
     });
   });
 
-  // Global click outside to close host dropdown menu
+  // Global click outside to close host dropdown menu & custom filter dropdowns
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('#tab-nav-ports')) {
+    if (!e.target.closest('#tab-nav-ports') && !e.target.closest('#nav-host-menu')) {
       closeHostMenu();
     }
+    if (!e.target.closest('.custom-dropdown')) {
+      closeAllFilterDropdowns();
+    }
   });
+
+  // Global keydown Escape to close open popovers
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeHostMenu();
+      closeAllFilterDropdowns();
+    }
+  });
+
+  // Keep host menu aligned on window resize or scroll
+  window.addEventListener('resize', () => {
+    const menu = document.getElementById('nav-host-menu');
+    if (menu && menu.style.display === 'block') {
+      positionHostMenu();
+    }
+  });
+  window.addEventListener('scroll', () => {
+    const menu = document.getElementById('nav-host-menu');
+    if (menu && menu.style.display === 'block') {
+      positionHostMenu();
+    }
+  }, { passive: true });
 }
 
 function switchTab(tab) {
@@ -719,7 +865,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.52';
+  const ver = state.settings?.version || '1.1.53';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4493,7 +4639,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.52';
+      const ver = state.settings?.version || '1.1.53';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4645,7 +4791,8 @@ async function fetchRemoteHosts() {
   try {
     const res = await fetch(apiUrl('/api/remote/hosts'));
     if (res.ok) {
-      state.hosts = await res.json();
+      const data = await res.json();
+      state.hosts = Array.isArray(data) ? data : (data.hosts || []);
       updateHostSelectDropdown();
     }
   } catch (err) {
@@ -4660,7 +4807,7 @@ async function fetchLANHosts() {
     if (res.ok) {
       const data = await res.json();
       state.lanScanning = !!data.scanning;
-      state.lanHosts = data.hosts || [];
+      state.lanHosts = Array.isArray(data.hosts) ? data.hosts : [];
       updateHostSelectDropdown();
       if (state.lanScanning) {
         if (lanPollTimer) clearTimeout(lanPollTimer);
@@ -4674,6 +4821,8 @@ async function fetchLANHosts() {
 
 function updateHostSelectDropdown() {
   const currentVal = state.currentHostId || 'localhost';
+  const hostsList = Array.isArray(state.hosts) ? state.hosts : [];
+  const lanList = Array.isArray(state.lanHosts) ? state.lanHosts : [];
 
   // 1. Update host name badge in Header Nav tab
   const nameEl = document.getElementById('current-host-name');
@@ -4682,7 +4831,7 @@ function updateHostSelectDropdown() {
     if (currentVal.startsWith('lan:')) {
       displayName = currentVal.slice(4);
     } else if (currentVal !== 'localhost') {
-      const h = (state.hosts || []).find(x => x.id === currentVal);
+      const h = hostsList.find(x => x.id === currentVal);
       displayName = h ? (h.name || h.host) : currentVal;
     }
     nameEl.textContent = displayName;
@@ -4708,9 +4857,9 @@ function updateHostSelectDropdown() {
     </div>`;
 
   // Configured remote hosts
-  if (state.hosts && state.hosts.length > 0) {
+  if (hostsList.length > 0) {
     html += '<div class="host-menu-group-title">已配置主机</div>';
-    for (const h of state.hosts) {
+    for (const h of hostsList) {
       let statusText = 'SSH未配置';
       let statusClass = 'status-unconfigured';
       if (h.status === 'connected') {
@@ -4731,8 +4880,8 @@ function updateHostSelectDropdown() {
   }
 
   // LAN discovered hosts (skip those already configured)
-  const configuredAddrs = new Set((state.hosts || []).map(h => h.host));
-  const unconfiguredLAN = (state.lanHosts || []).filter(lh => !configuredAddrs.has(lh.ip));
+  const configuredAddrs = new Set(hostsList.map(h => h.host));
+  const unconfiguredLAN = lanList.filter(lh => !configuredAddrs.has(lh.ip));
 
   if (unconfiguredLAN.length > 0) {
     html += '<div class="host-menu-group-title">局域网发现</div>';
@@ -5085,24 +5234,8 @@ function initApp() {
   initModals();
   initTableAutoWrapObservers();
 
-  // Dropdown filters in Ports tab (Docker/系统, TCP/UDP)
-  const portSourceSelect = document.getElementById('port-source-select');
-  if (portSourceSelect) {
-    portSourceSelect.value = state.portFilterSource || 'docker';
-    portSourceSelect.addEventListener('change', () => {
-      state.portFilterSource = portSourceSelect.value;
-      renderPortsTable();
-    });
-  }
-
-  const portProtoSelect = document.getElementById('port-proto-select');
-  if (portProtoSelect) {
-    portProtoSelect.value = state.portFilterProto || 'all';
-    portProtoSelect.addEventListener('change', () => {
-      state.portFilterProto = portProtoSelect.value;
-      renderPortsTable();
-    });
-  }
+  // Custom Dropdown filters in Ports tab (Docker/系统, TCP/UDP)
+  initFilterDropdowns();
 
   // Host Selector & Settings Modal
   initHostManagement();
