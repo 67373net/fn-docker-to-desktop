@@ -168,9 +168,9 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Filter out lone spinner progress lines
+	// Filter out lone spinner progress lines and ResizeObserver loop noise
 	trimmed := strings.TrimSpace(string(p))
-	if isCliSpinnerLine(trimmed) {
+	if isCliSpinnerLine(trimmed) || strings.Contains(trimmed, "ResizeObserver") {
 		return len(p), nil
 	}
 
@@ -359,6 +359,10 @@ func (l *Logger) ReadLogs(sourceFilter, levelFilter, search string, limit int) (
 
 	matchAndAdd := func(entry LogEntry) {
 		if entry.Raw == "" {
+			return
+		}
+		// Ignore any ResizeObserver noise to surface actual system and app logs
+		if strings.Contains(entry.Raw, "ResizeObserver") || strings.Contains(entry.Message, "ResizeObserver") {
 			return
 		}
 		if levelFilter != "" && levelFilter != "all" {

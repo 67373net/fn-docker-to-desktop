@@ -78,6 +78,16 @@ function normalizeHexColor(val) {
 
 // Client-side audit & error reporting to backend logs
 function reportClientLog(type, action, message, details, stack) {
+  const msgStr = String(message || '');
+  const actStr = String(action || '');
+  if (
+    msgStr.includes('ResizeObserver') ||
+    actStr.includes('ResizeObserver') ||
+    msgStr.includes('Script error') ||
+    (!msgStr && !actStr)
+  ) {
+    return;
+  }
   if (type === 'error') {
     onNewErrorOccurred({ action, message, details, stack });
   }
@@ -110,10 +120,18 @@ function reportClientLog(type, action, message, details, stack) {
 
 // Automatically report runtime JS errors to backend logs
 window.addEventListener('error', function (event) {
+  const msg = event.message || '';
+  if (
+    msg.includes('ResizeObserver') ||
+    msg.includes('Script error') ||
+    msg === ''
+  ) {
+    return;
+  }
   reportClientLog(
     'error',
     'WindowError',
-    event.message || '前端脚本错误',
+    msg,
     { filename: event.filename, lineno: event.lineno, colno: event.colno },
     event.error ? event.error.stack : ''
   );
@@ -122,11 +140,18 @@ window.addEventListener('error', function (event) {
 // Automatically report unhandled Promise rejections to backend logs
 window.addEventListener('unhandledrejection', function (event) {
   const reason = event.reason;
-  const msg = reason ? (reason.message || String(reason)) : '未处理的Promise拒绝';
+  const msg = reason ? (reason.message || String(reason)) : '';
+  if (
+    msg.includes('ResizeObserver') ||
+    msg.includes('Script error') ||
+    msg === ''
+  ) {
+    return;
+  }
   reportClientLog(
     'error',
     'UnhandledPromiseRejection',
-    msg,
+    msg || '未处理的Promise拒绝',
     {},
     reason && reason.stack ? reason.stack : ''
   );
@@ -135,6 +160,15 @@ window.addEventListener('unhandledrejection', function (event) {
 // --- New Error Tracking & GitHub Issue Reporting ---
 function onNewErrorOccurred(errorInfo) {
   if (!errorInfo) return;
+  const msg = String(errorInfo.message || '');
+  const action = String(errorInfo.action || '');
+  if (
+    msg.includes('ResizeObserver') ||
+    action.includes('ResizeObserver') ||
+    msg.includes('Script error')
+  ) {
+    return;
+  }
   state.latestNewError = {
     action: errorInfo.action || 'Runtime Error',
     message: errorInfo.message || '未知异常',
@@ -169,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.57';
+  const ver = state.settings?.version || '1.1.58';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1155,7 +1189,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.57';
+  const ver = state.settings?.version || '1.1.58';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4944,7 +4978,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.57';
+      const ver = state.settings?.version || '1.1.58';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5750,7 +5784,10 @@ function applyLogFiltersAndRender(isAutoPoll = false) {
   const level = (state.logLevel || 'ALL').toLowerCase();
   const search = (state.logSearch || '').toLowerCase().trim();
 
-  let filtered = state.allFetchedLogs || [];
+  let filtered = (state.allFetchedLogs || []).filter(item => {
+    const raw = (item.raw || item.message || '').toLowerCase();
+    return !raw.includes('resizeobserver');
+  });
 
   // Filter by source if data contains entries from multiple sources
   if (source !== 'all' && source !== '') {

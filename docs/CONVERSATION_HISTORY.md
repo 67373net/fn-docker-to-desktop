@@ -4909,3 +4909,48 @@ INFO
 4. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 73 - v1.1.58 发布记录
+
+### 用户需求与问题分析 (User Requirements & Root Cause Analysis)
+1. **全端口扫描恢复与极速并发探针（等同 `nmap -p-`）**：
+   - **问题**：用户反馈局域网主机（如 `192.168.1.63`）仅扫描出少量端口，远少于使用 `nmap -p-` 扫出的端口数量。
+   - **根因**：上个版本为缩短探测耗时，误将 `ProbeHostPorts` 改为仅探测 1..1024 熟知端口与常用列表（约 1080 个端口），导致用户在局域网主机上配置的大量自定义高端口（如容器服务、WebUI 等）被全部遗漏。
+   - **解决**：彻底恢复 `1..65535` 全端口完整扫描（等同于 `nmap -p-`）。引入 1000 并发 Worker + 局域网自适应 50ms 超时（LAN 局域网 RTT 普遍 < 1ms，50ms 具备 50~100 倍 RTT 容忍度，且遇防火墙丢包无需再重试 250ms），并将熟知常用端口优先排队探测。在保证扫出 1~65535 全量端口的前提下，探测耗时控制在 1~3 秒以内。
+2. **ResizeObserver 报错风暴拦截与历史日志恢复**：
+   - **问题**：用户反馈日志中存在海量 `ResizeObserver loop completed with undelivered notifications` 报错，且之前的历史日志完全看不到了。
+   - **根因**：浏览器在表格 DOM 自适应折行与重绘时，会抛出良性的 `ResizeObserver loop completed with undelivered notifications` 警告；此警告被前端 `window.addEventListener('error')` 作为 `WindowError` 异常捕获并持续高频向后端 `/api/logs/client` 上报；这引发了连锁的日志上报风暴（几秒内产生上百条日志），迅速占满后端 `ReadLogs` 的 5000 条读取上限并覆盖前端分页，导致原本的历史系统与运行日志被挤出窗口，无法在界面展示。
+   - **解决**：建立全链路 5 层拦截与净化体系：
+     1) 前端 `window.addEventListener('error')` 与 `unhandledrejection` 过滤跳过 `ResizeObserver` 及 `Script error`；
+     2) 前端 `reportClientLog` 与 `onNewErrorOccurred` 拦截，杜绝向后端发送及避免误触发红点；
+     3) 后端 `handleClientLog` (`internal/api/handler.go`) 拦截 `ResizeObserver`，直接 200 返回，不写入 `slog` 亦不广播事件；
+     4) 后端 `Write` 与 `ReadLogs` (`internal/logger/logger.go`) 过滤历史残留的 `ResizeObserver` 噪音行，彻底释放 5000 条日志配额，让之前被掩盖的真实历史日志全部重见天日；
+     5) 前端 `applyLogFiltersAndRender` 增加客户端展示二次防御。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **全端口高并发极速主动探活引擎 (`internal/remote/lan.go`)**：
+   - `isLANIP(ip string) bool`：精准识别内网/回环地址（10.x、172.16-31.x、192.168.x、169.254.x）；
+   - `ProbeHostPorts(ip string)`：全量调用 `ProbeHostPortsRange(cleanIP, 1, 65535)`，完整覆盖 1~65535 端口；
+   - `ProbeHostPortsRange`：将并发 Worker 提升至 1000，局域网 IP 超时设定为 50ms（外网 120ms），常用端口优先推入 Channel，探测完成后自动升序排序并保留 60 秒 TTL 缓存。
+2. **全链路日志抗风暴净化与历史日志恢复 (`web/app.js`, `internal/api/handler.go`, `internal/logger/logger.go`)**：
+   - 前端拦截良性浏览器回流通知，阻断无效日志请求上报；
+   - 后端在接收端、写盘端以及读日志（`matchAndAdd`）端多层剔除 `ResizeObserver` 噪音，全面恢复历史真实日志展示。
+3. **全链路版本升级至 `v1.1.58`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.58`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **Go 自动化单元测试**：
+   - 容器内执行 `go test -count=1 ./...`，全量测试用例 100% PASS。
+2. **Go 原生二进制编译验证**：
+   - 容器内执行 `go build -v -o /tmp/test-server ./cmd/server`，顺利通过编译（Exit Code 0）。
+3. **飞牛 OS 原生安装包完整打包测试**：
+   - 运行 `./scripts/build-fpk.sh x86`，生成 `fn-docker-to-desktop-x86.fpk`（4.5MB），打包与校验完全通过。
+4. **零 .fpk 文件残留**：
+   - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
+
+

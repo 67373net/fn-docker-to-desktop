@@ -1090,6 +1090,11 @@ func (h *Handler) handleClientLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.Contains(req.Message, "ResizeObserver") || strings.Contains(req.Action, "ResizeObserver") {
+		h.jsonResponse(w, r, map[string]bool{"ok": true}, http.StatusOK)
+		return
+	}
+
 	if req.Level == "error" || req.Type == "error" {
 		slog.Error("[AUDIT-CLIENT] 前端捕获异常",
 			"action", req.Action,

@@ -398,8 +398,32 @@ func (s *LANScanner) ProbeSpecificPorts(ip string, ports []int) []monitor.PortEn
 	return entries
 }
 
-// ProbeHostPorts probes standard well-known ports (1..1024) and popular container/web/NAS ports
-// on a target IP when SSH is unconfigured or failed. Finishes in ~0.5s and caches for 30s.
+// isLANIP checks if the target IP belongs to RFC1918 private / loopback ranges.
+func isLANIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+	if ip4[0] == 10 ||
+		(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
+		(ip4[0] == 192 && ip4[1] == 168) ||
+		(ip4[0] == 169 && ip4[1] == 254) {
+		return true
+	}
+	return false
+}
+
+// ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
+// equivalent to "nmap -p-", using high-concurrency goroutines (1000 workers) and adaptive timeout.
+// Results are cached for 60 seconds.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	if ip == "" {
 		return nil
@@ -407,15 +431,14 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	cleanIP := CleanHostAddress(ip)
 	s.probedMu.RLock()
 	if entry, ok := s.probedCache[cleanIP]; ok {
-		if time.Since(entry.timestamp) < 30*time.Second {
+		if time.Since(entry.timestamp) < 60*time.Second {
 			s.probedMu.RUnlock()
 			return entry.ports
 		}
 	}
 	s.probedMu.RUnlock()
 
-	portsToProbe := getStandardAndCommonPorts()
-	ports := s.ProbeSpecificPorts(cleanIP, portsToProbe)
+	ports := s.ProbeHostPortsRange(cleanIP, 1, 65535)
 
 	s.probedMu.Lock()
 	if s.probedCache == nil {
@@ -431,6 +454,8 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 }
 
 // ProbeHostPortsRange scans ports within a given range on a target IP.
+// Prioritizes well-known and common ports first, uses 1000 concurrent workers,
+// and adaptive 50ms timeout for LAN to complete full port scans in 1~3 seconds.
 func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []monitor.PortEntry {
 	if ip == "" {
 		return nil
@@ -446,13 +471,17 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 	}
 
 	totalPorts := endPort - startPort + 1
-	workers := 300
+	workers := 1000
 	if totalPorts < workers {
 		workers = totalPorts
 	}
-	timeout := 200 * time.Millisecond
 
-	portChan := make(chan int, 2000)
+	timeout := 50 * time.Millisecond
+	if !isLANIP(ip) {
+		timeout = 120 * time.Millisecond
+	}
+
+	portChan := make(chan int, 3000)
 	var foundPorts []int
 	var mu sync.Mutex
 
@@ -464,10 +493,6 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 			for port := range portChan {
 				addr := net.JoinHostPort(ip, strconv.Itoa(port))
 				conn, err := net.DialTimeout("tcp", addr, timeout)
-				if err != nil && !strings.Contains(err.Error(), "refused") {
-					// In case of transient packet loss or listen queue saturation, retry once
-					conn, err = net.DialTimeout("tcp", addr, 250*time.Millisecond)
-				}
 				if err == nil {
 					_ = conn.Close()
 					mu.Lock()
@@ -478,8 +503,19 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 		}()
 	}
 
+	// Prioritize commonProbePorts and 1..1024 first, then remainder
+	enqueued := make(map[int]bool, totalPorts)
+	for _, p := range commonProbePorts {
+		if p >= startPort && p <= endPort && !enqueued[p] {
+			enqueued[p] = true
+			portChan <- p
+		}
+	}
 	for p := startPort; p <= endPort; p++ {
-		portChan <- p
+		if !enqueued[p] {
+			enqueued[p] = true
+			portChan <- p
+		}
 	}
 	close(portChan)
 
