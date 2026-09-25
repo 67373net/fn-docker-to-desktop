@@ -1098,6 +1098,9 @@ func (h *Handler) handleClientLog(w http.ResponseWriter, r *http.Request) {
 			"details", req.Details,
 			"remote", r.RemoteAddr,
 		)
+		if h.watcher != nil {
+			h.watcher.BroadcastLogError(req.Action, req.Message, req.Stack)
+		}
 	} else {
 		slog.Info("[AUDIT-CLIENT] 前端用户操作",
 			"action", req.Action,
@@ -2714,14 +2717,40 @@ func (h *Handler) handleSaveRemoteHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Host = strings.TrimSpace(req.Host)
+	req.Host = strings.TrimPrefix(req.Host, "http://")
+	req.Host = strings.TrimPrefix(req.Host, "https://")
+	req.Host = strings.TrimRight(req.Host, "/")
 	if req.Host == "" {
 		h.jsonError(w, r, "主机地址不能为空", http.StatusBadRequest)
 		return
+	}
+	if strings.EqualFold(req.Host, "127.0.0.1") || strings.EqualFold(req.Host, "localhost") {
+		h.jsonError(w, r, "不能添加本机地址 (127.0.0.1 / localhost) 作为远程主机", http.StatusBadRequest)
+		return
+	}
+
+	// Address uniqueness check: prevent duplicate hosts
+	existingHosts := h.remoteStorage.GetAllHosts()
+	for _, eh := range existingHosts {
+		if eh.ID != req.ID && strings.EqualFold(eh.Host, req.Host) {
+			h.jsonError(w, r, "主机地址已存在，不能重复添加相同地址的主机", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// If editing existing host and credentials were sent as masked, keep original
 	if req.ID != "" {
 		if existing, ok := h.remoteStorage.GetHost(req.ID); ok {
+			// If existing had no SSH credentials and user cleared the alias, auto-delete to revert to unconfigured
+			if strings.TrimSpace(req.Name) == "" && req.Password == "" && req.PrivateKey == "" && existing.Password == "" && existing.PrivateKey == "" {
+				_ = h.remoteStorage.DeleteHost(req.ID)
+				if h.remoteLAN != nil {
+					h.remoteLAN.UnmarkConfiguredHost(req.Host)
+				}
+				h.jsonResponse(w, r, map[string]interface{}{"deleted": true, "id": req.ID, "host": req.Host}, http.StatusOK)
+				return
+			}
+
 			if req.Password == "******" || req.Password == "" {
 				req.Password = existing.Password
 			}
@@ -2804,6 +2833,8 @@ func (h *Handler) handleDeleteRemoteHost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	host, hasHost := h.remoteStorage.GetHost(id)
+
 	if h.remoteSSH != nil {
 		h.remoteSSH.CloseClient(id)
 	}
@@ -2811,6 +2842,10 @@ func (h *Handler) handleDeleteRemoteHost(w http.ResponseWriter, r *http.Request)
 	if err := h.remoteStorage.DeleteHost(id); err != nil {
 		h.jsonError(w, r, fmt.Sprintf("删除主机失败: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	if hasHost && h.remoteLAN != nil {
+		h.remoteLAN.UnmarkConfiguredHost(host.Host)
 	}
 
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)

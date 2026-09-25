@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.54">
+  <link rel="stylesheet" href="style.css?v=1.1.55">
 </head>
 <body>
   <!-- Header Bar -->
@@ -46,8 +46,9 @@
       <button class="nav-tab" data-tab="processes">
         <span>系统进程</span>
       </button>
-      <button class="nav-tab" data-tab="logs">
+      <button class="nav-tab" data-tab="logs" id="tab-nav-logs">
         <span>日志</span>
+        <span class="badge-dot" id="log-error-dot" style="display: none;" title="发现新的错误日志"></span>
       </button>
       <button class="nav-tab" data-tab="settings">
         <span>设置</span>
@@ -140,8 +141,8 @@
           <input type="text" id="desktop-search" placeholder="搜索">
         </div>
         <div class="toolbar-spacer"></div>
-        <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
         <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置与图标资源为 ZIP 压缩包">导出</button>
+        <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
         <button class="btn btn-primary" id="btn-open-create-modal">
           <span>添加桌面图标</span>
         </button>
@@ -212,8 +213,8 @@
 
         <div class="segmented-control" id="log-source-segments" role="radiogroup" aria-label="日志来源筛选">
           <button type="button" class="segment-btn active" data-log-source="ALL">全部</button>
-          <button type="button" class="segment-btn" data-log-source="app">运行</button>
-          <button type="button" class="segment-btn" data-log-source="lifecycle">安装</button>
+          <button type="button" class="segment-btn" data-log-source="app">run</button>
+          <button type="button" class="segment-btn" data-log-source="lifecycle">install</button>
         </div>
 
         <div class="segmented-control" id="log-level-segments" role="radiogroup" aria-label="日志级别筛选">
@@ -237,6 +238,14 @@
           <span class="log-page-label">条，第</span>
           <select id="log-page-select" class="form-select form-select-sm log-page-select-dropdown" title="选择页码"></select>
           <span class="log-page-label">页 / 共 <span id="log-total-pages">1</span> 页</span>
+        </div>
+        <div class="log-banner-actions" id="log-banner-actions">
+          <button type="button" class="btn btn-sm btn-danger btn-submit-github-issue" id="btn-submit-github-issue" style="display: none;" title="快速创建 GitHub Issue 反馈此报错">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+            </svg>
+            <span>将报错提交到 GitHub</span>
+          </button>
         </div>
       </div>
 
@@ -500,7 +509,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.54</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.55</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -1015,6 +1024,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.54"></script>
+  <script src="app.js?v=1.1.55"></script>
 </body>
 </html>

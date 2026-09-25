@@ -1230,14 +1230,38 @@ table.data-table td.table-sink-divider-cell {
 /* ==================== Logs Viewer ==================== */
 .log-info-banner {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
   align-items: center;
+  gap: 12px;
   background-color: var(--bg-surface-subtle);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 0.6rem 1rem;
   margin-bottom: 0.75rem;
   font-size: 0.82rem;
+}
+
+.log-banner-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.btn-submit-github-issue {
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  animation: pulse-danger-btn 2.5s infinite;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes pulse-danger-btn {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+  }
 }
 
 .log-info-meta {
@@ -2216,7 +2240,7 @@ tr.row-updating {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.04);
   padding: 0.35rem 0;
   z-index: 9999;
-  max-height: 420px;
+  max-height: calc(100vh - 60px);
   overflow-y: auto;
   text-align: left;
   animation: fadeInDown 0.15s ease-out;

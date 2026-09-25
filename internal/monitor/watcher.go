@@ -359,3 +359,14 @@ func (w *Watcher) BroadcastDockLabelChange() {
 		"time": time.Now().Unix(),
 	})
 }
+
+// BroadcastLogError notifies connected SSE clients that an error occurred.
+func (w *Watcher) BroadcastLogError(action, message, stack string) {
+	w.broadcastMessage("log_error", map[string]interface{}{
+		"type":    "log_error",
+		"action":  action,
+		"message": message,
+		"stack":   stack,
+		"time":    time.Now().Unix(),
+	})
+}

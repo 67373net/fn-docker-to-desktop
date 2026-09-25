@@ -237,7 +237,11 @@ func TestProbeHostPorts(t *testing.T) {
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	pNum, _ := strconv.Atoi(portStr)
 
-	probed := scanner.ProbeHostPorts("127.0.0.1")
+	if empty := scanner.ProbeHostPorts(""); empty != nil {
+		t.Errorf("expected nil for empty IP, got %+v", empty)
+	}
+
+	probed := scanner.ProbeHostPortsRange("127.0.0.1", pNum-5, pNum+5)
 	var found bool
 	for _, entry := range probed {
 		if entry.LocalPort == pNum {
@@ -249,7 +253,52 @@ func TestProbeHostPorts(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected port %d to be detected by ProbeHostPorts", pNum)
+		t.Errorf("expected port %d to be detected by ProbeHostPortsRange", pNum)
 	}
 }
+
+func TestLANScannerConfiguredAndUnmarked(t *testing.T) {
+	tempDir := t.TempDir()
+	store, _ := NewStorage(tempDir)
+	scanner := &LANScanner{
+		storage: store,
+		cachedHosts: []DiscoveredLANHost{
+			{IP: "192.168.1.55", MAC: "aa:bb:cc:dd:ee:ff", Status: "unconfigured"},
+		},
+	}
+
+	// 1. Initial status: unconfigured
+	st := scanner.GetStatus()
+	if len(st.Hosts) != 1 || st.Hosts[0].Status != "unconfigured" {
+		t.Fatalf("expected unconfigured host, got %+v", st.Hosts)
+	}
+
+	// 2. Configure the host in store
+	saved, err := store.SaveHost(HostConfig{
+		Host: "192.168.1.55",
+		Name: "My NAS",
+	})
+	if err != nil {
+		t.Fatalf("SaveHost failed: %v", err)
+	}
+
+	// 3. Status should now be configured
+	st = scanner.GetStatus()
+	if st.Hosts[0].Status != "configured" || st.Hosts[0].HostID != saved.ID || st.Hosts[0].Name != "My NAS" {
+		t.Fatalf("expected configured host, got %+v", st.Hosts[0])
+	}
+
+	// 4. Delete the host from store
+	if err := store.DeleteHost(saved.ID); err != nil {
+		t.Fatalf("DeleteHost failed: %v", err)
+	}
+	scanner.UnmarkConfiguredHost("192.168.1.55")
+
+	// 5. Status should immediately revert to unconfigured with cleared ID and Name
+	st = scanner.GetStatus()
+	if st.Hosts[0].Status != "unconfigured" || st.Hosts[0].HostID != "" || st.Hosts[0].Name != "" {
+		t.Fatalf("expected unconfigured host after delete, got %+v", st.Hosts[0])
+	}
+}
+
 

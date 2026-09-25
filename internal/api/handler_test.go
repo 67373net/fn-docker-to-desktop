@@ -23,6 +23,7 @@ import (
 	"fn-docker-to-desktop/internal/auth"
 	"fn-docker-to-desktop/internal/desktop"
 	"fn-docker-to-desktop/internal/monitor"
+	"fn-docker-to-desktop/internal/remote"
 )
 
 func TestHandleExportDesktopItems(t *testing.T) {
@@ -486,7 +487,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.54",
+		AppVersion: "1.1.55",
 	})
 
 	mux := http.NewServeMux()
@@ -601,7 +602,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.54",
+		AppVersion: "1.1.55",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -641,8 +642,8 @@ func TestCompareVersions(t *testing.T) {
 	}{
 		{"1.1.47", "1.1.47", 0},
 		{"v1.1.47", "1.1.47", 0},
-		{"1.1.53", "v1.1.54", -1},
-		{"1.1.54", "1.1.53", 1},
+		{"1.1.54", "v1.1.55", -1},
+		{"1.1.55", "1.1.54", 1},
 		{"1.1.47", "1.2.0", -1},
 		{"1.2.0", "1.1.99", 1},
 		{"v2.0.0", "v1.9.9", 1},
@@ -666,12 +667,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.54",
+		AppVersion: "1.1.55",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.54",
-		LatestVersion:  "1.1.54",
+		CurrentVersion: "1.1.55",
+		LatestVersion:  "1.1.55",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -694,8 +695,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.54" {
-		t.Errorf("Expected current version 1.1.54, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.55" {
+		t.Errorf("Expected current version 1.1.55, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -765,5 +766,79 @@ func TestParseTargetHostAndPortAndMarkRemotePortsDesktop(t *testing.T) {
 		t.Errorf("Host 192.168.1.6 should NOT match item with target 192.168.1.63")
 	}
 }
+
+func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
+	tempDir := t.TempDir()
+	storage, err := desktop.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	remoteStore, err := remote.NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create remote storage: %v", err)
+	}
+	lanScanner := remote.NewLANScanner(remoteStore)
+
+	handler := NewHandler(Config{
+		Storage:       storage,
+		AuthMgr:       auth.NewManager(""),
+		DataDir:       tempDir,
+		RemoteStorage: remoteStore,
+		RemoteLAN:     lanScanner,
+		AppVersion:    "1.1.55",
+	})
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Save host 1
+	body1 := `{"name": "Host One", "host": "192.168.1.50"}`
+	req1 := httptest.NewRequest("POST", "/api/remote/hosts", strings.NewReader(body1))
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+	var savedHost remote.HostConfig
+	_ = json.NewDecoder(rec1.Body).Decode(&savedHost)
+
+	// 2. Attempt duplicate host with different prefix/slash -> 400 Bad Request
+	bodyDup := `{"name": "Host Dup", "host": "http://192.168.1.50/"}`
+	reqDup := httptest.NewRequest("POST", "/api/remote/hosts", strings.NewReader(bodyDup))
+	recDup := httptest.NewRecorder()
+	mux.ServeHTTP(recDup, reqDup)
+	if recDup.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status 400 for duplicate host, got %d: %s", recDup.Code, recDup.Body.String())
+	}
+
+	// 3. Attempt localhost -> 400 Bad Request
+	bodyLocal := `{"name": "Localhost", "host": "127.0.0.1"}`
+	reqLocal := httptest.NewRequest("POST", "/api/remote/hosts", strings.NewReader(bodyLocal))
+	recLocal := httptest.NewRecorder()
+	mux.ServeHTTP(recLocal, reqLocal)
+	if recLocal.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status 400 for localhost, got %d", recLocal.Code)
+	}
+
+	// 4. Update host 1 removing alias and leaving credentials empty -> should delete/revert
+	bodyEmpty := fmt.Sprintf(`{"id": "%s", "name": "", "host": "192.168.1.50"}`, savedHost.ID)
+	reqEmpty := httptest.NewRequest("POST", "/api/remote/hosts", strings.NewReader(bodyEmpty))
+	recEmpty := httptest.NewRecorder()
+	mux.ServeHTTP(recEmpty, reqEmpty)
+	if recEmpty.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 for revert, got %d", recEmpty.Code)
+	}
+	var revertResp map[string]interface{}
+	_ = json.NewDecoder(recEmpty.Body).Decode(&revertResp)
+	if revertResp["deleted"] != true {
+		t.Fatalf("Expected deleted: true in response, got %+v", revertResp)
+	}
+
+	// Verify host is deleted from storage
+	if _, ok := remoteStore.GetHost(savedHost.ID); ok {
+		t.Fatalf("Expected host %s to be deleted from remote store", savedHost.ID)
+	}
+}
+
 
 

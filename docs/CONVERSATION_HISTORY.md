@@ -4705,3 +4705,86 @@ INFO
    - 新增 `TestParseTargetHostAndPortAndMarkRemotePortsDesktop` 覆盖 URL 主机与端口解析、精确匹配与边界情况；
    - 容器内执行 `go test -count=1 ./...`，包含 `internal/api`、`internal/desktop`、`internal/remote`、`internal/logger` 等全包 100% 通过（Exit Code 0）。
 3. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+
+---
+
+## Turn 70 - v1.1.55 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **多图标弹窗报错修复 (`openModeClass is not defined`)**：
+   - 用户反馈部分弹窗无法打开，前端日志捕获异常：`Uncaught ReferenceError: openModeClass is not defined`；
+   - 根因排查：在 `openPortDesktopListModal` 中模板字符串引用了 `openModeClass`，但在循环内缺少该变量定义。
+2. **桌面图标 Tab 工具栏按钮位置调整**：
+   - 交换“刷新”与“导出”按钮位置，使工具栏布局更符合操作习惯。
+3. **机器列表下拉菜单视口自适应**：
+   - 移除原先 420px 的固定高度限制，支持根据显示窗口可用高度自适应渲染（`calc(100vh - 60px)`），确保不超出显示窗口。
+4. **主机配置清除与状态复原**：
+   - 用户反馈：设置了一台主机的别名后其变为“已配置主机”，后续清空别名或删除主机后发现仍然显示为已配置；
+   - 根因排查：`internal/remote/lan.go` 的 `GetStatus()` 缓存中若主机不在 `configuredMap` 中未重置回 `unconfigured`；删除配置时未同步清除扫描器缓存。
+5. **主机地址全局唯一性校验与排重**：
+   - 用户反馈添加与局域网自动扫描一模一样 IP 的主机时产生了重复记录；
+   - 统一后端与前端校验：保存配置时地址自动规范化（剥离协议头与尾部斜杠）、校验禁止为本机地址，并在已存在的主机中进行唯一性查重（重复返回 400 Bad Request）。
+6. **来源筛选切换响应与性能重构**：
+   - 用户反馈切换 全部 / Docker 时，列表有时会变、有时不会变、有时变得很慢；
+   - 根因排查：
+     1) 远程未配置主机因标记了 `needs_ssh: true` 在旧逻辑中无条件绕过了 Docker 筛选；
+     2) 渲染行时对每一个端口重复进行高频耗时的 URL 解析匹配导致重绘卡顿；
+     3) 优化为单次全量预索引哈希映射（O(1) 端口直查），严格执行筛选规则，彻底解决卡顿与切换无效。
+7. **日志来源 Tag 调整**：
+   - 日志来源标签由“运行 / 安装”统一调整为英文“run / install”。
+8. **新报错红点通知机制**：
+   - 当系统产生新报错且当前不在“日志” Tab 时，日志导航 Tab 上显示醒目的小红点；一旦用户切换至日志 Tab，红点自动消失。
+9. **一键直达 GitHub Issues 提交报错**：
+   - 当发生新报错时，切换至日志 Tab 后，在分页控制栏最右侧展示醒目的“将报错提交到 GitHub”按钮；点击后自动提取最新错误摘要与上下文，直接唤起预填参数的 GitHub Issue 页面，供用户一键提交反馈。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **多图标弹窗修复 (`web/app.js`)**：
+   - 在 `openPortDesktopListModal` 的 `items` 循环中补充定义 `const openModeClass = item.ui_type === 'iframe' ? 'type-sub-iframe' : 'type-sub-tab';`，修复 ReferenceError。
+2. **工具栏布局交换 (`web/index.html`)**：
+   - 将 `#pane-desktop .toolbar` 中 `#btn-refresh-desktop` 移至 `#btn-export-desktop` 后面，完成位置对调。
+3. **下拉菜单视口自适应 (`web/style.css`, `web/app.js`)**：
+   - CSS 中将 `.nav-host-menu` 的 `max-height: 420px;` 修改为 `max-height: calc(100vh - 60px);`；
+   - JS `positionHostMenu()` 中根据 `window.innerHeight - rect.bottom` 动态计算可用高度，确保菜单不会超出屏幕。
+4. **主机配置清除与状态复原 (`internal/remote/lan.go`, `internal/api/handler.go`)**：
+   - `internal/remote/lan.go`：重构 `GetStatus()`，当发现主机不再存在于 `configuredMap` 时，重置 `Status = "unconfigured"`、`HostID = ""`、`Name = ""`；新增 `UnmarkConfiguredHost` 接口供删除时显式重置；
+   - `internal/api/handler.go`：在 `handleSaveRemoteHost` 中检测空凭据与空别名时自动退回删除，并在 `handleDeleteRemoteHost` 中调用 `UnmarkConfiguredHost` 彻底复原为局域网待配置状态。
+5. **主机地址规范化与排重 (`internal/api/handler.go`, `web/app.js`)**：
+   - 后端在 `handleSaveRemoteHost` 对 `req.Host` 剥离协议前缀（`http://`、`https://`）与尾部斜杠，禁止添加 `localhost`/`127.0.0.1`，并对所有已存在的主机进行去重查验；
+   - 前端在 `openHostSettingsModal` 时若点击局域网已存在 IP 自动加载为编辑模式，保存前进行格式化和重复性拦截。
+6. **来源筛选与极速预索引渲染 (`web/app.js`, `internal/remote/lan.go`)**：
+   - 新增 `getDesktopItemsMapForCurrentHost()`：在 `renderPortsTable` 初始阶段仅遍历一次当前主机的桌面图标并构建 `Map<port, items[]>`，使后续每行端口查找由 O(N) 降低至 O(1)；
+   - 彻底优化来源筛选判断逻辑，对于 Docker 筛选严格判断 `isDocker`，远程未配置主机在无 Docker 容器时正确展示空状态；
+   - 优化 `ProbeHostPorts`：引入并发控制与瞬时重试机制，提供 `ProbeHostPortsRange` 接口。
+7. **日志来源标签与分段更新 (`web/index.html`, `web/app.js`)**：
+   - 分段控制器按钮文案修改为 `run` 和 `install`；
+   - `renderLogs` 中映射字典由中文改为 `{ app: 'run', lifecycle: 'install' }`。
+8. **新报错红点通知与 WebSocket 广播联动 (`web/index.html`, `web/style.css`, `web/app.js`, `internal/monitor/watcher.go`, `internal/api/handler.go`)**：
+   - 后端在 `watcher.BroadcastLogError` 中定义错误事件广播；客户端日志上报通过 `handleClientLog` 触发广播；
+   - 前端新增 `state.hasUnreadError`、`#log-error-dot` 以及 `onNewErrorOccurred()`；在全局未捕获异常、WebSocket 错误通知、以及调用 `showToast('...', 'error')` 时激活红点；
+   - `switchTab('logs')` 时自动清除红点标记并隐藏小红点。
+9. **一键提交 GitHub Issue (`web/index.html`, `web/style.css`, `web/app.js`)**：
+   - 在日志分页工具栏右侧新增 `#btn-submit-github-issue`，包含跳动动画；
+   - 切换到日志 Tab 且存在报错时显示按钮；点击触发 `openSubmitGitHubIssue()`，自动提取最新错误消息、堆栈及环境版本，拼接 GitHub Issue URL 并在新标签页打开。
+10. **全链路版本升级至 `v1.1.55`**：
+    - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.55`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化 Playwright 端到端浏览器验证 (`scratch/test_turn70.py`)**：
+   - 验证 1（桌面工具栏）：刷新与导出按钮顺序对调验证通过（export 在 refresh 前）；
+   - 验证 2（多图标列表弹窗）：点击已配置按钮打开 `#modal-port-desktop-list` 弹窗，无任何 ReferenceError 异常；
+   - 验证 3（下拉菜单尺寸）：主机下拉菜单根据视口自适应渲染，无 420px 溢出或裁切；
+   - 验证 4（来源筛选切换）：全部 / Docker 选项秒级响应，行过滤计算精准无延迟；
+   - 验证 5（日志来源 Tag）：分段控制与表格行内标签准确显示为 `run` 和 `install`；
+   - 验证 6（报错红点与 GitHub 按钮）：非日志 Tab 产生报错时红点正常点亮，切至日志 Tab 时红点消失并展示“将报错提交到 GitHub”按钮，生成的预填 Issue URL 结构完整有效；
+   - 运行结果：全部自动化测试 100% SUCCESS 通过。
+2. **Go 单元测试全量通过**：
+   - 新增 `TestLANScannerConfiguredAndUnmarked` 与 `TestRemoteHostSaveDuplicateAndEmptyRevert`；
+   - 容器内执行 `go test -count=1 ./...`，包含 `internal/api`、`internal/desktop`、`internal/remote`、`internal/logger` 等全包 100% 通过（Exit Code 0）。
+3. **Go 编译通过**：
+   - 容器内执行 `go build -o /dev/null ./cmd/server` 编译无任何告警与报错。
+4. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
+

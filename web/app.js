@@ -78,6 +78,9 @@ function normalizeHexColor(val) {
 
 // Client-side audit & error reporting to backend logs
 function reportClientLog(type, action, message, details, stack) {
+  if (type === 'error') {
+    onNewErrorOccurred({ action, message, details, stack });
+  }
   try {
     const payload = JSON.stringify({
       level: type === 'error' ? 'error' : 'info',
@@ -129,6 +132,84 @@ window.addEventListener('unhandledrejection', function (event) {
   );
 });
 
+// --- New Error Tracking & GitHub Issue Reporting ---
+function onNewErrorOccurred(errorInfo) {
+  if (!errorInfo) return;
+  state.latestNewError = {
+    action: errorInfo.action || 'Runtime Error',
+    message: errorInfo.message || '未知异常',
+    stack: errorInfo.stack || '',
+    details: errorInfo.details || {},
+    time: new Date().toISOString()
+  };
+
+  if (state.currentTab !== 'logs') {
+    state.hasUnreadError = true;
+    const dot = document.getElementById('log-error-dot');
+    if (dot) dot.style.display = 'inline-block';
+  } else {
+    updateGitHubIssueButton();
+  }
+}
+
+function updateGitHubIssueButton() {
+  const btn = document.getElementById('btn-submit-github-issue');
+  if (!btn) return;
+  if (state.latestNewError) {
+    btn.style.display = 'inline-flex';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function openSubmitGitHubIssue() {
+  const err = state.latestNewError;
+  if (!err) {
+    showToast('当前暂无捕获到的新报错', 'info');
+    return;
+  }
+
+  const ver = state.settings?.version || '1.1.55';
+  const actionPrefix = err.action ? `[${err.action}] ` : '';
+  const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
+
+  const recentErrors = (state.allFetchedLogs || [])
+    .filter(l => (l.level || '').toLowerCase() === 'error')
+    .slice(-6)
+    .map(l => `[${l.timestamp}] [${(l.level || 'ERROR').toUpperCase()}] ${l.raw || l.message}`)
+    .join('\n');
+
+  let detailsStr = '';
+  if (err.details && Object.keys(err.details).length > 0) {
+    try {
+      detailsStr = JSON.stringify(err.details, null, 2);
+    } catch (_) {
+      detailsStr = String(err.details);
+    }
+  }
+
+  const stackOrDetails = err.stack || detailsStr || err.message;
+
+  const issueBody = `### 🐛 错误概要 (Error Summary)
+- **错误类型**: \`${err.action || 'WindowError'}\`
+- **错误信息**: \`${err.message}\`
+- **发生时间**: ${new Date(err.time || Date.now()).toLocaleString()}
+- **应用版本**: \`v${ver}\`
+- **浏览器环境**: \`${navigator.userAgent}\`
+
+### 📋 堆栈信息 (Stack Trace)
+\`\`\`
+${stackOrDetails}
+\`\`\`
+
+${recentErrors ? `### 📜 关联最近错误日志 (Recent Error Logs)\n\`\`\`\n${recentErrors}\n\`\`\`\n` : ''}
+---
+*本 Issue 由「把 Docker 放到桌面」Web 端报错提交按钮自动生成*`;
+
+  const issueUrl = `https://github.com/67373net/fn-docker-to-desktop/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(issueBody)}`;
+  window.open(issueUrl, '_blank', 'noopener,noreferrer');
+}
+
 let state = {
   currentTab: 'ports',
   currentHostId: 'localhost',
@@ -138,6 +219,8 @@ let state = {
   localPorts: [],
   ports: [],
   hostPortsCache: {}, // [hostId]: { ports: Array, timestamp: number }
+  hasUnreadError: false,
+  latestNewError: null,
   desktopItems: [],
   desktopItemsLoaded: false,
   watchcowItems: [],
@@ -251,6 +334,43 @@ function getMatchingDesktopItems(portNumber) {
   });
 }
 
+// Pre-indexes all matching desktop items by port for the current host for O(1) row rendering
+function getDesktopItemsMapForCurrentHost() {
+  const currentVal = state.currentHostId || 'localhost';
+  const allItems = state.desktopItems || [];
+  const map = new Map();
+
+  if (currentVal === 'localhost') {
+    for (const item of allItems) {
+      if (item.port > 0 && (item.mode === 'local' || item.mode === 'proxy')) {
+        if (!map.has(item.port)) map.set(item.port, []);
+        map.get(item.port).push(item);
+      }
+    }
+    return map;
+  }
+
+  let hostAddr = '';
+  if (currentVal.startsWith('lan:')) {
+    hostAddr = currentVal.slice(4);
+  } else {
+    const h = (state.hosts || []).find(x => x.id === currentVal);
+    if (h) hostAddr = h.host;
+  }
+  if (!hostAddr) return map;
+
+  const hostLower = hostAddr.toLowerCase();
+  for (const item of allItems) {
+    if (!item.target_url) continue;
+    const target = parseUrlHostAndPort(item.target_url);
+    if (target && target.port > 0 && target.host.toLowerCase() === hostLower) {
+      if (!map.has(target.port)) map.set(target.port, []);
+      map.get(target.port).push(item);
+    }
+  }
+  return map;
+}
+
 // --- Host Dropdown Menu Controls ---
 function positionHostMenu() {
   const menu = document.getElementById('nav-host-menu');
@@ -268,6 +388,8 @@ function positionHostMenu() {
   menu.style.top = Math.round(rect.bottom + 4) + 'px';
   menu.style.left = Math.round(left) + 'px';
   menu.style.zIndex = '9999';
+  const availableHeight = Math.max(120, window.innerHeight - Math.round(rect.bottom + 16));
+  menu.style.maxHeight = availableHeight + 'px';
 }
 
 function openHostMenu() {
@@ -514,6 +636,10 @@ function switchTab(tab) {
   } else if (tab === 'processes') {
     fetchProcesses();
   } else if (tab === 'logs') {
+    state.hasUnreadError = false;
+    const dot = document.getElementById('log-error-dot');
+    if (dot) dot.style.display = 'none';
+    updateGitHubIssueButton();
     fetchLogs();
   } else if (tab === 'settings') {
     fetchSettings();
@@ -953,7 +1079,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.54';
+  const ver = state.settings?.version || '1.1.55';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -1088,6 +1214,9 @@ function initEventSource() {
         fetchDesktopItems();
         fetchWatchcowItems();
       }
+      if (data && data.type === 'log_error') {
+        onNewErrorOccurred(data);
+      }
     } catch (err) {
       console.error('SSE parse error:', err);
     }
@@ -1095,6 +1224,12 @@ function initEventSource() {
   state.eventSource.addEventListener('docklabel_update', () => {
     fetchDesktopItems();
     fetchWatchcowItems();
+  });
+  state.eventSource.addEventListener('log_error', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      onNewErrorOccurred(data);
+    } catch (_) {}
   });
   state.eventSource.onerror = () => {
     // Retry on failure
@@ -1235,7 +1370,7 @@ function matchSinkRule(targetStr, rule) {
   return targetStr.includes(rule);
 }
 
-function renderPortRowHtml(p) {
+function renderPortRowHtml(p, matchingItems) {
   const isRemote = state.currentHostId && state.currentHostId !== 'localhost';
   let portUrl = '';
   if (isRemote) {
@@ -1261,8 +1396,8 @@ function renderPortRowHtml(p) {
       ? `<span class="proc-tag tag-docker" title="Docker 容器: ${escapeHtml(p.docker.image || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`
       : `<span class="proc-tag tag-host" title="系统进程: ${escapeHtml(p.exe || procDisplayName)}">${escapeHtml(procDisplayName)}</span>`);
 
-  const matchingItems = getMatchingDesktopItems(p.local_port);
-  const count = matchingItems.length || (state.desktopItemsLoaded ? 0 : (p.desktop_count || (p.has_desktop ? 1 : 0)));
+  const matching = Array.isArray(matchingItems) ? matchingItems : getMatchingDesktopItems(p.local_port);
+  const count = matching.length || (state.desktopItemsLoaded ? 0 : (p.desktop_count || (p.has_desktop ? 1 : 0)));
 
   let desktopCell = '';
   if (count > 0) {
@@ -1341,9 +1476,9 @@ function adjustTableWrapping(table) {
   const container = table.closest('.table-container');
   if (!container || container.clientWidth <= 0) return;
 
-  table.classList.remove('table-wrap');
-  if (table.scrollWidth > container.clientWidth) {
-    table.classList.add('table-wrap');
+  const shouldWrap = table.scrollWidth > container.clientWidth;
+  if (table.classList.contains('table-wrap') !== shouldWrap) {
+    table.classList.toggle('table-wrap', shouldWrap);
   }
 }
 
@@ -1390,13 +1525,10 @@ function renderPortsTable() {
     }
 
     // Dropdown 1: Source filter ('all' | 'docker' | 'host')
-    // When needs_ssh is true (e.g. unconfigured host), container vs system cannot be determined yet, so keep visible
     const isNeedsSSH = !!p.needs_ssh;
     const isDocker = !isNeedsSSH && p.docker && p.docker.is_docker;
-    if (!isNeedsSSH) {
-      if (state.portFilterSource === 'docker' && !isDocker) return false;
-      if (state.portFilterSource === 'host' && isDocker) return false;
-    }
+    if (state.portFilterSource === 'docker' && !isDocker) return false;
+    if (state.portFilterSource === 'host' && (isDocker || isNeedsSSH)) return false;
 
     // Dropdown 2: Protocol filter ('all' | 'tcp' | 'udp')
     const protoStr = (p.protocol || '').toLowerCase();
@@ -1415,7 +1547,10 @@ function renderPortsTable() {
     );
 
     if (isUnconfiguredRemote) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</td></tr>';
+      const tipText = state.portFilterSource === 'docker'
+        ? '没有符合条件的 Docker 容器端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可识别容器与更多详情'
+        : '没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情';
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${tipText}</td></tr>`;
       tbody.querySelector('.link-config-ssh-inline')?.addEventListener('click', (e) => {
         e.preventDefault();
         openHostSettingsModal();
@@ -1452,9 +1587,10 @@ function renderPortsTable() {
     }
   }
 
+  const desktopMap = getDesktopItemsMapForCurrentHost();
   let html = '';
   for (const p of normalItems) {
-    html += renderPortRowHtml(p);
+    html += renderPortRowHtml(p, desktopMap.get(p.local_port));
   }
 
   if (sinkItems.length > 0) {
@@ -1467,7 +1603,7 @@ function renderPortsTable() {
         </tr>`;
     }
     for (const p of sinkItems) {
-      html += renderPortRowHtml(p);
+      html += renderPortRowHtml(p, desktopMap.get(p.local_port));
     }
   }
 
@@ -4171,6 +4307,7 @@ function openPortDesktopListModal(port, procName, items) {
   for (const item of items) {
     const iconSrc = getIconUrl(item.icon);
     const openModeText = item.ui_type === 'iframe' ? '内部弹窗' : '新标签页';
+    const openModeClass = item.ui_type === 'iframe' ? 'type-sub-iframe' : 'type-sub-tab';
     const statusText = `
       <div class="status-toggle-wrapper">
         <label class="toggle-switch" style="cursor: default;" title="${item.enabled ? '已启用' : '已停用'}">
@@ -4731,7 +4868,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.54';
+      const ver = state.settings?.version || '1.1.55';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -4971,9 +5108,16 @@ function updateHostSelectDropdown() {
     }
   }
 
-  // LAN discovered hosts (skip those already configured)
-  const configuredAddrs = new Set(hostsList.map(h => h.host));
-  const unconfiguredLAN = lanList.filter(lh => !configuredAddrs.has(lh.ip));
+  // LAN discovered hosts (skip those already configured and deduplicate by IP)
+  const configuredAddrs = new Set(hostsList.map(h => (h.host || '').trim().toLowerCase()));
+  const seenLAN = new Set();
+  const unconfiguredLAN = [];
+  for (const lh of lanList) {
+    const ip = (lh.ip || '').trim().toLowerCase();
+    if (!ip || configuredAddrs.has(ip) || seenLAN.has(ip)) continue;
+    seenLAN.add(ip);
+    unconfiguredLAN.push(lh);
+  }
 
   if (unconfiguredLAN.length > 0) {
     html += '<div class="host-menu-group-title">局域网发现</div>';
@@ -5025,6 +5169,9 @@ function updateHostSelectDropdown() {
 
 function selectHost(val) {
   state.currentHostId = val;
+  if (val && val.startsWith('lan:')) {
+    setPortFilterSource('all');
+  }
   updateHostSelectDropdown();
 
   // If we have cached ports for this host, render immediately!
@@ -5182,7 +5329,12 @@ function openHostSettingsModal() {
 
   if (currentVal.startsWith('lan:')) {
     const ip = currentVal.slice(4);
-    openHostModal('add', { host: ip, name: '' });
+    const existing = (state.hosts || []).find(h => (h.host || '').trim().toLowerCase() === ip.trim().toLowerCase());
+    if (existing) {
+      openHostModal('edit', existing);
+    } else {
+      openHostModal('add', { host: ip, name: '' });
+    }
   } else {
     const host = (state.hosts || []).find(h => h.id === currentVal);
     if (host) {
@@ -5218,7 +5370,8 @@ function initHostManagement() {
   if (btnTest) {
     btnTest.addEventListener('click', async () => {
       const statusEl = document.getElementById('host-test-status');
-      const host = (document.getElementById('host-form-addr')?.value || '').trim();
+      let host = (document.getElementById('host-form-addr')?.value || '').trim();
+      host = host.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim();
       const sshPort = parseInt(document.getElementById('host-form-ssh-port')?.value, 10) || 22;
       const user = (document.getElementById('host-form-user')?.value || 'root').trim();
       const activeTab = document.querySelector('.host-auth-tab.active');
@@ -5281,7 +5434,8 @@ function initHostManagement() {
     btnSave.addEventListener('click', async () => {
       const id = document.getElementById('host-form-id')?.value || '';
       const name = (document.getElementById('host-form-name')?.value || '').trim();
-      const host = (document.getElementById('host-form-addr')?.value || '').trim();
+      let host = (document.getElementById('host-form-addr')?.value || '').trim();
+      host = host.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim();
       const sshPort = parseInt(document.getElementById('host-form-ssh-port')?.value, 10) || 22;
       const user = (document.getElementById('host-form-user')?.value || 'root').trim();
       const activeTab = document.querySelector('.host-auth-tab.active');
@@ -5293,6 +5447,18 @@ function initHostManagement() {
       if (!host) {
         showToast('请输入主机地址', 'warn');
         document.getElementById('host-form-addr')?.focus();
+        return;
+      }
+
+      if (host.toLowerCase() === 'localhost' || host === '127.0.0.1') {
+        showToast('不能添加本机地址 (127.0.0.1) 作为远程主机', 'warn');
+        return;
+      }
+
+      // Address uniqueness check: prevent duplicate hosts
+      const isDup = (state.hosts || []).some(h => h.id !== id && (h.host || '').trim().toLowerCase() === host.toLowerCase());
+      if (isDup) {
+        showToast('该主机地址已存在，不能重复添加相同地址的主机', 'error');
         return;
       }
 
@@ -5318,12 +5484,21 @@ function initHostManagement() {
           return;
         }
         const saved = await res.json();
-        showToast(`已成功保存主机 ${saved.name || saved.host}`, 'success');
         closeHostModal();
+
+        if (saved && saved.deleted) {
+          showToast(`已重置主机 ${host} 为未配置状态`, 'info');
+          if (id && state.hostPortsCache[id]) delete state.hostPortsCache[id];
+          state.currentHostId = `lan:${host}`;
+        } else {
+          showToast(`已成功保存主机 ${saved.name || saved.host}`, 'success');
+          state.currentHostId = saved.id;
+        }
+
         await fetchRemoteHosts();
-        state.currentHostId = saved.id;
+        await fetchLANHosts();
         updateHostSelectDropdown();
-        fetchRemoteHostPorts(saved.id);
+        fetchRemoteHostPorts(state.currentHostId);
       } catch (err) {
         showToast('保存失败: ' + err.message, 'error');
       }
@@ -5345,8 +5520,10 @@ function initHostManagement() {
         if (res.ok) {
           showToast('已删除主机', 'info');
           closeHostModal();
+          if (state.hostPortsCache[id]) delete state.hostPortsCache[id];
           state.currentHostId = 'localhost';
           await fetchRemoteHosts();
+          await fetchLANHosts();
           updateHostSelectDropdown();
           fetchPorts();
         } else {
@@ -5652,6 +5829,13 @@ function initLogViewer() {
     });
   }
 
+  const btnSubmitIssue = document.getElementById('btn-submit-github-issue');
+  if (btnSubmitIssue) {
+    btnSubmitIssue.addEventListener('click', () => {
+      openSubmitGitHubIssue();
+    });
+  }
+
   const pageSelect = document.getElementById('log-page-select');
   if (pageSelect) {
     pageSelect.addEventListener('change', (e) => {
@@ -5770,8 +5954,8 @@ function renderLogs(isAutoPoll = false) {
     const level = (entry.level || 'info').toLowerCase();
     const source = (entry.source || 'app').toLowerCase();
     const sourceNameMap = {
-      app: '运行',
-      lifecycle: '安装'
+      app: 'run',
+      lifecycle: 'install'
     };
     const sourceLabel = sourceNameMap[source] || source;
     const badgeClass = `log-badge-${level}`;

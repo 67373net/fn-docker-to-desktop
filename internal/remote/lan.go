@@ -185,6 +185,10 @@ func (s *LANScanner) GetStatus() LANScanStatus {
 			h.Status = "configured"
 			h.HostID = ch.ID
 			h.Name = ch.Name
+		} else {
+			h.Status = "unconfigured"
+			h.HostID = ""
+			h.Name = ""
 		}
 		result[i] = h
 	}
@@ -192,6 +196,19 @@ func (s *LANScanner) GetStatus() LANScanStatus {
 	return LANScanStatus{
 		Scanning: s.scanning.Load(),
 		Hosts:    result,
+	}
+}
+
+// UnmarkConfiguredHost clears the configured status of a host address in cached LAN hosts.
+func (s *LANScanner) UnmarkConfiguredHost(hostAddr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.cachedHosts {
+		if s.cachedHosts[i].IP == hostAddr {
+			s.cachedHosts[i].Status = "unconfigured"
+			s.cachedHosts[i].HostID = ""
+			s.cachedHosts[i].Name = ""
+		}
 	}
 }
 
@@ -267,12 +284,29 @@ var commonProbePorts = []int{
 // ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
 // similar to "nmap -p-", using high concurrency goroutines.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
+	return s.ProbeHostPortsRange(ip, 1, 65535)
+}
+
+// ProbeHostPortsRange scans ports within a given range on a target IP.
+func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []monitor.PortEntry {
 	if ip == "" {
 		return nil
 	}
+	if startPort < 1 {
+		startPort = 1
+	}
+	if endPort > 65535 {
+		endPort = 65535
+	}
+	if startPort > endPort {
+		return nil
+	}
 
-	totalPorts := 65535
-	workers := 500
+	totalPorts := endPort - startPort + 1
+	workers := 300
+	if totalPorts < workers {
+		workers = totalPorts
+	}
 	timeout := 200 * time.Millisecond
 
 	portChan := make(chan int, 2000)
@@ -287,6 +321,10 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 			for port := range portChan {
 				addr := net.JoinHostPort(ip, strconv.Itoa(port))
 				conn, err := net.DialTimeout("tcp", addr, timeout)
+				if err != nil && !strings.Contains(err.Error(), "refused") {
+					// In case of transient packet loss or listen queue saturation, retry once
+					conn, err = net.DialTimeout("tcp", addr, 250*time.Millisecond)
+				}
 				if err == nil {
 					_ = conn.Close()
 					mu.Lock()
@@ -297,7 +335,7 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 		}()
 	}
 
-	for p := 1; p <= totalPorts; p++ {
+	for p := startPort; p <= endPort; p++ {
 		portChan <- p
 	}
 	close(portChan)
