@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.59';
+  const ver = state.settings?.version || '1.1.60';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -676,7 +676,17 @@ function switchTab(tab) {
 
 // --- Data Fetching ---
 async function loadHostPorts(targetHostId, options = {}) {
-  const hostId = targetHostId || state.currentHostId || 'localhost';
+  let hostId = targetHostId || state.currentHostId || 'localhost';
+  if (hostId.startsWith('lan:')) {
+    const ip = hostId.slice(4).trim().toLowerCase();
+    const existing = (state.hosts || []).find(h => {
+      const hAddr = (h.host || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '').trim().toLowerCase();
+      return hAddr === ip;
+    });
+    if (existing && existing.id) {
+      hostId = existing.id;
+    }
+  }
   state.currentHostId = hostId;
   const force = options.force || false;
   let silent = options.silent || false;
@@ -760,6 +770,14 @@ async function loadHostPorts(targetHostId, options = {}) {
 
     const data = await res.json();
     const freshPorts = Array.isArray(data) ? data : (Array.isArray(data.ports) ? data.ports : []);
+
+    if (data && data.status && hostId !== 'localhost') {
+      const h = (state.hosts || []).find(x => x.id === hostId);
+      if (h && h.status !== data.status) {
+        h.status = data.status;
+        updateHostSelectDropdown();
+      }
+    }
 
     // Protection against silent degradation:
     // If background silent revalidation returns 0 ports while we already have cached ports,
@@ -1189,7 +1207,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.59';
+  const ver = state.settings?.version || '1.1.60';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4978,7 +4996,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.59';
+      const ver = state.settings?.version || '1.1.60';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5202,8 +5220,9 @@ function updateHostSelectDropdown() {
   if (hostsList.length > 0) {
     html += '<div class="host-menu-group-title">已配置主机</div>';
     for (const h of hostsList) {
-      let statusText = 'SSH未配置';
-      let statusClass = 'status-unconfigured';
+      const hasCreds = !!(h.password || h.private_key);
+      let statusText = hasCreds ? 'SSH已配置' : 'SSH未配置';
+      let statusClass = hasCreds ? 'status-connected' : 'status-unconfigured';
       if (h.status === 'connected') {
         statusText = 'SSH已连接';
         statusClass = 'status-connected';
@@ -5222,13 +5241,21 @@ function updateHostSelectDropdown() {
   }
 
   // LAN discovered hosts (skip those already configured and deduplicate by IP)
-  const configuredAddrs = new Set(hostsList.map(h => (h.host || '').trim().toLowerCase()));
+  const configuredAddrs = new Set();
+  for (const h of hostsList) {
+    const raw = (h.host || '').trim().toLowerCase();
+    if (raw) configuredAddrs.add(raw);
+    const clean = raw.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '').trim();
+    if (clean) configuredAddrs.add(clean);
+  }
   const seenLAN = new Set();
   const unconfiguredLAN = [];
   for (const lh of lanList) {
-    const ip = (lh.ip || '').trim().toLowerCase();
-    if (!ip || configuredAddrs.has(ip) || seenLAN.has(ip)) continue;
-    seenLAN.add(ip);
+    const rawIP = (lh.ip || '').trim().toLowerCase();
+    const cleanIP = rawIP.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '').trim();
+    if (!rawIP || configuredAddrs.has(rawIP) || configuredAddrs.has(cleanIP) || seenLAN.has(rawIP) || seenLAN.has(cleanIP)) continue;
+    seenLAN.add(rawIP);
+    if (cleanIP) seenLAN.add(cleanIP);
     unconfiguredLAN.push(lh);
   }
 
@@ -5281,12 +5308,24 @@ function updateHostSelectDropdown() {
 }
 
 function selectHost(val) {
-  state.currentHostId = val;
+  let targetId = val;
+  if (val.startsWith('lan:')) {
+    const ip = val.slice(4).trim().toLowerCase();
+    const existing = (state.hosts || []).find(h => {
+      const hAddr = (h.host || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '').trim().toLowerCase();
+      return hAddr === ip;
+    });
+    if (existing && existing.id) {
+      targetId = existing.id;
+    }
+  }
+
+  state.currentHostId = targetId;
   updateHostSelectDropdown();
   if (state.currentTab !== 'ports') {
     switchTab('ports');
   } else {
-    loadHostPorts(val, { force: false, silent: false });
+    loadHostPorts(targetId, { force: false, silent: false });
   }
 }
 
@@ -5525,9 +5564,17 @@ function initHostManagement() {
         const saved = await res.json();
         closeHostModal();
 
+        // Invalidate all cached ports for this host so old TCP probed ports (needs_ssh: true) are purged
+        const cleanHost = (host || '').trim().toLowerCase();
+        if (saved && saved.id) delete state.hostPortsCache[saved.id];
+        delete state.hostPortsCache[`lan:${cleanHost}`];
+        delete state.hostPortsCache[`lan:${host}`];
+        delete state.hostPortsCache[cleanHost];
+        delete state.hostPortsCache[host];
+        if (id) delete state.hostPortsCache[id];
+
         if (saved && saved.deleted) {
           showToast(`已重置主机 ${host} 为未配置状态`, 'info');
-          if (id && state.hostPortsCache[id]) delete state.hostPortsCache[id];
           state.currentHostId = `lan:${host}`;
         } else {
           showToast(`已成功保存主机 ${saved.name || saved.host}`, 'success');
@@ -5537,7 +5584,13 @@ function initHostManagement() {
         await fetchRemoteHosts();
         await fetchLANHosts();
         updateHostSelectDropdown();
-        fetchRemoteHostPorts(state.currentHostId);
+
+        // Force reload ports over SSH (force: true so it doesn't hit stale cache)
+        await loadHostPorts(state.currentHostId, { force: true, silent: false });
+
+        // Re-sync hosts list in case backend updated connection status
+        await fetchRemoteHosts();
+        updateHostSelectDropdown();
       } catch (err) {
         showToast('保存失败: ' + err.message, 'error');
       }

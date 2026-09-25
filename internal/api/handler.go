@@ -2783,6 +2783,41 @@ func (h *Handler) handleSaveRemoteHost(w http.ResponseWriter, r *http.Request) {
 				req.PrivateKey = existing.PrivateKey
 			}
 		}
+	} else {
+		// Look up by address if ID was not supplied
+		if existing, ok := h.remoteStorage.GetHostByAddress(req.Host); ok {
+			if req.Password == "******" || req.Password == "" {
+				req.Password = existing.Password
+			}
+			if req.PrivateKey == "******" || req.PrivateKey == "" {
+				req.PrivateKey = existing.PrivateKey
+			}
+		}
+	}
+
+	// Auto-test connection if credentials are provided so status is immediately connected or failed
+	if req.Password != "" || req.PrivateKey != "" {
+		if h.remoteSSH != nil {
+			testResp := h.remoteSSH.TestConnection(remote.TestHostRequest{
+				Host:       req.Host,
+				SSHPort:    req.SSHPort,
+				User:       req.User,
+				AuthType:   req.AuthType,
+				Password:   req.Password,
+				PrivateKey: req.PrivateKey,
+				Passphrase: req.Passphrase,
+			})
+			if testResp.Success {
+				req.Status = "connected"
+				req.Error = ""
+			} else {
+				req.Status = "failed"
+				req.Error = testResp.Error
+			}
+		}
+	} else {
+		req.Status = "unconfigured"
+		req.Error = ""
 	}
 
 	saved, err := h.remoteStorage.SaveHost(req)
@@ -2794,6 +2829,11 @@ func (h *Handler) handleSaveRemoteHost(w http.ResponseWriter, r *http.Request) {
 	// Invalidate cached SSH client if host was modified
 	if h.remoteSSH != nil {
 		h.remoteSSH.CloseClient(saved.ID)
+	}
+
+	// Invalidate probe cache for this host IP so TCP probed ports don't linger
+	if h.remoteLAN != nil {
+		h.remoteLAN.InvalidateProbedCache(saved.Host)
 	}
 
 	// Mask credentials in response
@@ -2945,24 +2985,24 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	host, ok := h.remoteStorage.GetHost(id)
 	if !ok {
-		if strings.HasPrefix(id, "lan:") {
-			ip := strings.TrimPrefix(id, "lan:")
-			host = remote.HostConfig{
-				ID:   id,
-				Host: ip,
-				Name: ip,
+		cleanID := remote.CleanHostAddress(id)
+		found := false
+		for _, eh := range h.remoteStorage.GetAllHosts() {
+			if eh.ID == id || eh.Host == id || remote.CleanHostAddress(eh.Host) == cleanID {
+				host = eh
+				found = true
+				break
 			}
-		} else {
-			cleanID := remote.CleanHostAddress(id)
-			found := false
-			for _, eh := range h.remoteStorage.GetAllHosts() {
-				if eh.Host == id || remote.CleanHostAddress(eh.Host) == cleanID {
-					host = eh
-					found = true
-					break
+		}
+		if !found {
+			if strings.HasPrefix(id, "lan:") {
+				ip := strings.TrimPrefix(id, "lan:")
+				host = remote.HostConfig{
+					ID:   id,
+					Host: ip,
+					Name: ip,
 				}
-			}
-			if !found {
+			} else {
 				h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
 				return
 			}
@@ -2991,7 +3031,9 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 
 	ports, err := h.remoteSSH.FetchRemotePorts(host)
 	if err != nil {
-		h.remoteStorage.UpdateStatus(id, "failed", err.Error())
+		if host.ID != "" {
+			h.remoteStorage.UpdateStatus(host.ID, "failed", err.Error())
+		}
 		var fallbackPorts []monitor.PortEntry
 		if h.remoteLAN != nil {
 			fallbackPorts = h.remoteLAN.ProbeHostPorts(host.Host)
@@ -3009,7 +3051,9 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	h.remoteStorage.UpdateStatus(id, "connected", "")
+	if host.ID != "" {
+		h.remoteStorage.UpdateStatus(host.ID, "connected", "")
+	}
 	markRemotePortsDesktop(ports, desktopItems, host.Host)
 
 	h.jsonResponse(w, r, remote.RemoteHostPortsResponse{

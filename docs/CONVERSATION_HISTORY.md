@@ -5006,5 +5006,54 @@ INFO
 3. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 75 - v1.1.60 发布记录
+
+### 用户需求与问题排查 (User Requirements & Root Cause Analysis)
+1. **用户反馈问题**：
+   - “配置了ssh,并且测试成功,并且保存了,列表中仍然显示ssh未配置”。
+2. **深度根因排查**：
+   - **根因 1 (前端主机状态默认兜底错误 - `web/app.js`)**：
+     在 `updateHostSelectDropdown()` 渲染“已配置主机”列表时，状态判断为 `if (h.status === 'connected') ... else if (h.status === 'failed') ... else statusText = 'SSH未配置'`。当主机处于新保存状态（`status: "untested"` 或保存时返回的其他状态）时，即便主机已经录入了密码或私钥凭据，界面依然将其兜底显示为“SSH未配置”，给用户造成凭据没有保存的误解。
+   - **根因 2 (路由处理 `lan:` 前缀忽略已存凭据 - `internal/api/handler.go`)**：
+     用户在通过局域网发现选择主机（ID 为 `lan:192.168.1.63`）后，在弹窗中配置了 SSH 账号密码并保存（持久化到存储中）。但当后续路由 `GET /api/remote/hosts/{id}/ports` 触发时，旧代码首先匹配了 `if strings.HasPrefix(id, "lan:")`，直接创建了一个无凭据的空白临时 `HostConfig`，绕过了 `GetAllHosts()` 查询！导致后端直接走无凭据的 TCP SYN 端口探测，并将所有端口打上 `needs_ssh: true`（“需配置ssh”标记），完全丢失了已配置的 SSH 凭据。
+   - **根因 3 (保存时未触发自动联通性校验与状态持久化 - `internal/api/handler.go`)**：
+     保存接口 `handleSaveRemoteHost` 在写入配置时，若用户录入了密码/密钥，旧逻辑直接以未测试状态写入存储，并未在服务端主动执行快速连通性验证并将状态直接置为 `connected`。且保存后未主动清理旧的 SSH 客户端缓存连接及旧的局域网 TCP 探测缓存，导致旧的探测残留依然生效。
+   - **根因 4 (前端缓存未彻底淘汰与非强制刷新 - `web/app.js`)**：
+     前端在提交保存主机表单成功后，未针对 `saved.id`、`host` 及 `lan:host` 彻底清空 `state.hostPortsCache`。且在调用重新拉取端口时未携带 `force: true`，命中了 15 秒缓存保护直接返回，继续渲染刚才带有“需配置ssh”的旧 TCP 探测端口列表。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **服务端保存自动连通性校验与状态确权 (`internal/api/handler.go`)**：
+   - 在 `handleSaveRemoteHost` 中：当保存带有 SSH 密码或私钥的主机时，服务端自动调用 `h.remoteSSH.TestConnection(saved)` 进行即时连通性校验；
+   - 校验成功后直接将主机状态记为 `connected`，确权存入存储；
+   - 主动关闭对应主机的既有 SSH 连接池客户端，并调用 `h.remoteLAN.InvalidateProbedCache(saved.Host)` 彻底失效先前的 TCP 探测缓存。
+2. **主机路由寻址优先匹配已配置凭据 (`internal/api/handler.go`)**：
+   - 调整 `handleGetRemoteHostPorts` 寻址逻辑：无论传入的 ID 是否带有 `lan:` 前缀，优先对规范化清洗后的 IP 地址与 `h.remoteStorage.GetAllHosts()` 进行比对检索；
+   - 只要该主机在已配置列表中存在，立即使用已配置的凭据通过 SSH 协议执行高精度命令探测（`ss`/`netstat`/`lsof`/Docker Socket），并同步更新其状态为 `connected`；仅在完全未配置时才降级为纯 TCP 端口握手探针。
+3. **前端状态展示与多源凭据感知 (`web/app.js`)**：
+   - 改造 `updateHostSelectDropdown`：检查 `h.password || h.private_key`，只要已录入凭据且非失败状态，默认显示 `SSH已配置`（绿色），已连通显示 `SSH已连接`；
+   - 强化已配置地址归一化过滤，防止已配置的 SSH 主机重复暴露在“局域网发现”列表；
+   - 在 `loadHostPorts` 和 `selectHost` 中增加 `lan:IP` 向已配置主机 ID 的自动寻址与重定向映射；
+   - 在拉取端口接口返回 `data.status` 时，动态响应式刷新 `state.hosts[].status` 并更新下拉框显示。
+4. **保存凭据后的全量缓存淘汰与强制重刷 (`web/app.js`)**：
+   - 在主机保存提交成功后，同步清空 `state.hostPortsCache` 中与该主机相关的所有键（`saved.id`、`lan:host`、`host`、`cleanHost`）；
+   - 以 `{ force: true, silent: false }` 强制触发 `loadHostPorts`，彻底摒弃旧有 TCP 探测列表与 `需配置ssh` 提示，瞬间呈现完整的远程端口与进程详情。
+5. **全链路版本升级至 `v1.1.60`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.60`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试全量通过**：
+   - 容器内执行 `docker run ... go test -count=1 ./...`，全模块测试 100% PASS。
+2. **飞牛 OS 原生安装包完整打包测试**：
+   - 运行 `./scripts/build-fpk.sh x86`，生成 `fn-docker-to-desktop-x86.fpk`（4.5MB），打包与校验完全通过。
+3. **零 .fpk 文件残留**：
+   - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
+
+
 
 
