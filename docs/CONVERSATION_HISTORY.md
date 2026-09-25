@@ -5096,6 +5096,34 @@ INFO
 3. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 77 - v1.1.61 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **文案强调加粗**：将 README 和“关于”界面中的“其他功能说明”文本加粗（即 `**其他功能说明：**`）。
+2. **发布新版本安装包**：由于“关于”页面进行了文案调整与排版更新，需要升级版本并重新生成安装包发布至 `v1.1.61`。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **文案加粗优化**：
+   - [`README.md`](file:///home/net67373/fn-docker-to-desktop/README.md)：将 `其他功能说明：` 调整为 `**其他功能说明：**`；
+   - [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html)：将 `<p class="about-md-p">其他功能说明：</p>` 调整为 `<p class="about-md-p"><strong>其他功能说明：</strong></p>`。
+2. **全链路版本升级至 `v1.1.61`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.61`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试全量通过**：
+   - 容器内执行 `docker run ... go test -count=1 ./...`，全模块测试 100% PASS。
+2. **飞牛 OS 原生安装包完整打包测试**：
+   - 运行 `./scripts/build-fpk.sh x86`，生成 `fn-docker-to-desktop-x86.fpk`（4.5MB），打包与校验完全通过。
+3. **零 .fpk 文件残留**：
+   - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
+
+
 
 
 
