@@ -5,8 +5,11 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"fn-docker-to-desktop/internal/monitor"
 )
 
 func TestHostStorage(t *testing.T) {
@@ -298,6 +301,55 @@ func TestLANScannerConfiguredAndUnmarked(t *testing.T) {
 	st = scanner.GetStatus()
 	if st.Hosts[0].Status != "unconfigured" || st.Hosts[0].HostID != "" || st.Hosts[0].Name != "" {
 		t.Fatalf("expected unconfigured host after delete, got %+v", st.Hosts[0])
+	}
+}
+
+func TestInFlightDeduplication(t *testing.T) {
+	tempDir := t.TempDir()
+	store, _ := NewStorage(tempDir)
+	scanner := NewLANScanner(store)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer l.Close()
+
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	pNum, _ := strconv.Atoi(portStr)
+
+	var wg sync.WaitGroup
+	results := make([][]monitor.PortEntry, 3)
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = scanner.ProbeHostPorts("127.0.0.1")
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 3; i++ {
+		var found bool
+		for _, p := range results[i] {
+			if p.LocalPort == pNum {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("worker %d did not find port %d in results", i, pNum)
+		}
 	}
 }
 

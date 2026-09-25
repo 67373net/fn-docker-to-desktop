@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.58';
+  const ver = state.settings?.version || '1.1.59';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -572,14 +572,7 @@ function initFilterDropdowns() {
 function initNavigation() {
   document.querySelectorAll('.nav-tab').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      // 1. Gear button click: open host settings modal only
-      if (e.target.closest('#btn-host-settings')) {
-        e.stopPropagation();
-        openHostSettingsModal();
-        return;
-      }
-
-      // 2. Click inside the open host dropdown menu: don't bubble
+      // 1. Click inside the open host dropdown menu: don't bubble
       if (e.target.closest('#nav-host-menu')) {
         return;
       }
@@ -722,9 +715,9 @@ async function loadHostPorts(targetHostId, options = {}) {
     renderPortsTable();
     updatePortCountBadge();
 
-    // Revalidate in background if cache is >3s old
+    // Revalidate in background if cache is >15s old
     const cacheAge = Date.now() - (cached.timestamp || 0);
-    if (cacheAge < 3000) {
+    if (cacheAge < 15000) {
       return;
     }
     silent = true;
@@ -767,6 +760,13 @@ async function loadHostPorts(targetHostId, options = {}) {
 
     const data = await res.json();
     const freshPorts = Array.isArray(data) ? data : (Array.isArray(data.ports) ? data.ports : []);
+
+    // Protection against silent degradation:
+    // If background silent revalidation returns 0 ports while we already have cached ports,
+    // preserve existing cached ports to prevent ports from disappearing on transient glitches.
+    if (silent && freshPorts.length === 0 && cached && Array.isArray(cached.ports) && cached.ports.length > 0) {
+      return;
+    }
 
     state.hostPortsCache[hostId] = {
       ports: freshPorts,
@@ -1189,7 +1189,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.58';
+  const ver = state.settings?.version || '1.1.59';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4978,7 +4978,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.58';
+      const ver = state.settings?.version || '1.1.59';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5185,13 +5185,7 @@ function updateHostSelectDropdown() {
     nameEl.textContent = displayName;
   }
 
-  // 2. Toggle gear icon visibility
-  const btnGear = document.getElementById('btn-host-settings');
-  if (btnGear) {
-    btnGear.style.display = (currentVal !== 'localhost') ? 'inline-flex' : 'none';
-  }
-
-  // 3. Render custom dropdown popover menu
+  // 2. Render custom dropdown popover menu
   const menu = document.getElementById('nav-host-menu');
   if (!menu) return;
 
@@ -5364,7 +5358,10 @@ function setHostAuthMode(mode) {
 
 function openHostSettingsModal() {
   const currentVal = state.currentHostId;
-  if (!currentVal || currentVal === 'localhost') return;
+  if (!currentVal || currentVal === 'localhost') {
+    openHostModal('add');
+    return;
+  }
 
   if (currentVal.startsWith('lan:')) {
     const ip = currentVal.slice(4);
@@ -5378,6 +5375,8 @@ function openHostSettingsModal() {
     const host = (state.hosts || []).find(h => h.id === currentVal);
     if (host) {
       openHostModal('edit', host);
+    } else {
+      openHostModal('add');
     }
   }
 }
@@ -5385,9 +5384,10 @@ function openHostSettingsModal() {
 function initHostManagement() {
   updateHostSelectDropdown();
 
-  const btnGear = document.getElementById('btn-host-settings');
-  if (btnGear) {
-    btnGear.addEventListener('click', (e) => {
+  // Toolbar host config button ("配置")
+  const btnToolbarConfig = document.getElementById('btn-toolbar-host-config');
+  if (btnToolbarConfig) {
+    btnToolbarConfig.addEventListener('click', (e) => {
       e.stopPropagation();
       openHostSettingsModal();
     });

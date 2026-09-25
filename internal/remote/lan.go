@@ -30,6 +30,8 @@ type LANScanner struct {
 	cachedHosts []DiscoveredLANHost
 	probedMu    sync.RWMutex
 	probedCache map[string]probedCacheEntry
+	inFlightMu  sync.Mutex
+	inFlight    map[string]chan struct{}
 }
 
 // NewLANScanner creates a new LANScanner.
@@ -37,6 +39,7 @@ func NewLANScanner(storage *Storage) *LANScanner {
 	s := &LANScanner{
 		storage:     storage,
 		probedCache: make(map[string]probedCacheEntry),
+		inFlight:    make(map[string]chan struct{}),
 	}
 	// Initial fast harvest from ARP table
 	s.cachedHosts = s.readARPTable()
@@ -422,13 +425,17 @@ func isLANIP(ipStr string) bool {
 }
 
 // ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
-// equivalent to "nmap -p-", using high-concurrency goroutines (1000 workers) and adaptive timeout.
+// using high-performance concurrent workers (250 workers) and adaptive timeout.
+// It deduplicates concurrent probes for the same host via an in-flight mechanism,
+// and protects against transient port loss using a targeted recovery probe.
 // Results are cached for 60 seconds.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	if ip == "" {
 		return nil
 	}
 	cleanIP := CleanHostAddress(ip)
+
+	// 1. Fast cache check (< 60s)
 	s.probedMu.RLock()
 	if entry, ok := s.probedCache[cleanIP]; ok {
 		if time.Since(entry.timestamp) < 60*time.Second {
@@ -438,12 +445,72 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	}
 	s.probedMu.RUnlock()
 
+	// 2. Deduplicate in-flight probes: if a probe is already running for this IP, wait for it
+	s.inFlightMu.Lock()
+	if s.inFlight == nil {
+		s.inFlight = make(map[string]chan struct{})
+	}
+	if doneCh, running := s.inFlight[cleanIP]; running {
+		s.inFlightMu.Unlock()
+		// Wait for existing in-flight scan on this IP to complete
+		<-doneCh
+		s.probedMu.RLock()
+		defer s.probedMu.RUnlock()
+		if entry, ok := s.probedCache[cleanIP]; ok {
+			return entry.ports
+		}
+		return nil
+	}
+
+	doneCh := make(chan struct{})
+	s.inFlight[cleanIP] = doneCh
+	s.inFlightMu.Unlock()
+
+	defer func() {
+		s.inFlightMu.Lock()
+		delete(s.inFlight, cleanIP)
+		close(doneCh)
+		s.inFlightMu.Unlock()
+	}()
+
+	// 3. Perform port scan (250 workers)
 	ports := s.ProbeHostPortsRange(cleanIP, 1, 65535)
 
+	// 4. Cache update & Transient packet loss protection
 	s.probedMu.Lock()
 	if s.probedCache == nil {
 		s.probedCache = make(map[string]probedCacheEntry)
 	}
+
+	prev, hadPrev := s.probedCache[cleanIP]
+	if len(ports) == 0 && hadPrev && len(prev.ports) > 0 && time.Since(prev.timestamp) < 5*time.Minute {
+		// Transient 0-port scan: preserve previous cache
+		ports = prev.ports
+	} else if hadPrev && len(prev.ports) > len(ports) && time.Since(prev.timestamp) < 5*time.Minute {
+		// If some previously open ports are missing in this scan, do a fast targeted verification
+		foundMap := make(map[int]bool, len(ports))
+		for _, p := range ports {
+			foundMap[p.LocalPort] = true
+		}
+		var missing []int
+		for _, p := range prev.ports {
+			if !foundMap[p.LocalPort] {
+				missing = append(missing, p.LocalPort)
+			}
+		}
+		if len(missing) > 0 && len(missing) <= 100 {
+			s.probedMu.Unlock()
+			recovered := s.ProbeSpecificPorts(cleanIP, missing)
+			s.probedMu.Lock()
+			if len(recovered) > 0 {
+				ports = append(ports, recovered...)
+				sort.Slice(ports, func(i, j int) bool {
+					return ports[i].LocalPort < ports[j].LocalPort
+				})
+			}
+		}
+	}
+
 	s.probedCache[cleanIP] = probedCacheEntry{
 		ports:     ports,
 		timestamp: time.Now(),
@@ -454,8 +521,9 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 }
 
 // ProbeHostPortsRange scans ports within a given range on a target IP.
-// Prioritizes well-known and common ports first, uses 1000 concurrent workers,
-// and adaptive 50ms timeout for LAN to complete full port scans in 1~3 seconds.
+// Prioritizes well-known and common ports first, uses 250 concurrent workers
+// (well under the 1024 OS file descriptor limit to prevent socket exhaustion
+// and target host SYN backlog overflow), and adaptive 80ms timeout for LAN.
 func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []monitor.PortEntry {
 	if ip == "" {
 		return nil
@@ -471,19 +539,22 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 	}
 
 	totalPorts := endPort - startPort + 1
-	workers := 1000
+	workers := 250
 	if totalPorts < workers {
 		workers = totalPorts
 	}
 
-	timeout := 50 * time.Millisecond
+	timeout := 80 * time.Millisecond
 	if !isLANIP(ip) {
-		timeout = 120 * time.Millisecond
+		timeout = 150 * time.Millisecond
 	}
 
-	portChan := make(chan int, 3000)
+	portChan := make(chan int, 2000)
 	var foundPorts []int
 	var mu sync.Mutex
+
+	var timedOutPorts []int
+	var timeoutMu sync.Mutex
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -498,6 +569,12 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 					mu.Lock()
 					foundPorts = append(foundPorts, port)
 					mu.Unlock()
+				} else if isTimeoutError(err) {
+					timeoutMu.Lock()
+					if len(timedOutPorts) < 500 {
+						timedOutPorts = append(timedOutPorts, port)
+					}
+					timeoutMu.Unlock()
 				}
 			}
 		}()
@@ -520,6 +597,39 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 	close(portChan)
 
 	wg.Wait()
+
+	// If any ports timed out (likely due to target kernel SYN queue congestion),
+	// perform a single retry pass with 150ms timeout.
+	if len(timedOutPorts) > 0 {
+		retryWorkers := 50
+		if len(timedOutPorts) < retryWorkers {
+			retryWorkers = len(timedOutPorts)
+		}
+		retryChan := make(chan int, len(timedOutPorts))
+		var retryWg sync.WaitGroup
+		for i := 0; i < retryWorkers; i++ {
+			retryWg.Add(1)
+			go func() {
+				defer retryWg.Done()
+				for port := range retryChan {
+					addr := net.JoinHostPort(ip, strconv.Itoa(port))
+					conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
+					if err == nil {
+						_ = conn.Close()
+						mu.Lock()
+						foundPorts = append(foundPorts, port)
+						mu.Unlock()
+					}
+				}
+			}()
+		}
+		for _, p := range timedOutPorts {
+			retryChan <- p
+		}
+		close(retryChan)
+		retryWg.Wait()
+	}
+
 	sort.Ints(foundPorts)
 
 	var entries []monitor.PortEntry
@@ -537,5 +647,16 @@ func (s *LANScanner) ProbeHostPortsRange(ip string, startPort, endPort int) []mo
 		})
 	}
 	return entries
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "i/o timeout") || strings.Contains(errStr, "timed out")
 }
 
