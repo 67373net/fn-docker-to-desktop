@@ -2,11 +2,15 @@
 
 本项目灵感及代码参考了项目 [watchcow](https://github.com/tf4fun/watchcow)。
 
-本项目由一个三流代码吟唱师用三流agent开发，可能会有亿点点 bug 和调整。欢迎提 issues
+本项目由一个三流代码吟唱师用三流 agent 开发，可能会有亿点点 bug 和调整。欢迎提 [issues](https://github.com/67373net/fn-docker-to-desktop/issues)
 
 ---
 
-### 四大核心功能
+### 主要目的
+
+将局域网中的 docker 等服务放到飞牛桌面，利用飞牛的 connect 连接。
+
+其他功能说明：
 
 1. **Docker 一键放桌面**：自动识别容器，一键在飞牛桌面生成图标。
 2. **局域网 / 公网服务反向代理**：可自动扫描其他机器端口，可将内网 / 公网服务代理至本机，并生成桌面图标。

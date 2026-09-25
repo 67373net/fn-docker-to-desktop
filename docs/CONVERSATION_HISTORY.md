@@ -5054,6 +5054,49 @@ INFO
 3. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 76 - 文档与关于文案优化及中英文排版规范
+
+### 用户需求总结 (User Requirements)
+1. **文案核心功能标题重构**：
+   - 将 `README.md` 与“关于”页面（`web/index.html`）中的“（标题）四大核心功能”重构为：
+     - 标题：`主要目的`
+     - 正文：`将局域网中的 docker 等服务放到飞牛桌面，利用飞牛的 connect 连接。`
+     - 列表引导：`其他功能说明：`
+     - 紧跟原有的 4 项功能列表。
+2. **中英文排版空格全面排查**：
+   - 排查并修复 `README.md`、“关于”页面以及应用清单文件中的中英文混排空格（盘古之白）；
+   - 修复“三流agent开发”缺失空格问题（改为“三流 agent 开发”）；
+   - 确保“docker”、“connect”、“OS”、“Docker 容器”等英文词汇与中文字符之间均具有标准规范空格。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **README 文档更新 (`README.md`)**：
+   - 替换 `### 四大核心功能` 为 `### 主要目的`，添加核心目的说明与 `其他功能说明：`；
+   - 补齐“三流 agent 开发”之间的中英文空格；
+   - 优化 `[issues](https://github.com/67373net/fn-docker-to-desktop/issues)` 超链接，便于直接跳转。
+2. **前端“关于”界面更新 (`web/index.html`)**：
+   - 将 `<h3 class="about-md-h3">四大核心功能</h3>` 更新为：
+     - `<h3 class="about-md-h3">主要目的</h3>`
+     - `<p class="about-md-p">将局域网中的 docker 等服务放到飞牛桌面，利用飞牛的 connect 连接。</p>`
+     - `<p class="about-md-p">其他功能说明：</p>`
+   - 补齐“三流 agent 开发”中的中英文空格。
+3. **应用清单排版优化 (`fnos-app/manifest`)**：
+   - 优化描述字段中的“Docker 容器”与“飞牛 OS 桌面”，补齐英文与汉字之间的空格。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试全量通过**：
+   - 容器内执行 `docker run ... go test -count=1 ./...`，全模块测试 100% PASS。
+2. **飞牛 OS 原生安装包完整打包测试**：
+   - 运行 `./scripts/build-fpk.sh x86`，生成 `fn-docker-to-desktop-x86.fpk`（4.5MB），打包与校验完全通过。
+3. **零 .fpk 文件残留**：
+   - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
+
+
 
 
 
