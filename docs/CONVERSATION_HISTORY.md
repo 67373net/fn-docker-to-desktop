@@ -5123,6 +5123,37 @@ INFO
 3. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 78 - v1.1.62 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **本机模式工具栏按钮文案优化**：
+   - 当顶部主机选择器处于“本机”（`localhost`）模式时，进程列表下方的按钮不应该显示为“配置”，而应该显示为“添加主机”；
+   - 切换到局域网或远程主机时，保持显示为“配置”。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **初始 HTML 结构与状态响应式切换 (`web/index.html`, `web/app.js`)**：
+   - [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html)：将 `#btn-toolbar-host-config` 的初始文案与 `title` 从“配置”调整为“添加主机”（默认开屏为主机模式）；
+   - [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js)：在 [`updateHostSelectDropdown`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 中加入对 `#btn-toolbar-host-config` 的动态联动：
+     - 若当前主机为 `localhost`（或未指定），按钮文本设为 `添加主机`，`title` 设为 `添加主机`；
+     - 若当前主机为局域网或已配置远程主机，按钮文本设为 `配置`，`title` 设为 `配置主机`。
+2. **全链路版本升级至 `v1.1.62`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.62`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化单元测试全量通过**：
+   - 容器内执行 `docker run ... go test -count=1 ./...`，全模块测试 100% PASS。
+2. **飞牛 OS 原生安装包完整打包测试**：
+   - 运行 `./scripts/build-fpk.sh x86`，生成 `fn-docker-to-desktop-x86.fpk`（4.5MB），打包与校验完全通过。
+3. **零 .fpk 文件残留**：
+   - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
+
+
 
 
 
