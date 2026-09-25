@@ -53,9 +53,11 @@ if command -v go >/dev/null 2>&1; then
   CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} go build -trimpath -ldflags "-s -w" -o "${BIN_PATH}" "${ROOT_DIR}/cmd/server"
 else
   mkdir -p /tmp/gocache
+  mkdir -p /tmp/gopath
   docker run --rm \
     -v "${ROOT_DIR}:/build" \
     -v "/tmp/gocache:/root/.cache/go-build" \
+    -v "/tmp/gopath:/go" \
     -w /build \
     golang:alpine \
     sh -c "CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} go build -trimpath -ldflags='-s -w' -o fnos-app/app/${APP_NAME} ./cmd/server && chmod +x fnos-app/app/${APP_NAME}"

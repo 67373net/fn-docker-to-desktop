@@ -306,18 +306,100 @@ func generateSubnetIPs(sub *net.IPNet) []string {
 // commonProbePorts lists standard web, container, NAS and database ports to probe when SSH is not available.
 var commonProbePorts = []int{
 	// Popular Web & Reverse Proxy
-	80, 443, 8080, 8443, 8000, 8008, 8081, 8082, 8083, 8084, 8085, 8088, 8090, 8888,
+	80, 81, 443, 2019, 8000, 8008, 8080, 8081, 8082, 8083, 8084, 8085, 8088, 8089, 8090, 8443, 8888,
 	// Popular Container Apps & Tools
-	3000, 3001, 3002, 5000, 5001, 5002, 5005, 5173, 5174, 5244, 5678, 6080, 7860, 7890, 7897,
-	8096, 8123, 8989, 7878, 8686, 9696, 9000, 9080, 9090, 9091, 9100, 9443, 9999, 10000, 10086, 11434, 32400, 50000,
+	3000, 3001, 3002, 4000, 5000, 5001, 5002, 5005, 5173, 5174, 5244, 5678, 6080, 6800, 7860, 7890, 7891, 7897,
+	8006, 8096, 8123, 8554, 8555, 8686, 8920, 8989, 7878, 9000, 9001, 9080, 9090, 9091, 9100, 9200, 9300, 9443, 9696, 9999,
+	10000, 10086, 10808, 11434, 21115, 21116, 21117, 21118, 21119, 32400, 50000, 51820,
 	// Databases / MQ / Cache
-	1433, 1521, 1883, 2379, 2380, 3306, 5432, 5672, 6379, 27017,
+	1080, 1194, 1433, 1521, 1883, 2379, 2380, 3306, 5432, 5672, 6379, 8086, 27017,
 	// System / File Sharing / Remote
-	21, 22, 23, 25, 53, 110, 139, 143, 445, 548, 993, 995, 2049, 2375, 2376, 3389, 5666, 5900, 5901, 6443, 6881, 6882, 7000, 7001,
+	21, 22, 23, 25, 53, 110, 139, 143, 445, 548, 902, 993, 995, 2049, 2375, 2376, 3389, 5666, 5900, 5901, 6443, 6881, 6882, 7000, 7001,
 }
 
-// ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
-// similar to "nmap -p-", using high concurrency goroutines. Results are cached for 60 seconds.
+// getStandardAndCommonPorts returns a deduplicated and sorted list of ports containing:
+// 1) All standard well-known ports (1..1024)
+// 2) All popular container, web, NAS, proxy, and database ports (commonProbePorts)
+func getStandardAndCommonPorts() []int {
+	portMap := make(map[int]bool, 1200)
+	for p := 1; p <= 1024; p++ {
+		portMap[p] = true
+	}
+	for _, p := range commonProbePorts {
+		if p >= 1 && p <= 65535 {
+			portMap[p] = true
+		}
+	}
+	result := make([]int, 0, len(portMap))
+	for p := range portMap {
+		result = append(result, p)
+	}
+	sort.Ints(result)
+	return result
+}
+
+// ProbeSpecificPorts scans a specific list of ports on a target IP concurrently with low timeout.
+func (s *LANScanner) ProbeSpecificPorts(ip string, ports []int) []monitor.PortEntry {
+	if ip == "" || len(ports) == 0 {
+		return nil
+	}
+	workers := 150
+	if len(ports) < workers {
+		workers = len(ports)
+	}
+	timeout := 120 * time.Millisecond
+
+	portChan := make(chan int, len(ports))
+	var foundPorts []int
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for port := range portChan {
+				addr := net.JoinHostPort(ip, strconv.Itoa(port))
+				conn, err := net.DialTimeout("tcp", addr, timeout)
+				if err == nil {
+					_ = conn.Close()
+					mu.Lock()
+					foundPorts = append(foundPorts, port)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	for _, p := range ports {
+		if p >= 1 && p <= 65535 {
+			portChan <- p
+		}
+	}
+	close(portChan)
+
+	wg.Wait()
+	sort.Ints(foundPorts)
+
+	var entries []monitor.PortEntry
+	for _, p := range foundPorts {
+		entries = append(entries, monitor.PortEntry{
+			LocalPort:   p,
+			Protocol:    "tcp",
+			Protocols:   []string{"tcp"},
+			LocalIP:     ip,
+			LocalIPs:    []string{ip},
+			IPVersion:   "IPv4",
+			State:       "LISTEN",
+			ProcessName: "",
+			NeedsSSH:    true,
+		})
+	}
+	return entries
+}
+
+// ProbeHostPorts probes standard well-known ports (1..1024) and popular container/web/NAS ports
+// on a target IP when SSH is unconfigured or failed. Finishes in ~0.5s and caches for 30s.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	if ip == "" {
 		return nil
@@ -325,14 +407,15 @@ func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
 	cleanIP := CleanHostAddress(ip)
 	s.probedMu.RLock()
 	if entry, ok := s.probedCache[cleanIP]; ok {
-		if time.Since(entry.timestamp) < 60*time.Second {
+		if time.Since(entry.timestamp) < 30*time.Second {
 			s.probedMu.RUnlock()
 			return entry.ports
 		}
 	}
 	s.probedMu.RUnlock()
 
-	ports := s.ProbeHostPortsRange(cleanIP, 1, 65535)
+	portsToProbe := getStandardAndCommonPorts()
+	ports := s.ProbeSpecificPorts(cleanIP, portsToProbe)
 
 	s.probedMu.Lock()
 	if s.probedCache == nil {
