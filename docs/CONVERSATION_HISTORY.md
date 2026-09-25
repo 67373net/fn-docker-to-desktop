@@ -4788,3 +4788,73 @@ INFO
    - 容器内执行 `go build -o /dev/null ./cmd/server` 编译无任何告警与报错。
 4. **零 .fpk 残留**：本地工作树无任何 `.fpk` 文件残留。
 
+
+---
+
+## Turn 71 - v1.1.56 发布记录
+
+### 用户需求与问题分析 (User Requirements & Root Cause Analysis)
+1. **主机别名删除后仍显示为已配置主机 Bug 根因分析与彻底解决**：
+   - **现象**：用户为局域网发现的主机设置了别名后其变为“已配置主机”；当发现设置错误清空别名（或点击“删除主机”）后，主机仍然在下拉菜单中显示为已配置主机。
+   - **根因**：
+     1) `internal/remote/storage.go`：旧版 `DeleteHost(id)` 在找不到指定 ID 时直接返回错误（非幂等），且不支持传入带 `lan:` 前缀或 IP 地址格式进行模糊匹配；若之前因重复保存留下冗余记录，旧逻辑使用 `break` 仅删除第一条，残留同 IP 记录；
+     2) `internal/remote/lan.go`：`UnmarkConfiguredHost(hostAddr)` 与 `GetStatus()` 之前仅进行了原始字符串精确匹配，未对 `lan:` 前缀、`http://` 协议、端口号等进行清洗，导致缓存中的 `cachedHosts` 状态未复原；
+     3) `internal/api/handler.go`：`handleSaveRemoteHost` 在处理空凭据与空别名时未同时覆盖根据 IP 地址进行反向查询兜底清理；`handleDeleteRemoteHost` 缺乏地址模糊匹配与容错保护。
+   - **解决**：引入 `CleanHostAddress` 标准化方法，在 `storage.go`、`lan.go` 与 `handler.go` 全链路贯通，全面支持 ID、IP、`lan:ip` 复合多向幂等匹配删除与状态还原；`SaveHost` 增加同地址去重合并。
+2. **日志警告分析与优化**：
+   - **警告 A** (`ScanDockLabelItems` / `handleGetDockLabelItems` 扫描耗时 3.12s ~ 3.47s 触发 `[WARN] [PERF]` 告警)：
+     - **分析**：Docker daemon 在机械硬盘或 NAS 高 I/O 尖刺时响应 `/containers/json` 请求轻微超出 3.0s；此前代码硬编码超时为 3s、告警阈值为 3000ms，在 NAS 正常 I/O 抖动下触发双重告警。
+     - **解决**：将 Docker unix socket 客户端超时由 3s 提升至 8s，性能耗时警告阈值由 3000ms 调整为 6000ms，消除误报并提升高负荷下的请求容忍度。
+   - **警告 B** (`GET /api/remote/hosts/host-915dae6f474b/ports status=404` 且返回 `{"error":"未找到指定主机"}`):
+     - **分析**：该主机此前已从后端成功删除，但前端状态中残留死 ID `host-915dae6f474b`；前端发起的端口请求返回 404 后未触发自愈回退，导致死 ID 持续存在并产生 404 告警。
+     - **解决**：在前端 `fetchRemoteHosts` 增设有效性校验，检测到当前选中主机已被删除时自动切回 `localhost`；在 `fetchRemoteHostPorts` 中遇到 404 状态码时自动清空对应缓存并重置 `currentHostId` 为 `localhost`。
+3. **切换主机时进程列表加载延迟与切“全部”秒出问题**：
+   - **根因**：
+     1) `selectHost(val)` 中调用了 `switchTab('ports')`（内部已调用 `fetchPorts` -> `fetchRemoteHostPorts`），紧随其后又直接调用了 `fetchRemoteHostPorts(val)`，并发发起了两个完全相同的异步请求；
+     2) 缺乏并发请求去重锁（In-flight promise deduplication），两个并发请求在 SSH 通道与 DOM 渲染层面产生竞态，后完成或阻塞的请求覆盖了 DOM 加载状态；数据已缓存在 `state.ports` 中，用户一切换来源筛选触发 `renderPortsTable()` 瞬间绘制（“秒出”）；
+     3) 针对无 SSH 凭据的局域网主机，每次扫描 1..65535 端口耗时高达 20 秒且无服务端缓存。
+   - **解决**：
+     1) 移除 `selectHost` 中的重复并发请求调用；
+     2) 在前端引入 `inFlightRemotePortsPromises` Map 锁，同一 hostId 正在请求时复用现有 Promise，杜绝并发竞争与 DOM 覆盖；
+     3) 在后端 `internal/remote/lan.go` 为 `ProbeHostPorts(ip)` 增加 60 秒内存 TTL 缓存（`probedCache`），二次查询毫秒级秒出。
+4. **多图标配置弹窗文案调整**：
+   - 点击“已配置”弹出的多图标列表弹窗中，将所有操作按钮与提示文本中的“移出”统一修改为“移除”（`<span>移除</span>`、`确定从飞牛桌面移除此图标吗？`、`已从桌面移除图标`等）。
+
+---
+
+### 架构与核心实现 (Architecture & Core Implementation)
+1. **地址规范化与多向匹配清除 (`internal/remote/storage.go`)**：
+   - 新增 `CleanHostAddress(addr string) string`：清洗 `lan:` 前缀、`http(s)://`、路径及端口号，统一转为小写；
+   - `SaveHost`：当新建主机（`ID == ""`）时，先根据规范化地址在现有主机库中查重，若存在则复用已有 ID 进行安全更新，防止多条同地址主机产生；
+   - `DeleteHost`：全面重构为幂等遍历匹配删除，不论传入的是 ID、IP 还是 `lan:ip`，均一次性清除所有匹配的存储记录并写盘。
+2. **局域网状态清洗与端口探测缓存 (`internal/remote/lan.go`)**：
+   - 为 `LANScanner` 增加 `probedCache map[string]probedCacheEntry` 与 `probedMu` 读写锁；
+   - `ProbeHostPorts(ip string)`：增加 60 秒内存缓存机制，相同 IP 重复请求直接返回缓存端口，彻底消除 20 秒探测阻塞；
+   - `UnmarkConfiguredHost(hostAddr string)`：结合 `CleanHostAddress` 同时比对 IP 与 HostID，并主动失效 `probedCache`；
+   - `GetStatus()` 与 `doScan()`：在构建 `configuredMap` 时同步注入规范化 IP 索引，保证删除别名或主机后状态精准复原为 `unconfigured`。
+3. **Docker 扫描超时与告警阈值提升 (`internal/desktop/docklabel.go`, `internal/api/handler.go`)**：
+   - `internal/desktop/docklabel.go`：`getDockLabelDockerClient()` 的 `Timeout` 由 3s 提升至 8s；`ScanDockLabelItems` 的 `[PERF]` 告警耗时阈值由 3000ms 提高到 6000ms；
+   - `internal/api/handler.go`：`handleGetDockLabelItems` 的 `[PERF]` 告警耗时阈值由 3000ms 提高到 6000ms。
+4. **后端接口容错与地址回退 (`internal/api/handler.go`)**：
+   - `handleSaveRemoteHost`：空别名且空密码保存时，同时根据 `req.ID` 与 `CleanHostAddress(req.Host)` 检索并彻底删除匹配记录，同步调用 `remoteLAN.UnmarkConfiguredHost`；
+   - `handleDeleteRemoteHost`：增加按规范化地址二次反查，支持直接通过 IP 幂等删除；
+   - `handleGetRemoteHostPorts`：若直接 ID 未命中，支持按规范化地址二次查找，若仍未命中返回 404。
+5. **前端并发去重与 404 自愈机制 (`web/app.js`)**：
+   - 新增 `inFlightRemotePortsPromises`（Map 结构），实现请求互斥与结果共享；
+   - 移除 `selectHost` 中与 `switchTab('ports')` 重复的 `fetchRemoteHostPorts` 请求；
+   - `fetchRemoteHostPorts` 遇到 404 时自动将 `state.currentHostId` 重置为 `localhost`，清空缓存并重新拉取本机端口，避免卡在死 ID；
+   - `fetchRemoteHosts` 拉取主机列表后比对 `state.currentHostId`，若当前主机已从后端删除则自动回退至 `localhost`。
+6. **弹窗文案统一为“移除” (`web/app.js`)**：
+   - `openPortDesktopListModal` 中表格操作按钮、确认弹窗文案、审计日志动作及 Toast 提示中的“移出”全部统一替换为“移除”。
+7. **全链路版本升级至 `v1.1.56`**：
+   - 同步升级 `cmd/server/main.go`、`fnos-app/manifest`、`internal/api/handler_test.go`、`web/index.html` 以及 `web/app.js` 至 `1.1.56`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **Go 单元测试全量通过**：
+   - 容器内执行 `go test -count=1 ./...`，覆盖 `internal/api`、`internal/desktop`、`internal/remote`、`internal/logger` 等全部模块，所有测试用例 100% PASS。
+2. **Go 编译验证通过**：
+   - 容器内执行 `go build -buildvcs=false -o /tmp/fn-test-binary ./cmd/server`，顺利生成二进制且 Exit Code 0。
+3. **零 .fpk 文件残留**：
+   - 工作区纯净，无任何 `.fpk` 文件残留。

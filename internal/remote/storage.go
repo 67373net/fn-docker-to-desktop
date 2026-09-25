@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -123,6 +125,21 @@ func (s *Storage) GetHostByAddress(addr string) (HostConfig, bool) {
 	return HostConfig{}, false
 }
 
+// CleanHostAddress normalizes a host address by removing lan: prefix, protocol schemes, paths, and trailing ports.
+func CleanHostAddress(addr string) string {
+	a := strings.TrimSpace(addr)
+	a = strings.TrimPrefix(a, "lan:")
+	a = strings.TrimPrefix(a, "http://")
+	a = strings.TrimPrefix(a, "https://")
+	if idx := strings.Index(a, "/"); idx != -1 {
+		a = a[:idx]
+	}
+	if host, _, err := net.SplitHostPort(a); err == nil {
+		a = host
+	}
+	return strings.ToLower(strings.TrimSpace(a))
+}
+
 // SaveHost creates or updates a host.
 func (s *Storage) SaveHost(h HostConfig) (HostConfig, error) {
 	s.mu.Lock()
@@ -130,8 +147,18 @@ func (s *Storage) SaveHost(h HostConfig) (HostConfig, error) {
 
 	now := time.Now()
 	if h.ID == "" {
-		h.ID = generateHostID()
-		h.CreatedAt = now
+		cleanAddr := CleanHostAddress(h.Host)
+		for _, existing := range s.hosts {
+			if existing.Host == h.Host || CleanHostAddress(existing.Host) == cleanAddr {
+				h.ID = existing.ID
+				h.CreatedAt = existing.CreatedAt
+				break
+			}
+		}
+		if h.ID == "" {
+			h.ID = generateHostID()
+			h.CreatedAt = now
+		}
 	}
 	h.UpdatedAt = now
 
@@ -176,15 +203,23 @@ func (s *Storage) UpdateStatus(id string, status string, errMsg string) {
 	_ = s.saveLocked()
 }
 
-// DeleteHost removes a host by ID.
+// DeleteHost removes a host by ID or host address. If host does not exist, returns nil (idempotent).
 func (s *Storage) DeleteHost(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.hosts[id]; !ok {
-		return fmt.Errorf("host %s not found", id)
+	cleanID := CleanHostAddress(id)
+
+	deleted := false
+	for k, h := range s.hosts {
+		if k == id || h.ID == id || h.ID == cleanID || h.Host == id || CleanHostAddress(h.Host) == cleanID {
+			delete(s.hosts, k)
+			deleted = true
+		}
 	}
 
-	delete(s.hosts, id)
-	return s.saveLocked()
+	if deleted {
+		return s.saveLocked()
+	}
+	return nil
 }

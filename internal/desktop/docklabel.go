@@ -428,7 +428,7 @@ func getDockLabelDockerClient() *http.Client {
 				MaxIdleConns:      2,
 				IdleConnTimeout:   30 * time.Second,
 			},
-			Timeout: 3 * time.Second,
+			Timeout: 8 * time.Second,
 		}
 	}
 	return dockLabelClient
@@ -439,7 +439,7 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
-		if dur > 3000*time.Millisecond {
+		if dur > 6000*time.Millisecond {
 			slog.Warn("[PERF] ScanDockLabelItems 扫描耗时过长", "duration", dur)
 		}
 	}()

@@ -16,6 +16,11 @@ import (
 	"fn-docker-to-desktop/internal/monitor"
 )
 
+type probedCacheEntry struct {
+	ports     []monitor.PortEntry
+	timestamp time.Time
+}
+
 // LANScanner scans local area network for active hosts.
 type LANScanner struct {
 	storage     *Storage
@@ -23,12 +28,15 @@ type LANScanner struct {
 	scanning    atomic.Bool
 	lastScan    time.Time
 	cachedHosts []DiscoveredLANHost
+	probedMu    sync.RWMutex
+	probedCache map[string]probedCacheEntry
 }
 
 // NewLANScanner creates a new LANScanner.
 func NewLANScanner(storage *Storage) *LANScanner {
 	s := &LANScanner{
-		storage: storage,
+		storage:     storage,
+		probedCache: make(map[string]probedCacheEntry),
 	}
 	// Initial fast harvest from ARP table
 	s.cachedHosts = s.readARPTable()
@@ -147,14 +155,20 @@ func (s *LANScanner) doScan() {
 
 	// 3. De-duplicate and match against configured hosts in storage
 	configured := s.storage.GetAllHosts()
-	configuredMap := make(map[string]HostConfig, len(configured))
+	configuredMap := make(map[string]HostConfig, len(configured)*2)
 	for _, ch := range configured {
 		configuredMap[ch.Host] = ch
+		configuredMap[CleanHostAddress(ch.Host)] = ch
 	}
 
 	var finalHosts []DiscoveredLANHost
 	for _, h := range aliveMap {
-		if ch, exists := configuredMap[h.IP]; exists {
+		cleanIP := CleanHostAddress(h.IP)
+		if ch, exists := configuredMap[cleanIP]; exists {
+			h.Status = "configured"
+			h.HostID = ch.ID
+			h.Name = ch.Name
+		} else if ch, exists := configuredMap[h.IP]; exists {
 			h.Status = "configured"
 			h.HostID = ch.ID
 			h.Name = ch.Name
@@ -174,14 +188,23 @@ func (s *LANScanner) GetStatus() LANScanStatus {
 	defer s.mu.RUnlock()
 
 	configured := s.storage.GetAllHosts()
-	configuredMap := make(map[string]HostConfig, len(configured))
+	configuredMap := make(map[string]HostConfig, len(configured)*2)
 	for _, ch := range configured {
 		configuredMap[ch.Host] = ch
+		configuredMap[CleanHostAddress(ch.Host)] = ch
+		if ch.ID != "" {
+			configuredMap[ch.ID] = ch
+		}
 	}
 
 	result := make([]DiscoveredLANHost, len(s.cachedHosts))
 	for i, h := range s.cachedHosts {
-		if ch, ok := configuredMap[h.IP]; ok {
+		cleanIP := CleanHostAddress(h.IP)
+		if ch, ok := configuredMap[cleanIP]; ok {
+			h.Status = "configured"
+			h.HostID = ch.ID
+			h.Name = ch.Name
+		} else if ch, ok := configuredMap[h.IP]; ok {
 			h.Status = "configured"
 			h.HostID = ch.ID
 			h.Name = ch.Name
@@ -199,17 +222,29 @@ func (s *LANScanner) GetStatus() LANScanStatus {
 	}
 }
 
-// UnmarkConfiguredHost clears the configured status of a host address in cached LAN hosts.
+// UnmarkConfiguredHost clears the configured status of a host address or ID in cached LAN hosts.
 func (s *LANScanner) UnmarkConfiguredHost(hostAddr string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cleanAddr := CleanHostAddress(hostAddr)
 	for i := range s.cachedHosts {
-		if s.cachedHosts[i].IP == hostAddr {
+		hClean := CleanHostAddress(s.cachedHosts[i].IP)
+		if s.cachedHosts[i].IP == hostAddr || hClean == cleanAddr || s.cachedHosts[i].HostID == hostAddr || s.cachedHosts[i].HostID == cleanAddr {
 			s.cachedHosts[i].Status = "unconfigured"
 			s.cachedHosts[i].HostID = ""
 			s.cachedHosts[i].Name = ""
 		}
 	}
+	s.InvalidateProbedCache(hostAddr)
+}
+
+// InvalidateProbedCache clears the cached ports for a host.
+func (s *LANScanner) InvalidateProbedCache(hostAddr string) {
+	s.probedMu.Lock()
+	defer s.probedMu.Unlock()
+	cleanAddr := CleanHostAddress(hostAddr)
+	delete(s.probedCache, hostAddr)
+	delete(s.probedCache, cleanAddr)
 }
 
 func getLocalSubnets() []*net.IPNet {
@@ -282,9 +317,34 @@ var commonProbePorts = []int{
 }
 
 // ProbeHostPorts scans all 1..65535 ports on a target IP when SSH is unconfigured or failed,
-// similar to "nmap -p-", using high concurrency goroutines.
+// similar to "nmap -p-", using high concurrency goroutines. Results are cached for 60 seconds.
 func (s *LANScanner) ProbeHostPorts(ip string) []monitor.PortEntry {
-	return s.ProbeHostPortsRange(ip, 1, 65535)
+	if ip == "" {
+		return nil
+	}
+	cleanIP := CleanHostAddress(ip)
+	s.probedMu.RLock()
+	if entry, ok := s.probedCache[cleanIP]; ok {
+		if time.Since(entry.timestamp) < 60*time.Second {
+			s.probedMu.RUnlock()
+			return entry.ports
+		}
+	}
+	s.probedMu.RUnlock()
+
+	ports := s.ProbeHostPortsRange(cleanIP, 1, 65535)
+
+	s.probedMu.Lock()
+	if s.probedCache == nil {
+		s.probedCache = make(map[string]probedCacheEntry)
+	}
+	s.probedCache[cleanIP] = probedCacheEntry{
+		ports:     ports,
+		timestamp: time.Now(),
+	}
+	s.probedMu.Unlock()
+
+	return ports
 }
 
 // ProbeHostPortsRange scans ports within a given range on a target IP.

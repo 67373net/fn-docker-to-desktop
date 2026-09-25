@@ -169,7 +169,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.55';
+  const ver = state.settings?.version || '1.1.56';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1079,7 +1079,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.55';
+  const ver = state.settings?.version || '1.1.56';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4328,7 +4328,7 @@ function openPortDesktopListModal(port, procName, items) {
             <span>编辑</span>
           </button>
           <button class="btn btn-sm btn-danger btn-delete-from-list" data-id="${item.id}">
-            <span>移出</span>
+            <span>移除</span>
           </button>
         </div>
       </td>
@@ -4347,21 +4347,21 @@ function openPortDesktopListModal(port, procName, items) {
   tbody.querySelectorAll('.btn-delete-from-list').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      if (confirm('确定从飞牛桌面移出此图标吗？')) {
-        reportClientLog('action', '用户从多图标列表移出桌面图标', `ID: ${id}`, { id });
+      if (confirm('确定从飞牛桌面移除此图标吗？')) {
+        reportClientLog('action', '用户从多图标列表移除桌面图标', `ID: ${id}`, { id });
         try {
           let res = await fetch(apiUrl(`/api/desktop/items/${id}/delete`), { method: 'POST' });
           if (!res.ok) {
             res = await fetch(apiUrl(`/api/desktop/items/${id}`), { method: 'DELETE' });
           }
           if (res.ok) {
-            showToast('已从桌面移出图标', 'success');
+            showToast('已从桌面移除图标', 'success');
           } else {
             const errData = await res.json().catch(() => ({}));
-            showToast('移出失败: ' + (errData.error || res.statusText), 'error');
+            showToast('移除失败: ' + (errData.error || res.statusText), 'error');
           }
         } catch (e) {
-          showToast('移出网络异常: ' + e.message, 'error');
+          showToast('移除网络异常: ' + e.message, 'error');
         } finally {
           await fetchDesktopItems();
           await fetchPorts();
@@ -4868,7 +4868,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.55';
+      const ver = state.settings?.version || '1.1.56';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5022,6 +5022,15 @@ async function fetchRemoteHosts() {
     if (res.ok) {
       const data = await res.json();
       state.hosts = Array.isArray(data) ? data : (data.hosts || []);
+      // If current selected host is a remote host ID that no longer exists, fall back to localhost
+      if (state.currentHostId && state.currentHostId !== 'localhost' && !state.currentHostId.startsWith('lan:')) {
+        const stillExists = state.hosts.some(h => h.id === state.currentHostId);
+        if (!stillExists) {
+          if (state.hostPortsCache[state.currentHostId]) delete state.hostPortsCache[state.currentHostId];
+          state.currentHostId = 'localhost';
+          fetchPorts();
+        }
+      }
       updateHostSelectDropdown();
     }
   } catch (err) {
@@ -5186,79 +5195,95 @@ function selectHost(val) {
   }
 
   switchTab('ports');
-
-  // Background refresh if stale or initial load
-  if (val === 'localhost') {
-    fetchPorts({ force: false, silent: !!cached });
-  } else {
-    fetchRemoteHostPorts(val, { force: false, silent: !!cached });
-  }
 }
 
+const inFlightRemotePortsPromises = new Map();
+
 async function fetchRemoteHostPorts(hostId, options = {}) {
-  const force = options.force || false;
-  let silent = options.silent || false;
-  const tbody = document.getElementById('ports-tbody');
-  const cached = state.hostPortsCache[hostId];
-
-  if (cached && !force) {
-    if (state.currentHostId === hostId) {
-      state.ports = cached.ports || [];
-      renderPortsTable();
-      updatePortCountBadge();
-    }
-    const cacheAgeMs = Date.now() - (cached.timestamp || 0);
-    if (!silent && cacheAgeMs < 60000) {
-      return;
-    }
-    silent = true;
+  if (inFlightRemotePortsPromises.has(hostId)) {
+    return inFlightRemotePortsPromises.get(hostId);
   }
 
-  if (!silent && !cached && tbody && state.currentHostId === hostId) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接主机并探测端口与进程...</td></tr>';
-  }
+  const promise = (async () => {
+    const force = options.force || false;
+    let silent = options.silent || false;
+    const tbody = document.getElementById('ports-tbody');
+    const cached = state.hostPortsCache[hostId];
 
-  try {
-    const res = await fetch(apiUrl(`/api/remote/hosts/${encodeURIComponent(hostId)}/ports`));
-    if (res.status === 401) return showAuthModal();
-    if (res.ok) {
-      const data = await res.json();
-      const freshPorts = data.ports || [];
-      state.hostPortsCache[hostId] = {
-        ports: freshPorts,
-        timestamp: Date.now()
-      };
-
+    if (cached && !force) {
       if (state.currentHostId === hostId) {
-        state.ports = freshPorts;
-        if (state.ports.length === 0) {
-          if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 0.95rem; font-weight: 500; margin-bottom: 0.6rem; color: var(--text-muted);">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">设置SSH</button></div></td></tr>`;
-            tbody.querySelectorAll('.link-config-ssh-inline, #btn-prompt-config-ssh').forEach(el => {
-              el.addEventListener('click', (e) => {
-                e.preventDefault();
-                openHostSettingsModal();
-              });
-            });
-          }
-          updatePortCountBadge();
-          return;
-        }
-
+        state.ports = cached.ports || [];
         renderPortsTable();
         updatePortCountBadge();
       }
-    } else {
+      const cacheAgeMs = Date.now() - (cached.timestamp || 0);
+      if (!silent && cacheAgeMs < 60000) {
+        return;
+      }
+      silent = true;
+    }
+
+    if (!silent && !cached && tbody && state.currentHostId === hostId) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="spinner-small" style="margin-right: 8px;"></span>正在连接主机并探测端口与进程...</td></tr>';
+    }
+
+    try {
+      const res = await fetch(apiUrl(`/api/remote/hosts/${encodeURIComponent(hostId)}/ports`));
+      if (res.status === 401) return showAuthModal();
+      if (res.status === 404) {
+        // Host was deleted or not found, fall back to localhost
+        if (state.currentHostId === hostId) {
+          if (state.hostPortsCache[hostId]) delete state.hostPortsCache[hostId];
+          state.currentHostId = 'localhost';
+          updateHostSelectDropdown();
+          fetchPorts();
+        }
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        const freshPorts = data.ports || [];
+        state.hostPortsCache[hostId] = {
+          ports: freshPorts,
+          timestamp: Date.now()
+        };
+
+        if (state.currentHostId === hostId) {
+          state.ports = freshPorts;
+          if (state.ports.length === 0) {
+            if (tbody) {
+              tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div style="padding: 1.5rem; text-align: center;"><p style="font-size: 0.95rem; font-weight: 500; margin-bottom: 0.6rem; color: var(--text-muted);">没有符合条件的端口，<span class="link-config-ssh-inline" style="color: #2563eb; cursor: pointer; text-decoration: underline;">设置SSH</span>后可显示更多详情</p><button type="button" class="btn btn-primary btn-sm" id="btn-prompt-config-ssh">设置SSH</button></div></td></tr>`;
+              tbody.querySelectorAll('.link-config-ssh-inline, #btn-prompt-config-ssh').forEach(el => {
+                el.addEventListener('click', (e) => {
+                  e.preventDefault();
+                  openHostSettingsModal();
+                });
+              });
+            }
+            updatePortCountBadge();
+            return;
+          }
+
+          renderPortsTable();
+          updatePortCountBadge();
+        }
+      } else {
+        if (!cached && tbody && state.currentHostId === hostId) {
+          tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败</td></tr>';
+        }
+      }
+    } catch (err) {
+      console.error('Fetch remote host ports error:', err);
       if (!cached && tbody && state.currentHostId === hostId) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
-  } catch (err) {
-    console.error('Fetch remote host ports error:', err);
-    if (!cached && tbody && state.currentHostId === hostId) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color: var(--error);">获取远程端口失败: ${escapeHtml(err.message)}</td></tr>`;
-    }
-  }
+  })().finally(() => {
+    inFlightRemotePortsPromises.delete(hostId);
+  });
+
+  inFlightRemotePortsPromises.set(hostId, promise);
+  return promise;
 }
 
 function openHostModal(mode, hostData = null) {

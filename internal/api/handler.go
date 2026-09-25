@@ -2207,7 +2207,7 @@ func (h *Handler) handleGetDockLabelItems(w http.ResponseWriter, r *http.Request
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
-		if dur > 3000*time.Millisecond {
+		if dur > 6000*time.Millisecond {
 			slog.Warn("[PERF] handleGetDockLabelItems 扫描耗时过长", "duration", dur)
 		}
 	}()
@@ -2730,27 +2730,47 @@ func (h *Handler) handleSaveRemoteHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Address uniqueness check: prevent duplicate hosts
+	cleanReqHost := remote.CleanHostAddress(req.Host)
 	existingHosts := h.remoteStorage.GetAllHosts()
 	for _, eh := range existingHosts {
-		if eh.ID != req.ID && strings.EqualFold(eh.Host, req.Host) {
+		if eh.ID != req.ID && (strings.EqualFold(eh.Host, req.Host) || remote.CleanHostAddress(eh.Host) == cleanReqHost) {
 			h.jsonError(w, r, "主机地址已存在，不能重复添加相同地址的主机", http.StatusBadRequest)
 			return
+		}
+	}
+
+	// If existing had no SSH credentials and user cleared the alias, auto-delete to revert to unconfigured
+	if strings.TrimSpace(req.Name) == "" && req.Password == "" && req.PrivateKey == "" {
+		if req.ID != "" {
+			if existing, ok := h.remoteStorage.GetHost(req.ID); ok {
+				if existing.Password == "" && existing.PrivateKey == "" {
+					_ = h.remoteStorage.DeleteHost(req.ID)
+					if h.remoteLAN != nil {
+						h.remoteLAN.UnmarkConfiguredHost(req.Host)
+						h.remoteLAN.UnmarkConfiguredHost(req.ID)
+					}
+					h.jsonResponse(w, r, map[string]interface{}{"deleted": true, "id": req.ID, "host": req.Host}, http.StatusOK)
+					return
+				}
+			}
+		} else {
+			for _, eh := range existingHosts {
+				if (eh.Host == req.Host || remote.CleanHostAddress(eh.Host) == cleanReqHost) && eh.Password == "" && eh.PrivateKey == "" {
+					_ = h.remoteStorage.DeleteHost(eh.ID)
+					if h.remoteLAN != nil {
+						h.remoteLAN.UnmarkConfiguredHost(req.Host)
+						h.remoteLAN.UnmarkConfiguredHost(eh.ID)
+					}
+					h.jsonResponse(w, r, map[string]interface{}{"deleted": true, "id": eh.ID, "host": req.Host}, http.StatusOK)
+					return
+				}
+			}
 		}
 	}
 
 	// If editing existing host and credentials were sent as masked, keep original
 	if req.ID != "" {
 		if existing, ok := h.remoteStorage.GetHost(req.ID); ok {
-			// If existing had no SSH credentials and user cleared the alias, auto-delete to revert to unconfigured
-			if strings.TrimSpace(req.Name) == "" && req.Password == "" && req.PrivateKey == "" && existing.Password == "" && existing.PrivateKey == "" {
-				_ = h.remoteStorage.DeleteHost(req.ID)
-				if h.remoteLAN != nil {
-					h.remoteLAN.UnmarkConfiguredHost(req.Host)
-				}
-				h.jsonResponse(w, r, map[string]interface{}{"deleted": true, "id": req.ID, "host": req.Host}, http.StatusOK)
-				return
-			}
-
 			if req.Password == "******" || req.Password == "" {
 				req.Password = existing.Password
 			}
@@ -2834,18 +2854,34 @@ func (h *Handler) handleDeleteRemoteHost(w http.ResponseWriter, r *http.Request)
 	}
 
 	host, hasHost := h.remoteStorage.GetHost(id)
+	if !hasHost {
+		cleanID := remote.CleanHostAddress(id)
+		for _, eh := range h.remoteStorage.GetAllHosts() {
+			if eh.Host == id || remote.CleanHostAddress(eh.Host) == cleanID {
+				host = eh
+				hasHost = true
+				break
+			}
+		}
+	}
 
 	if h.remoteSSH != nil {
 		h.remoteSSH.CloseClient(id)
+		if hasHost {
+			h.remoteSSH.CloseClient(host.ID)
+		}
 	}
 
-	if err := h.remoteStorage.DeleteHost(id); err != nil {
-		h.jsonError(w, r, fmt.Sprintf("删除主机失败: %v", err), http.StatusInternalServerError)
-		return
+	_ = h.remoteStorage.DeleteHost(id)
+	if hasHost && host.ID != id {
+		_ = h.remoteStorage.DeleteHost(host.ID)
 	}
 
-	if hasHost && h.remoteLAN != nil {
-		h.remoteLAN.UnmarkConfiguredHost(host.Host)
+	if h.remoteLAN != nil {
+		h.remoteLAN.UnmarkConfiguredHost(id)
+		if hasHost {
+			h.remoteLAN.UnmarkConfiguredHost(host.Host)
+		}
 	}
 
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
@@ -2912,8 +2948,19 @@ func (h *Handler) handleGetRemoteHostPorts(w http.ResponseWriter, r *http.Reques
 				Name: ip,
 			}
 		} else {
-			h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
-			return
+			cleanID := remote.CleanHostAddress(id)
+			found := false
+			for _, eh := range h.remoteStorage.GetAllHosts() {
+				if eh.Host == id || remote.CleanHostAddress(eh.Host) == cleanID {
+					host = eh
+					found = true
+					break
+				}
+			}
+			if !found {
+				h.jsonError(w, r, "未找到指定主机", http.StatusNotFound)
+				return
+			}
 		}
 	}
 
