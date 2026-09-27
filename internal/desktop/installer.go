@@ -573,25 +573,37 @@ cat << 'EOFCGIHTML'
   const skipKey = 'fn_notice_skip_%s';
   const today = new Date().toISOString().slice(0, 10);
 
+  function isIPOrLocalhost(host) {
+    if (!host) return true;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
+  }
+
   try {
     const curHost = window.location.hostname;
-    const parsed = new URL(TARGET_URL, window.location.href);
-    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
-        curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
-      parsed.hostname = curHost;
-      TARGET_URL = parsed.toString();
+    const isRemoteDomain = !isIPOrLocalhost(curHost);
+
+    if (isRemoteDomain && PORT > 0 && APP_NAME) {
+      const sub = APP_NAME.replace(/\./g, '-');
+      const proto = window.location.protocol;
+      const portPart = (window.location.port && window.location.port !== '80' && window.location.port !== '443') ? (':' + window.location.port) : '';
+      TARGET_URL = proto + '//' + sub + '.' + curHost + portPart + URL_PATH;
+    } else {
+      const parsed = new URL(TARGET_URL, window.location.href);
+      if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+          curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
+        parsed.hostname = curHost;
+        TARGET_URL = parsed.toString();
+      }
     }
   } catch(e) {}
 
   function doNavigate() {
-    if (UI_TYPE === 'url') {
-      try {
-        if (window.top && window.top !== window) {
-          window.top.location.href = TARGET_URL;
-          return;
-        }
-      } catch (e) {}
-    }
+    try {
+      if (window.top && window.top !== window) {
+        window.top.location.href = TARGET_URL;
+        return;
+      }
+    } catch (e) {}
     window.location.replace(TARGET_URL);
   }
 
