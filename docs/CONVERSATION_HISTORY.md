@@ -5341,3 +5341,45 @@ INFO
 ### 验证与产物清单 (Artifacts & Verification)
 1. **代码审查验证**：字段合并与表单脏检查逻辑严密闭环，交互体验显著提升。
 2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。
+---
+
+## Turn 85 - v1.1.69 发布记录
+
+### 用户需求与问题排查 (User Requirements & Root Cause Analysis)
+1. **彻底移除开屏提示直达网址区块**：
+   - 用户反馈：开屏信息中添加直达网址链接属于画蛇添足，要求完全去除该链接框与复制按钮。
+2. **彻底修复添加开屏提示后 FN Connect 穿透域名报错“暂无权限访问该服务”**：
+   - 用户反馈：配置开屏提示后，直达网址 `https://fndocker-nocobase-proxy-1-833725.example.5ddd.com/` 打不开，提示“FN Connect 暂无权限访问该服务...”。
+   - **根本原因排查**：
+     - 在飞牛 OS（fnOS）中，FN Connect 远程穿透网关通过读取应用包的 `app/ui/config` 来确定该子域名对应的后端服务端口。
+     - 此前代码在开启开屏提示（`isNotice == true`）时，强制将 `ui/config` 改写为 CGI 重定向路径 `/cgi/ThirdParty/...` 且**未声明 `port` 属性**。
+     - 导致 FN Connect 判定该应用无有效对外端口映射服务，从而在云端反向代理直接拦截并返回“FN Connect 暂无权限访问该服务...”，且桌面快捷方式变成了桌面内嵌窗口。
+     - **架构级解决方案**：
+       1. 凡是有端口的服务（`cfg.Port > 0`），应用中心打包配置 `ui/config` 中**严格保留原生端口声明 (`port`) 与路径**，确保 FN Connect 路由权限 100% 正常；
+       2. 对于端口映射（反向代理）应用，开屏提示由反向代理监听器直接进行原地拦截与渲染：用户访问独立子域名时首先呈现开屏卡片，点击“进入应用”后写入 Cookie 并无感刷新直达目标服务；
+       3. 保持浏览器地址栏始终为洁净的独立子域名，支持用户随时加入收藏夹且任何时候直接访问；
+       4. 增加已有应用包自动检测升级与修复机制，服务启动与对齐时自动修正历史旧包缺失端口的问题。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **反向代理开屏提示原生支持 (`internal/proxy/manager.go`, `internal/proxy/manager_test.go`)**：
+   - `ProxyOptions` 扩展支持 `NoticeEnabled`、`NoticeContent`、`Title` 与 `IconDataUrl`；
+   - 监听端口原生 HTTP 拦截：在 GET 页面请求且尚未点击确认时，直接在当前域名/端口下渲染开屏提示页面；
+   - 确认机制：点击“进入应用”后写入 `fn_notice_ack_<id>` Cookie 并自动刷新，后续请求透明放行至目标后端，并在反向代理向后端转发时自动过滤该内部 Cookie；
+   - 彻底移除开屏提示 HTML 中的“直达网址”区块与复制按钮。
+2. **安装器 UI 配置与端口声明修复 (`internal/desktop/installer.go`)**：
+   - 修复 `BuildPackage`：只要 `cfg.Port > 0`，`ui/config` 必须写入 `port` 与 `protocol`，不再因为开启公告而被剥离端口声明；
+   - 新增 `needsPackageUpgrade` 检查并在 `ReconcileInstalledItems` 中自动升级历史因公告导致缺失端口的损坏安装包。
+3. **API 路由与启动逻辑同步 (`internal/api/handler.go`, `cmd/server/main.go`, `internal/desktop/icons.go`)**：
+   - 在 [`internal/desktop/icons.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/icons.go) 中封装 `GetItemIconDataURL` 统一提取图标 base64；
+   - 在创建、更新、切换状态及服务恢复代理时，完整透传公告配置给代理实例；
+   - 同步清理 `renderNoticePage` 中的直达网址相关 DOM、样式与脚本。
+4. **全链路版本升级至 `v1.1.69`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.69`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **自动化测试**：新增 `internal/proxy/manager_test.go`，覆盖代理开屏拦截、确认 Cookie 放行、静态资源直通及无直达网址验证。
+2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。

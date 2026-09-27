@@ -438,8 +438,17 @@ desktop_uidir=ui
 
 	isNotice := strings.TrimSpace(cfg.NoticeContent) != ""
 
-	if (cfg.Port == 0 && isExternalURL) || isNotice {
-		// CGI redirect mode strictly aligned with WatchCow and for Notice mode
+	if cfg.Port > 0 {
+		if proto == "" {
+			proto = "http"
+		}
+		entryMap["protocol"] = proto
+		if portStr != "" {
+			entryMap["port"] = portStr
+		}
+		entryMap["url"] = urlPath
+	} else if (cfg.Port == 0 && isExternalURL) || isNotice {
+		// CGI redirect mode for shortcut mode (port == 0)
 		entryMap["type"] = uiType
 		entryMap["protocol"] = "http"
 		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", cfg.AppName, cfg.AppName)
@@ -448,9 +457,6 @@ desktop_uidir=ui
 			proto = "http"
 		}
 		entryMap["protocol"] = proto
-		if portStr != "" {
-			entryMap["port"] = portStr
-		}
 		entryMap["url"] = urlPath
 	}
 
@@ -471,8 +477,8 @@ desktop_uidir=ui
 	// Also write to ui/config for desktop_uidir=ui compatibility
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
-	// Write index.cgi for CGI redirect mode or notice mode
-	if (cfg.Port == 0 && isExternalURL) || isNotice {
+	// Write index.cgi for CGI redirect mode or notice mode in shortcut mode
+	if (cfg.Port == 0 && isExternalURL) || (cfg.Port == 0 && isNotice) {
 		var cgiScript string
 		if isNotice {
 			targetJsExpr := ""
@@ -887,6 +893,35 @@ func isManagedApp(appName string) bool {
 	return strings.HasPrefix(appName, "fndocker.") || strings.HasPrefix(appName, "put-port.")
 }
 
+// needsPackageUpgrade checks if an installed app needs re-installation
+// (e.g. legacy notice packages that lacked "port" in ui/config).
+func (i *Installer) needsPackageUpgrade(item DesktopItem, appName string) bool {
+	if item.Port <= 0 {
+		return false
+	}
+	candidateDirs := []string{
+		filepath.Join("/var/apps", appName, "target"),
+		filepath.Join("/var/apps", appName),
+		filepath.Join("/usr/local/apps/@appcenter", appName),
+		filepath.Join("/host/root/var/apps", appName, "target"),
+		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
+	}
+	for _, dir := range candidateDirs {
+		for _, sub := range []string{"ui/config", "app/ui/config"} {
+			cfgPath := filepath.Join(dir, sub)
+			data, err := os.ReadFile(cfgPath)
+			if err == nil && len(data) > 0 {
+				content := string(data)
+				if strings.Contains(content, "/cgi/ThirdParty/") || !strings.Contains(content, `"port"`) {
+					return true
+				}
+				return false
+			}
+		}
+	}
+	return false
+}
+
 // ReconcileInstalledItems checks if any enabled desktop item is not yet installed or stopped in fnOS.
 // It installs missing items and starts stopped/disabled items,
 // ensuring desktop icons are properly restored on server startup / reinstall without disrupting already running items.
@@ -934,6 +969,13 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 			missing = append(missing, item)
 			i.SetItemReconcileStatus(item.ID, appName, "排队中...")
 		} else {
+			// If app is installed in fnOS, check whether its ui/config needs upgrading
+			if i.needsPackageUpgrade(item, appName) {
+				slog.Info("检测到桌面应用配置需要同步升级（补充端口声明）", "appName", appName)
+				missing = append(missing, item)
+				i.SetItemReconcileStatus(item.ID, appName, "升级中...")
+				continue
+			}
 			// If app is installed in fnOS, check whether it is stopped/disabled
 			status := i.getAppStatus(appName)
 			if status == "stopped" || (status != "running" && status != "starting" && status != "") {

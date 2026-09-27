@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,12 +15,24 @@ import (
 	"time"
 )
 
+// ProxyOptions holds optional settings like interstitial notice and title for a proxy instance.
+type ProxyOptions struct {
+	NoticeEnabled bool
+	NoticeContent string
+	Title         string
+	IconDataUrl   string
+}
+
 // ProxyInstance represents an active reverse proxy listener.
 type ProxyInstance struct {
 	ID            string
 	Port          int
 	TargetURL     string
 	SkipTLSVerify bool
+	NoticeEnabled bool
+	NoticeContent string
+	Title         string
+	IconDataUrl   string
 	server        *http.Server
 	listener      net.Listener
 }
@@ -77,12 +90,19 @@ func (m *Manager) SetDialContext(fn DialContextFunc) {
 
 // StartProxy starts a reverse proxy on specified local port pointing to targetURL.
 func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerify bool) error {
+	return m.StartProxyWithOptions(id, port, targetURL, skipTLSVerify, ProxyOptions{})
+}
+
+// StartProxyWithOptions starts a reverse proxy on specified local port pointing to targetURL with options.
+func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, skipTLSVerify bool, opts ProxyOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// If already running with same config, return
 	if existing, ok := m.instances[id]; ok {
-		if existing.Port == port && existing.TargetURL == targetURL && existing.SkipTLSVerify == skipTLSVerify {
+		if existing.Port == port && existing.TargetURL == targetURL && existing.SkipTLSVerify == skipTLSVerify &&
+			existing.NoticeEnabled == opts.NoticeEnabled && existing.NoticeContent == opts.NoticeContent &&
+			existing.Title == opts.Title && existing.IconDataUrl == opts.IconDataUrl {
 			return nil
 		}
 		// Stop old instance before re-starting
@@ -197,6 +217,23 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 		if incomingHost != "" {
 			req.Header.Set("X-Forwarded-Host", incomingHost)
 		}
+
+		// 4. Strip internal notice ack cookies from forwarded request
+		if rawCookie := req.Header.Get("Cookie"); rawCookie != "" {
+			cookies := strings.Split(rawCookie, ";")
+			var filtered []string
+			for _, c := range cookies {
+				trimmed := strings.TrimSpace(c)
+				if !strings.HasPrefix(trimmed, "fn_notice_ack_") {
+					filtered = append(filtered, trimmed)
+				}
+			}
+			if len(filtered) > 0 {
+				req.Header.Set("Cookie", strings.Join(filtered, "; "))
+			} else {
+				req.Header.Del("Cookie")
+			}
+		}
 	}
 
 	// ModifyResponse to handle redirects, CORS, iframe embedding, and cookies for WAN access
@@ -296,6 +333,13 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if opts.NoticeEnabled && strings.TrimSpace(opts.NoticeContent) != "" {
+			if shouldShowNotice(r, id, target.Path) {
+				renderProxyNotice(w, r, id, opts.Title, opts.IconDataUrl, opts.NoticeContent)
+				return
+			}
+		}
+
 		proxy.ServeHTTP(w, r)
 	})
 
@@ -308,6 +352,10 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 		Port:          port,
 		TargetURL:     targetURL,
 		SkipTLSVerify: skipTLSVerify,
+		NoticeEnabled: opts.NoticeEnabled,
+		NoticeContent: opts.NoticeContent,
+		Title:         opts.Title,
+		IconDataUrl:   opts.IconDataUrl,
 		server:        server,
 		listener:      ln,
 	}
@@ -452,4 +500,221 @@ func RecommendAvailablePort(basePort int, usedPorts map[int]bool) int {
 		}
 	}
 	return 0
+}
+
+func shouldShowNotice(r *http.Request, id, targetPath string) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	cookieName := "fn_notice_ack_" + id
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		return false
+	}
+	if r.URL.Query().Get("_notice_ack") == "1" {
+		return false
+	}
+	reqPath := strings.ToLower(r.URL.Path)
+	staticExts := []string{".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".map", ".json", ".wasm"}
+	for _, ext := range staticExts {
+		if strings.HasSuffix(reqPath, ext) {
+			return false
+		}
+	}
+	accept := r.Header.Get("Accept")
+	targetBase := strings.ToLower(strings.TrimRight(targetPath, "/"))
+	if strings.Contains(accept, "text/html") || reqPath == "/" || reqPath == "" || (targetBase != "" && (reqPath == targetBase || reqPath == targetBase+"/")) {
+		return true
+	}
+	return false
+}
+
+func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDataUrl, noticeContent string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	escapedTitle := html.EscapeString(title)
+	if escapedTitle == "" {
+		escapedTitle = "应用提示"
+	}
+	escapedNotice := html.EscapeString(noticeContent)
+
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>%s - 开屏提示</title>
+  <style>
+    :root {
+      --bg-page: #f1f5f9;
+      --bg-card: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --notice-bg: #eff6ff;
+      --notice-border: #bfdbfe;
+      --notice-text: #1e3a8a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-page: #0b0f17;
+        --bg-card: #151b28;
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --border: #242f42;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --notice-bg: #172554;
+        --notice-border: #1e40af;
+        --notice-text: #dbeafe;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    .notice-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 460px;
+      width: 100%%;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .notice-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .notice-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      object-fit: cover;
+      background: var(--bg-page);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .notice-title-group {
+      flex: 1;
+      overflow: hidden;
+    }
+    .notice-app-name {
+      font-size: 17px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text-main);
+    }
+    .notice-body {
+      background: var(--notice-bg);
+      border: 1px solid var(--notice-border);
+      color: var(--notice-text);
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 260px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+    }
+    .notice-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .skip-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn-proceed {
+      background-color: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.1s;
+      outline: none;
+    }
+    .btn-proceed:hover {
+      background-color: var(--primary-hover);
+    }
+    .btn-proceed:active {
+      transform: scale(0.98);
+    }
+  </style>
+</head>
+<body>
+  <div class="notice-card">
+    <div class="notice-header">
+      <img src="%s" alt="icon" class="notice-icon" onerror="this.onerror=null; this.style.display='none';">
+      <div class="notice-title-group">
+        <div class="notice-app-name">%s</div>
+      </div>
+    </div>
+    <div class="notice-body">%s</div>
+    <div class="notice-footer">
+      <label class="skip-label">
+        <input type="checkbox" id="skip-today">
+        <span>今日不再提示</span>
+      </label>
+      <button type="button" class="btn-proceed" id="btn-proceed">进入应用</button>
+    </div>
+  </div>
+  <script>
+    (function() {
+      const ITEM_ID = %q;
+      const btn = document.getElementById('btn-proceed');
+      const chk = document.getElementById('skip-today');
+      function proceed() {
+        const cookieName = 'fn_notice_ack_' + ITEM_ID;
+        if (chk && chk.checked) {
+          const d = new Date();
+          d.setTime(d.getTime() + 24*60*60*1000);
+          document.cookie = cookieName + '=1; path=/; expires=' + d.toUTCString() + '; SameSite=Lax';
+        } else {
+          document.cookie = cookieName + '=1; path=/; SameSite=Lax';
+        }
+        window.location.reload();
+      }
+      if (btn) btn.addEventListener('click', proceed);
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') proceed();
+      });
+    })();
+  </script>
+</body>
+</html>`, escapedTitle, iconDataUrl, escapedTitle, escapedNotice, id)
 }

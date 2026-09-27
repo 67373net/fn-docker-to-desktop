@@ -320,8 +320,8 @@ func TestNoticePageRedirect(t *testing.T) {
 	if !strings.Contains(body1, "window.location.hostname") {
 		t.Errorf("Expected client-side hostname resolution logic in notice page")
 	}
-	if !strings.Contains(body1, "direct-url-bar") {
-		t.Errorf("Expected direct-url-bar in notice page")
+	if strings.Contains(body1, "direct-url-bar") {
+		t.Errorf("Expected NO direct-url-bar in notice page")
 	}
 
 	// Test 2: Access item without notice -> expect 302 Found direct redirect
@@ -506,7 +506,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.68",
+		AppVersion: "1.1.69",
 	})
 
 	mux := http.NewServeMux()
@@ -621,7 +621,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.68",
+		AppVersion: "1.1.69",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -699,12 +699,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.68",
+		AppVersion: "1.1.69",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.68",
-		LatestVersion:  "1.1.68",
+		CurrentVersion: "1.1.69",
+		LatestVersion:  "1.1.69",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -727,8 +727,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.68" {
-		t.Errorf("Expected current version 1.1.68, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.69" {
+		t.Errorf("Expected current version 1.1.69, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -817,7 +817,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.68",
+		AppVersion:    "1.1.69",
 	})
 
 	mux := http.NewServeMux()

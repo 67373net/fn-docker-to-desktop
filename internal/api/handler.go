@@ -875,7 +875,13 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 			item.Port = proxy.RecommendAvailablePort(18000, nil)
 			slog.Info("[API] 自动推荐分配反向代理本地端口", "port", item.Port)
 		}
-		if err := h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify); err != nil {
+		opts := proxy.ProxyOptions{
+			NoticeEnabled: item.NoticeEnabled,
+			NoticeContent: item.NoticeContent,
+			Title:         item.Name,
+			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+		}
+		if err := h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts); err != nil {
 			slog.Error("[API] 启动反向代理监听失败", "id", item.ID, "port", item.Port, "target", item.TargetURL, "error", err)
 			h.jsonResponse(w, r, map[string]string{"error": "启动反向代理失败: " + err.Error()}, http.StatusBadRequest)
 			return
@@ -967,7 +973,13 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	if item.Mode == desktop.ModeProxy && item.Enabled {
-		_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
+		opts := proxy.ProxyOptions{
+			NoticeEnabled: item.NoticeEnabled,
+			NoticeContent: item.NoticeContent,
+			Title:         item.Name,
+			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+		}
+		_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts)
 	} else if item.Mode != desktop.ModeProxy {
 		h.proxyMgr.StopProxy(item.ID)
 	}
@@ -1156,7 +1168,13 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 
 	if item.Enabled {
 		if item.Mode == desktop.ModeProxy {
-			_ = h.proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify)
+			opts := proxy.ProxyOptions{
+				NoticeEnabled: item.NoticeEnabled,
+				NoticeContent: item.NoticeContent,
+				Title:         item.Name,
+				IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+			}
+			_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts)
 		}
 		slog.Info("[API] 正在启用并安装桌面应用...", "appName", item.AppName, "name", item.Name)
 		if err := h.installer.InstallItem(item); err != nil {
@@ -2086,52 +2104,6 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
     .btn-proceed:active {
       transform: scale(0.98);
     }
-    .direct-url-bar {
-      margin-top: -8px;
-      margin-bottom: 16px;
-      padding: 8px 12px;
-      background: var(--bg-page);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      overflow: hidden;
-    }
-    .direct-url-label {
-      color: var(--text-muted);
-      white-space: nowrap;
-      flex-shrink: 0;
-      font-weight: 500;
-    }
-    .direct-url-link {
-      color: var(--primary);
-      text-decoration: none;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
-      font-family: monospace;
-      font-size: 12px;
-    }
-    .direct-url-link:hover {
-      text-decoration: underline;
-    }
-    .btn-copy-url {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 2px 7px;
-      font-size: 11px;
-      color: var(--text-muted);
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-    .btn-copy-url:hover {
-      color: var(--text-main);
-      border-color: var(--primary);
-    }
   </style>
 </head>
 <body>
@@ -2143,11 +2115,6 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
       </div>
     </div>
     <div class="notice-body">%s</div>
-    <div class="direct-url-bar" id="direct-url-bar" style="display: none;">
-      <span class="direct-url-label">直达网址：</span>
-      <a href="#" class="direct-url-link" id="direct-url-link" target="_blank" rel="noopener noreferrer"></a>
-      <button type="button" class="btn-copy-url" id="btn-copy-url" title="复制直达网址">复制</button>
-    </div>
     <div class="notice-footer">
       <label class="skip-label">
         <input type="checkbox" id="skip-today">
@@ -2190,36 +2157,6 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
           }
         }
       } catch (e) {}
-
-      const directBar = document.getElementById('direct-url-bar');
-      const directLink = document.getElementById('direct-url-link');
-      const btnCopy = document.getElementById('btn-copy-url');
-      if (directBar && directLink && TARGET_URL) {
-        directBar.style.display = 'flex';
-        directLink.textContent = TARGET_URL;
-        directLink.href = TARGET_URL;
-        directLink.title = '点击直接在新标签页打开（可收藏此网址）';
-        if (btnCopy) {
-          btnCopy.addEventListener('click', function(e) {
-            e.stopPropagation();
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(TARGET_URL).then(function() {
-                btnCopy.textContent = '已复制';
-                setTimeout(function() { btnCopy.textContent = '复制'; }, 2000);
-              });
-            } else {
-              const ta = document.createElement('textarea');
-              ta.value = TARGET_URL;
-              document.body.appendChild(ta);
-              ta.select();
-              document.execCommand('copy');
-              document.body.removeChild(ta);
-              btnCopy.textContent = '已复制';
-              setTimeout(function() { btnCopy.textContent = '复制'; }, 2000);
-            }
-          });
-        }
-      }
 
       function doNavigate() {
         if (UI_TYPE === 'url') {

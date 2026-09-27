@@ -873,3 +873,36 @@ func resizeNearest(src image.Image, targetWidth, targetHeight int) image.Image {
 	}
 	return dst
 }
+
+// GetItemIconDataURL returns a base64 data URL for an item's icon, or empty string if not found.
+func GetItemIconDataURL(item DesktopItem, iconsDir string) string {
+	if strings.HasPrefix(item.Icon, "data:image/") {
+		return item.Icon
+	}
+	if item.Icon != "" && iconsDir != "" {
+		cleanName := filepath.Clean(strings.TrimPrefix(strings.TrimPrefix(item.Icon, "/icons/"), "icons/"))
+		iconPath := filepath.Join(iconsDir, cleanName)
+		if data, err := os.ReadFile(iconPath); err == nil && len(data) > 0 {
+			mimeType := "image/png"
+			if strings.HasSuffix(cleanName, ".svg") {
+				mimeType = "image/svg+xml"
+			} else if strings.HasSuffix(cleanName, ".jpg") || strings.HasSuffix(cleanName, ".jpeg") {
+				mimeType = "image/jpeg"
+			} else if strings.HasSuffix(cleanName, ".webp") {
+				mimeType = "image/webp"
+			} else if strings.HasSuffix(cleanName, ".ico") {
+				mimeType = "image/x-icon"
+			}
+			return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data))
+		}
+	}
+	if iconsDir != "" {
+		for _, name := range []string{"default_item_icon.png", "icon.png"} {
+			p := filepath.Join(iconsDir, name)
+			if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
+				return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+			}
+		}
+	}
+	return ""
+}

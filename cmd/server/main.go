@@ -27,7 +27,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.68"
+const appVersion = "1.1.69"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -354,7 +354,13 @@ func main() {
 	items := storage.GetAllItems()
 	for _, item := range items {
 		if item.Mode == desktop.ModeProxy && item.Enabled && item.Port > 0 && item.TargetURL != "" {
-			if err := proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify); err != nil {
+			opts := proxy.ProxyOptions{
+				NoticeEnabled: item.NoticeEnabled,
+				NoticeContent: item.NoticeContent,
+				Title:         item.Name,
+				IconDataUrl:   desktop.GetItemIconDataURL(item, iconsDir),
+			}
+			if err := proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts); err != nil {
 				slog.Error("恢复代理失败", "id", item.ID, "port", item.Port, "error", err)
 			}
 		}
