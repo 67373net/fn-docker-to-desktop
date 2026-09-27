@@ -436,9 +436,14 @@ desktop_uidir=ui
 		entryMap["fileTypes"] = cfg.FileTypes
 	}
 
-	isNotice := strings.TrimSpace(cfg.NoticeContent) != ""
+	isNotice := cfg.NoticeEnabled && strings.TrimSpace(cfg.NoticeContent) != ""
 
-	if cfg.Port > 0 {
+	if (cfg.Port == 0 && isExternalURL) || isNotice {
+		// CGI redirect mode for shortcut mode (port == 0) or any item with notice enabled
+		entryMap["type"] = uiType
+		entryMap["protocol"] = "http"
+		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", cfg.AppName, cfg.AppName)
+	} else if cfg.Port > 0 {
 		if proto == "" {
 			proto = "http"
 		}
@@ -447,11 +452,6 @@ desktop_uidir=ui
 			entryMap["port"] = portStr
 		}
 		entryMap["url"] = urlPath
-	} else if (cfg.Port == 0 && isExternalURL) || isNotice {
-		// CGI redirect mode for shortcut mode (port == 0)
-		entryMap["type"] = uiType
-		entryMap["protocol"] = "http"
-		entryMap["url"] = fmt.Sprintf("/cgi/ThirdParty/%s/index.cgi/redirect/%s/_", cfg.AppName, cfg.AppName)
 	} else {
 		if proto == "" {
 			proto = "http"
@@ -477,8 +477,8 @@ desktop_uidir=ui
 	// Also write to ui/config for desktop_uidir=ui compatibility
 	_ = os.WriteFile(filepath.Join(pkgDir, "ui", "config"), uiJson, 0644)
 
-	// Write index.cgi for CGI redirect mode or notice mode in shortcut mode
-	if (cfg.Port == 0 && isExternalURL) || (cfg.Port == 0 && isNotice) {
+	// Write index.cgi for CGI redirect mode or notice mode
+	if (cfg.Port == 0 && isExternalURL) || isNotice {
 		var cgiScript string
 		if isNotice {
 			targetJsExpr := ""
@@ -573,27 +573,13 @@ cat << 'EOFCGIHTML'
   const skipKey = 'fn_notice_skip_%s';
   const today = new Date().toISOString().slice(0, 10);
 
-  function isIPOrLocalhost(host) {
-    if (!host) return true;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
-  }
-
   try {
     const curHost = window.location.hostname;
-    const isRemoteDomain = !isIPOrLocalhost(curHost);
-
-    if (isRemoteDomain && PORT > 0 && APP_NAME) {
-      const sub = APP_NAME.replace(/\./g, '-');
-      const proto = window.location.protocol;
-      const portPart = (window.location.port && window.location.port !== '80' && window.location.port !== '443') ? (':' + window.location.port) : '';
-      TARGET_URL = proto + '//' + sub + '.' + curHost + portPart + URL_PATH;
-    } else {
-      const parsed = new URL(TARGET_URL, window.location.href);
-      if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
-          curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
-        parsed.hostname = curHost;
-        TARGET_URL = parsed.toString();
-      }
+    const parsed = new URL(TARGET_URL, window.location.href);
+    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+        curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
+      parsed.hostname = curHost;
+      TARGET_URL = parsed.toString();
     }
   } catch(e) {}
 
@@ -894,11 +880,12 @@ func isManagedApp(appName string) bool {
 }
 
 // needsPackageUpgrade checks if an installed app needs re-installation
-// (e.g. legacy notice packages that lacked "port" in ui/config).
+// (e.g. restoring CGI notice that was wiped out, or adding direct port declaration).
 func (i *Installer) needsPackageUpgrade(item DesktopItem, appName string) bool {
 	if item.Port <= 0 {
 		return false
 	}
+	hasNotice := item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != ""
 	candidateDirs := []string{
 		filepath.Join("/var/apps", appName, "target"),
 		filepath.Join("/var/apps", appName),
@@ -912,10 +899,24 @@ func (i *Installer) needsPackageUpgrade(item DesktopItem, appName string) bool {
 			data, err := os.ReadFile(cfgPath)
 			if err == nil && len(data) > 0 {
 				content := string(data)
-				if strings.Contains(content, "/cgi/ThirdParty/") || !strings.Contains(content, `"port"`) {
-					return true
+				if hasNotice {
+					// Notice items MUST use CGI redirect to present the interstitial notice card
+					if !strings.Contains(content, "/cgi/ThirdParty/") {
+						return true
+					}
+					// Also verify index.cgi exists and is executable
+					cgiPath := filepath.Join(dir, "ui", "index.cgi")
+					if fi, err := os.Stat(cgiPath); err != nil || fi.Mode()&0111 == 0 {
+						return true
+					}
+					return false
+				} else {
+					// Non-notice items should declare direct port and not use CGI
+					if strings.Contains(content, "/cgi/ThirdParty/") || !strings.Contains(content, `"port"`) {
+						return true
+					}
+					return false
 				}
-				return false
 			}
 		}
 	}
@@ -971,7 +972,8 @@ func (i *Installer) ReconcileInstalledItems(items []DesktopItem) {
 		} else {
 			// If app is installed in fnOS, check whether its ui/config needs upgrading
 			if i.needsPackageUpgrade(item, appName) {
-				slog.Info("检测到桌面应用配置需要同步升级（补充端口声明）", "appName", appName)
+				slog.Info("检测到桌面应用配置需要同步升级（恢复开屏提示或修正端口声明）", "appName", appName)
+				_ = i.UninstallSingleApp(appName)
 				missing = append(missing, item)
 				i.SetItemReconcileStatus(item.ID, appName, "升级中...")
 				continue

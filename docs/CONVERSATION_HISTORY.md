@@ -5383,3 +5383,42 @@ INFO
 ### 验证与产物清单 (Artifacts & Verification)
 1. **自动化测试**：新增 `internal/proxy/manager_test.go`，覆盖代理开屏拦截、确认 Cookie 放行、静态资源直通及无直达网址验证。
 2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。
+
+---
+
+## Turn 86 - v1.1.70 发布记录
+
+### 用户需求与问题排查 (User Requirements & Root Cause Analysis)
+1. **彻底排查并修复升级后开屏信息彻底消失的严重回退 Bug**：
+   - **用户反馈**：修改升级后，开屏信息彻底消失了。
+   - **根本原因深度排查**：
+     - 在 v1.1.69 中，由于试图消除开屏提示对端口声明的影响，在 `installer.go` 的 `BuildPackage` 中将 `cfg.Port > 0` 的判断分支置于 `isNotice` 之前，强制将所有带有端口的桌面应用（包括 Docker 容器快捷方式与反向代理项）的 `url` 改写为 `/` 并剥离了 CGI 重定向入口。
+     - 同时，v1.1.69 错误地删除了 `index.cgi` 的生成条件（`cfg.Port == 0 && isNotice` 才生成），且 `needsPackageUpgrade` 在服务启动对齐时强制重装历史旧包并抹除了 CGI 入口。
+     - 对于 Docker 容器等本地端口（`mode == "local"`），系统并不为其运行反向代理服务，浏览器直接连接至 Docker 容器端口，导致开屏提示完全被绕过；
+     - 在开屏跳转脚本中，历史遗留的 `sub + '.' + curHost` 远程穿透子域名强制拼接，导致外网访问时错误地跳转至未获授权的二级子域名，诱发 FN Connect 403 权限拒绝。
+   - **彻底修复方案**：
+     1. **恢复 CGI 开屏提示主链路**：在 `installer.go` 中，只要应用启用了开屏提示（`isNotice == true`），无论是本地 Docker 容器、反向代理还是纯快捷方式，一律严格通过飞牛统一网关标准的 CGI 重定向机制（`/cgi/ThirdParty/<appName>/index.cgi/redirect/<appName>/_`）渲染开屏提示卡片，桌面点击 100% 弹出提示；
+     2. **彻底移除画蛇添足的直达链接与错误子域名跳转**：开屏提示页面保持纯粹卡片风格，仅展示应用图标、应用名称、公告正文、今日不再提示复选框及“进入应用”主操作按钮，彻底删除任何直达网址外显，进入应用时自然导航至应用目标 URL，不再强制拼接不可达的二级穿透域名；
+     3. **智能自愈修复机制**：在 `installer.go` 的 `needsPackageUpgrade` 中增加双向判定：对于启用公告但遗失 CGI 模式的应用包，自动识别并执行静默卸载后重装修复，确保从 v1.1.69 升级上来的用户无需手动编辑即可自动恢复全部开屏提示；
+     4. **单元测试完备覆盖**：在 `installer_test.go` 中新增 `TestBuildPackageNoticeMode`，严格断言即使 `Port > 0` 且开启公告时，CGI 路由、`index.cgi` 可执行文件与公告内容正确无误，且不含冗余直达网址。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **安装器打包与开屏提示还原 (`internal/desktop/installer.go`)**：
+   - `BuildPackage` 调整判断优先级：`(cfg.Port == 0 && isExternalURL) || isNotice` 优先走 CGI 模式，确保桌面点击桌面图标时网关执行 `index.cgi` 展示开屏提示；
+   - `index.cgi` 生成条件放开至所有开启公告的应用，并在内联 HTML 中清除多余的子域名强行篡改逻辑，支持回退至标准目标路径；
+   - 优化 `needsPackageUpgrade` 与 `ReconcileInstalledItems`，对配置异常的应用先调用 `UninstallSingleApp` 再执行补齐安装，保证更新完整生效。
+2. **重定向与开屏页面渲染精简 (`internal/api/handler.go`)**：
+   - 彻底移除 `renderNoticePage` 内部尝试将 `TARGET_URL` 强写为穿透子域名的脆弱代码，避免外网 FN Connect 403 权限异常。
+3. **回归与单元测试 (`internal/desktop/installer_test.go`)**：
+   - 新增 `TestBuildPackageNoticeMode` 验证端口与公告并存时的 CGI 生成、端口过滤与无多余直达条目。
+4. **全链路版本升级至 `v1.1.70`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.70`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **代码审查验证**：全面复核逻辑闭环，CGI 与开屏提示恢复正常运作。
+2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。
+

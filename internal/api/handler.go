@@ -2134,27 +2134,13 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
       const skipKey = 'fn_notice_skip_' + ITEM_ID;
       const today = new Date().toISOString().slice(0, 10);
 
-      function isIPOrLocalhost(host) {
-        if (!host) return true;
-        return host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
-      }
-
       try {
         const curHost = window.location.hostname;
-        const isRemoteDomain = !isIPOrLocalhost(curHost);
-
-        if (isRemoteDomain && PORT > 0 && APP_NAME) {
-          const sub = APP_NAME.replace(/\./g, '-');
-          const proto = window.location.protocol;
-          const portPart = (window.location.port && window.location.port !== '80' && window.location.port !== '443') ? (':' + window.location.port) : '';
-          TARGET_URL = proto + '//' + sub + '.' + curHost + portPart + URL_PATH;
-        } else {
-          const parsed = new URL(TARGET_URL, window.location.href);
-          if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
-              curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
-            parsed.hostname = curHost;
-            TARGET_URL = parsed.toString();
-          }
+        const parsed = new URL(TARGET_URL, window.location.href);
+        if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+            curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
+          parsed.hostname = curHost;
+          TARGET_URL = parsed.toString();
         }
       } catch (e) {}
 

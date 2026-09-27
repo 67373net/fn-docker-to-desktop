@@ -189,3 +189,76 @@ func TestUninstallItemProtectedApps(t *testing.T) {
 	}
 }
 
+func TestBuildPackageNoticeMode(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test-installer-notice-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	installer := NewInstaller(tmpDir, "icon.png")
+	pkgDir, err := installer.BuildPackage(AppcenterPackageConfig{
+		AppName:       "fndocker.app-notice",
+		Title:         "应用提示测试",
+		Desc:          "测试开屏提示",
+		Port:          5288,
+		Protocol:      "http",
+		Path:          "/",
+		UIType:        "url",
+		AllUsers:      true,
+		NoticeEnabled: true,
+		NoticeContent: "注意：这是开屏提示内容",
+	})
+	if err != nil {
+		t.Fatalf("BuildPackage failed: %v", err)
+	}
+	defer os.RemoveAll(pkgDir)
+
+	cfgBytes, err := os.ReadFile(filepath.Join(pkgDir, "ui", "config"))
+	if err != nil {
+		t.Fatalf("read ui/config failed: %v", err)
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &root); err != nil {
+		t.Fatalf("unmarshal ui/config failed: %v", err)
+	}
+
+	urlMap := root[".url"].(map[string]interface{})
+	entry := urlMap["fndocker.app-notice"].(map[string]interface{})
+
+	// 1. In notice mode, url must point to CGI redirect
+	expectedURL := "/cgi/ThirdParty/fndocker.app-notice/index.cgi/redirect/fndocker.app-notice/_"
+	if entry["url"] != expectedURL {
+		t.Errorf("entry url = %v, want %v", entry["url"], expectedURL)
+	}
+
+	// 2. Port should be omitted from entryMap so fnOS routes via system portal without 404
+	if _, hasPort := entry["port"]; hasPort {
+		t.Errorf("entry port should be omitted in notice mode, got %v", entry["port"])
+	}
+
+	// 3. index.cgi must exist and be executable
+	cgiPath := filepath.Join(pkgDir, "ui", "index.cgi")
+	fi, err := os.Stat(cgiPath)
+	if err != nil {
+		t.Fatalf("index.cgi not found at %s", cgiPath)
+	}
+	if fi.Mode()&0111 == 0 {
+		t.Errorf("index.cgi is not executable: mode=%v", fi.Mode())
+	}
+
+	cgiContent, err := os.ReadFile(cgiPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cgiStr := string(cgiContent)
+	if !strings.Contains(cgiStr, "注意：这是开屏提示内容") {
+		t.Errorf("index.cgi does not contain notice content: %s", cgiStr)
+	}
+	// Must NOT contain direct URL bar
+	if strings.Contains(cgiStr, "direct-url-bar") || strings.Contains(cgiStr, "直达网址") {
+		t.Errorf("index.cgi should not contain redundant direct-url-bar")
+	}
+}
+
