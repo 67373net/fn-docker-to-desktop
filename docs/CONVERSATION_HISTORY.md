@@ -5262,3 +5262,42 @@ INFO
 1. **单元测试通过**：全模块自动化测试 100% PASS。
 2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
 3. **零残留**：工作区 0 `.fpk` 文件残留。
+
+---
+
+## Turn 83 - v1.1.67 发布记录
+
+### 用户需求与问题排查 (User Requirements & Root Cause Analysis)
+1. **删除图标报错排查**：
+   - 用户反馈：删除图标报错 `[API 错误响应] method=DELETE path=/api/icons/images.png status=404 response={"error":"图标文件不存在"}`。
+   - **根本原因**：
+     - 用户上传本地图片（如 `images.png`）时，后端按时间戳规范保存为 `1727446745_images.png` 并返回 `data.url = "/icons/1727446745_images.png"`；
+     - 前端此前误将 `newIcon.name` 记为本地原始文件名 `images.png`，且删除时使用 `icon.name` 请求 `DELETE /api/icons/images.png`，与磁盘实际文件名不一致导致 404；
+     - 后端 `handleDeleteIcon` 缺少智能后缀回退匹配与破损软链接/大小写容错支持。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **后端图标元数据与鲁棒删除增强 (`internal/api/handler.go`)**：
+   - `IconInfo` 新增 `Title` 字段：自动剥离时间戳前缀（如 `1727446745_images.png` -> `images.png`），用于前端清晰展示；
+   - `handleDeleteIcon` 全面容错支持：
+     - 使用 `url.PathUnescape` 兼容百分号编码；
+     - 优先使用 `os.Lstat` 确保直接匹配与破损软链接均能检测并清理；
+     - 后备扫描：若未直接命中，自动在 `iconsDir` 中按 `<timestamp>_<filename>` 时间戳前缀匹配并支持大小写容错；
+     - 在用状态（InUse）与保护名单对原始请求名和解析出的磁盘文件名双重防护；
+     - 成功删除后返回具体清理的文件名。
+2. **前端图标库状态同步与删除修复 (`web/app.js`)**：
+   - 图标删除优先从 `icon.url` 解析磁盘真实文件名并进行 URI 编码；
+   - 确认弹窗展示友好的 `icon.title || icon.name`；
+   - 若被删除的图标当前被表单选中，自动重置输入框与预览图至系统默认图标；
+   - 图标上传成功后，彻底移除手动拼接易残缺的 DOM 卡片，统一调用 `fetchIconLibrary(true)` 与 `renderIconLibraryGrid`，保证多标签页状态 100% 严格同步。
+3. **单元测试补充 (`internal/api/handler_test.go`)**：
+   - `TestDeleteIcon` 新增 Case 4：覆盖带时间戳图标通过原始文件名删除的自动化测试场景。
+4. **全链路版本升级至 `v1.1.67`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.67`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **代码审查验证**：双端逻辑严谨闭环，完全杜绝文件名不匹配与 404 问题。
+2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。

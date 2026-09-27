@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.66';
+  const ver = state.settings?.version || '1.1.67';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1228,7 +1228,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.66';
+  const ver = state.settings?.version || '1.1.67';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -3181,7 +3181,8 @@ async function renderIconLibraryGrid(scope) {
         isSelected = curVal === 'icon.png' || curVal === '/icon.png';
       }
     } else if (curVal) {
-      isSelected = curVal === icon.url || curVal === icon.name || curVal === `/icons/${icon.name}` || icon.url === `/icons/${curVal}`;
+      isSelected = curVal === icon.url || curVal === icon.name || curVal === `/icons/${icon.name}` || icon.url === `/icons/${curVal}` ||
+        (icon.title && (curVal === icon.title || curVal === `/icons/${icon.title}`));
     }
 
     if (isSelected) {
@@ -3190,7 +3191,7 @@ async function renderIconLibraryGrid(scope) {
 
     const img = document.createElement('img');
     img.src = getIconUrl(icon.url);
-    img.alt = icon.name;
+    img.alt = icon.title || icon.name;
     img.loading = 'lazy';
     card.appendChild(img);
 
@@ -3211,17 +3212,45 @@ async function renderIconLibraryGrid(scope) {
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         e.preventDefault();
-        if (!confirm(`确定要删除图标 "${icon.name}" 吗？`)) return;
+        const displayName = icon.title || icon.name;
+        if (!confirm(`确定要删除图标 "${displayName}" 吗？`)) return;
+
+        // Extract real filename: prefer URL basename, then name
+        let targetFilename = '';
+        if (icon.url) {
+          targetFilename = icon.url.replace(/^\/?icons\//, '').split('?')[0].split('#')[0];
+        }
+        if (!targetFilename) {
+          targetFilename = icon.name;
+        }
+
         try {
-          const res = await fetch(apiUrl('/api/icons/' + encodeURIComponent(icon.name)), {
+          const res = await fetch(apiUrl('/api/icons/' + encodeURIComponent(targetFilename)), {
             method: 'DELETE'
           });
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
           if (res.ok) {
             showToast('图标已删除', 'success');
+            // If the deleted icon was selected, reset preview/inputs to default
+            const targetUrl = icon.url;
+            if (scope === 'modal') {
+              const itemIconInput = document.getElementById('item-icon');
+              if (itemIconInput && (itemIconInput.value === targetUrl || itemIconInput.value === targetFilename || itemIconInput.value === displayName)) {
+                itemIconInput.value = 'default_item_icon.png';
+                const previewImg = document.getElementById('icon-preview-img');
+                if (previewImg) previewImg.src = apiUrl('/default_item_icon.png');
+              }
+            } else if (scope === 'setting') {
+              const setInput = document.getElementById('setting-portal-icon');
+              if (setInput && (setInput.value === targetUrl || setInput.value === targetFilename || setInput.value === displayName)) {
+                setInput.value = 'icon.png';
+                const previewImg = document.getElementById('setting-icon-preview-img');
+                if (previewImg) previewImg.src = apiUrl('/icon.png');
+              }
+            }
             await fetchIconLibrary(true);
-            renderIconLibraryGrid('modal');
-            renderIconLibraryGrid('setting');
+            await renderIconLibraryGrid('modal');
+            await renderIconLibraryGrid('setting');
           } else {
             showToast(data.error || '删除图标失败', 'error');
           }
@@ -3300,42 +3329,6 @@ async function handleUploadLibraryIcon(scope, fileInput) {
     });
     const data = await res.json();
     if (res.ok && data.url) {
-      const newIcon = {
-        name: file.name,
-        url: data.url,
-        last_used: Math.floor(Date.now() / 1000),
-      };
-      state.iconLibrary = [newIcon, ...state.iconLibrary.filter(i => i.url !== data.url)];
-
-      const gridId = scope === 'setting' ? 'setting-icon-library-grid' : 'modal-icon-library-grid';
-      const grid = document.getElementById(gridId);
-      if (grid) {
-        grid.querySelectorAll('.icon-lib-card').forEach(c => c.classList.remove('selected'));
-        const uploadCard = grid.querySelector('.icon-lib-upload-card');
-
-        grid.querySelectorAll(`.icon-lib-card[data-url="${data.url}"]`).forEach(c => c.remove());
-
-        const newCard = document.createElement('div');
-        newCard.className = 'icon-lib-card selected';
-        newCard.dataset.url = data.url;
-        newCard.title = file.name;
-
-        const img = document.createElement('img');
-        img.src = apiUrl(data.url);
-        img.alt = file.name;
-        newCard.appendChild(img);
-
-        newCard.addEventListener('click', () => {
-          selectLibraryIcon(scope, data.url, newCard);
-        });
-
-        if (uploadCard && uploadCard.nextSibling) {
-          uploadCard.after(newCard);
-        } else if (uploadCard) {
-          grid.appendChild(newCard);
-        }
-      }
-
       if (scope === 'setting') {
         const elIcon = document.getElementById('setting-portal-icon');
         if (elIcon) elIcon.value = data.url;
@@ -3348,6 +3341,10 @@ async function handleUploadLibraryIcon(scope, fileInput) {
         const imgEl = document.getElementById('icon-preview-img');
         if (imgEl) imgEl.src = apiUrl(data.url);
       }
+
+      await fetchIconLibrary(true);
+      await renderIconLibraryGrid('modal');
+      await renderIconLibraryGrid('setting');
 
       showToast(`图标「${file.name}」上传成功并已选择`, 'success');
     } else {
@@ -5017,7 +5014,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.66';
+      const ver = state.settings?.version || '1.1.67';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

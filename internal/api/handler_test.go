@@ -506,7 +506,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.66",
+		AppVersion: "1.1.67",
 	})
 
 	mux := http.NewServeMux()
@@ -621,7 +621,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.66",
+		AppVersion: "1.1.67",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -651,6 +651,19 @@ func TestDeleteIcon(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(iconsDir, unusedIcon)); !os.IsNotExist(err) {
 		t.Errorf("Expected file %s to be removed", unusedIcon)
+	}
+
+	// Case 4: Try deleting uploaded timestamped icon by its clean base name (e.g. 1727446745_images.png via images.png)
+	tsIcon := "1727446745_images.png"
+	os.WriteFile(filepath.Join(iconsDir, tsIcon), []byte("fake-png-data"), 0644)
+	reqTs := httptest.NewRequest("DELETE", "/api/icons/images.png", nil)
+	recTs := httptest.NewRecorder()
+	mux.ServeHTTP(recTs, reqTs)
+	if recTs.Code != http.StatusOK {
+		t.Errorf("Expected 200 for deleting timestamped icon by base name, got %d. Body: %s", recTs.Code, recTs.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(iconsDir, tsIcon)); !os.IsNotExist(err) {
+		t.Errorf("Expected timestamped file %s to be removed when requested as images.png", tsIcon)
 	}
 }
 
@@ -686,12 +699,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.66",
+		AppVersion: "1.1.67",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.66",
-		LatestVersion:  "1.1.66",
+		CurrentVersion: "1.1.67",
+		LatestVersion:  "1.1.67",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -714,8 +727,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.66" {
-		t.Errorf("Expected current version 1.1.66, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.67" {
+		t.Errorf("Expected current version 1.1.67, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -804,7 +817,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.66",
+		AppVersion:    "1.1.67",
 	})
 
 	mux := http.NewServeMux()

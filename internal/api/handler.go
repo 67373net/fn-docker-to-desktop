@@ -1337,6 +1337,7 @@ func (h *Handler) handleGetAvailablePort(w http.ResponseWriter, r *http.Request)
 // IconInfo represents icon metadata in the icon library.
 type IconInfo struct {
 	Name     string `json:"name"`
+	Title    string `json:"title,omitempty"`
 	URL      string `json:"url"`
 	LastUsed int64  `json:"last_used"`
 	InUse    bool   `json:"in_use"`
@@ -1386,9 +1387,27 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		title := name
+		if idx := strings.Index(name, "_"); idx > 0 {
+			prefix := name[:idx]
+			isTimestamp := true
+			for _, c := range prefix {
+				if c < '0' || c > '9' {
+					isTimestamp = false
+					break
+				}
+			}
+			if isTimestamp && idx+1 < len(name) {
+				title = name[idx+1:]
+			}
+		}
+
 		var lastUsed int64
 		inUse := false
 		if ts, ok := usageMap[name]; ok && ts > 0 {
+			lastUsed = ts
+			inUse = true
+		} else if ts, ok := usageMap[title]; ok && ts > 0 {
 			lastUsed = ts
 			inUse = true
 		} else if info, err := f.Info(); err == nil {
@@ -1397,6 +1416,7 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 
 		list = append(list, IconInfo{
 			Name:     name,
+			Title:    title,
 			URL:      "/icons/" + name,
 			LastUsed: lastUsed,
 			InUse:    inUse,
@@ -1416,12 +1436,17 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 	h.jsonResponse(w, r, list, http.StatusOK)
 }
 
-// DELETE /api/icons or /api/icons/{filename}
+// DELETE /api/icons or /api/icons/{filename...}
 func (h *Handler) handleDeleteIcon(w http.ResponseWriter, r *http.Request) {
 	filename := r.PathValue("filename")
 	if filename == "" {
 		filename = r.URL.Query().Get("filename")
 	}
+	if unescaped, err := url.PathUnescape(filename); err == nil && unescaped != "" {
+		filename = unescaped
+	}
+	filename = strings.TrimPrefix(filename, "/icons/")
+	filename = strings.TrimPrefix(filename, "icons/")
 	filename = filepath.Base(strings.TrimSpace(filename))
 	if filename == "" || filename == "." || filename == "/" {
 		h.jsonError(w, r, "缺少图标文件名", http.StatusBadRequest)
@@ -1434,13 +1459,64 @@ func (h *Handler) handleDeleteIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if in use
+	// Resolve the target file in h.iconsDir (supporting exact match, timestamp prefix, broken symlinks, and case-insensitive)
+	foundFile := ""
+	directPath := filepath.Join(h.iconsDir, filename)
+	if _, err := os.Lstat(directPath); err == nil {
+		foundFile = filename
+	} else {
+		// Fallback: search iconsDir
+		if entries, err := os.ReadDir(h.iconsDir); err == nil {
+			// 1. Look for uploaded timestamp prefix: <digits>_<filename> (e.g. 1727446745_images.png)
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				eName := e.Name()
+				if idx := strings.Index(eName, "_"); idx > 0 {
+					prefix := eName[:idx]
+					isTimestamp := true
+					for _, c := range prefix {
+						if c < '0' || c > '9' {
+							isTimestamp = false
+							break
+						}
+					}
+					if isTimestamp && eName[idx+1:] == filename {
+						foundFile = eName
+						break
+					}
+				}
+			}
+			// 2. Look for case-insensitive match
+			if foundFile == "" {
+				for _, e := range entries {
+					if !e.IsDir() && strings.EqualFold(e.Name(), filename) {
+						foundFile = e.Name()
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if foundFile == "" {
+		h.jsonError(w, r, "图标文件不存在", http.StatusNotFound)
+		return
+	}
+
+	if foundFile == "default_item_icon.png" || foundFile == "icon.png" {
+		h.jsonError(w, r, "系统内置图标禁止删除", http.StatusForbidden)
+		return
+	}
+
+	// Check if in use (check both requested name and foundFile)
 	if h.storage != nil {
 		items := h.storage.GetAllItems()
 		for _, it := range items {
 			clean := strings.TrimPrefix(it.Icon, "/icons/")
 			clean = strings.TrimPrefix(clean, "icons/")
-			if clean == filename || it.Icon == filename {
+			if clean == filename || it.Icon == filename || clean == foundFile || it.Icon == foundFile {
 				h.jsonError(w, r, "该图标正在被桌面图标条目使用中，无法删除", http.StatusBadRequest)
 				return
 			}
@@ -1448,30 +1524,21 @@ func (h *Handler) handleDeleteIcon(w http.ResponseWriter, r *http.Request) {
 		sett := h.storage.GetSettings()
 		cleanSett := strings.TrimPrefix(sett.PortalIcon, "/icons/")
 		cleanSett = strings.TrimPrefix(cleanSett, "icons/")
-		if cleanSett == filename || sett.PortalIcon == filename {
+		if cleanSett == filename || sett.PortalIcon == filename || cleanSett == foundFile || sett.PortalIcon == foundFile {
 			h.jsonError(w, r, "该图标正在作为管理面板图标使用中，无法删除", http.StatusBadRequest)
 			return
 		}
 	}
 
-	targetPath := filepath.Join(h.iconsDir, filename)
-	if _, err := os.Stat(targetPath); err != nil {
-		if os.IsNotExist(err) {
-			h.jsonError(w, r, "图标文件不存在", http.StatusNotFound)
-			return
-		}
-		h.jsonError(w, r, "访问图标文件失败: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+	targetPath := filepath.Join(h.iconsDir, foundFile)
 	if err := os.Remove(targetPath); err != nil {
-		slog.Error("[AUDIT] 删除图标失败", "filename", filename, "error", err)
+		slog.Error("[AUDIT] 删除图标失败", "filename", foundFile, "error", err)
 		h.jsonError(w, r, "删除图标失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("[AUDIT] 成功删除图标", "filename", filename)
-	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
+	slog.Info("[AUDIT] 成功删除图标", "requested", filename, "deletedFile", foundFile)
+	h.jsonResponse(w, r, map[string]interface{}{"success": true, "deleted": foundFile}, http.StatusOK)
 }
 
 // ResizeIconImage pads and scales an image to fit targetSize x targetSize square (e.g. 256x256)
