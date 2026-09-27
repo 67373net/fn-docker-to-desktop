@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.64';
+  const ver = state.settings?.version || '1.1.65';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1127,6 +1127,7 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           badge.style.display = 'inline-flex';
           badge.className = 'version-status-badge has-update';
           badge.textContent = relTime ? `${relTime}｜有新版本 v${data.latest_version}` : `有新版本 v${data.latest_version}`;
+          badge.title = '点击重新检查是否有更高版本';
         }
         if (card) {
           card.style.display = 'block';
@@ -1148,6 +1149,8 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           } else {
             showToast('未找到安装包下载链接', 'warn');
           }
+        } else if (force) {
+          showToast(`已检查更新：最新版本为 v${data.latest_version}`, 'info');
         }
       } else {
         if (dot) dot.style.display = 'none';
@@ -1157,13 +1160,21 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           if (data.error) {
             badge.className = 'version-status-badge';
             badge.textContent = data.error;
+            badge.title = '点击重新检查更新';
           } else {
             badge.className = 'version-status-badge up-to-date';
             badge.textContent = '已是最新版';
+            badge.title = '点击重新检查更新';
           }
         }
         if (triggerDownload) {
           showToast('已是最新版，无需下载', 'info');
+        } else if (force) {
+          if (data.error) {
+            showToast(data.error, 'warn');
+          } else {
+            showToast('当前已是最新版', 'success');
+          }
         }
       }
     } else {
@@ -1171,9 +1182,12 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
         badge.style.display = 'inline-flex';
         badge.className = 'version-status-badge';
         badge.textContent = '检查更新失败';
+        badge.title = '点击重新检查更新';
       }
       if (triggerDownload) {
         showToast('获取更新下载链接失败', 'error');
+      } else if (force) {
+        showToast('检查更新失败', 'error');
       }
     }
   } catch (err) {
@@ -1181,9 +1195,12 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
     if (badge) {
       badge.className = 'version-status-badge';
       badge.textContent = '网络连接异常';
+      badge.title = '点击重新检查更新';
     }
     if (triggerDownload) {
       showToast('网络连接异常，无法获取下载链接', 'error');
+    } else if (force) {
+      showToast('网络连接异常', 'error');
     }
   } finally {
     isCheckingUpdate = false;
@@ -1207,7 +1224,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.64';
+  const ver = state.settings?.version || '1.1.65';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4996,7 +5013,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.64';
+      const ver = state.settings?.version || '1.1.65';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5819,6 +5836,22 @@ function initApp() {
     btnCheckUpdate.addEventListener('click', () => {
       const isDownload = !!(updateCheckResult && updateCheckResult.has_update);
       checkAppUpdate(true, isDownload);
+    });
+  }
+
+  const versionBadge = document.getElementById('version-status-badge');
+  if (versionBadge) {
+    versionBadge.setAttribute('role', 'button');
+    versionBadge.setAttribute('tabindex', '0');
+    const triggerManualCheck = () => {
+      checkAppUpdate(true, false);
+    };
+    versionBadge.addEventListener('click', triggerManualCheck);
+    versionBadge.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        triggerManualCheck();
+      }
     });
   }
 

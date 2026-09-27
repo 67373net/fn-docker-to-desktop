@@ -5212,3 +5212,27 @@ INFO
 1. **单元测试通过**：全模块自动化测试 100% PASS。
 2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
 3. **零残留**：工作区 0 `.fpk` 文件残留。
+
+---
+
+## Turn 81 - v1.1.65 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **“关于”界面更新区域布局调整**：升级说明放置在更新日志上方，文字大小调整为常规正文大小，“更新日志”标题移至日志内容框内。
+2. **新版本状态标签支持点击手动检查**：点击“有新版本”状态标签可手动重新检查更新。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **“关于”界面更新区域与交互调整**：
+   - [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) & [`web/style.css`](file:///home/net67373/fn-docker-to-desktop/web/style.css)：将升级说明块置于上方并调整字体大小为常规尺寸（`0.95rem`），更新日志标题置于日志卡片框内部；
+   - [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) & [`web/style.css`](file:///home/net67373/fn-docker-to-desktop/web/style.css)：为版本状态标签增加指针手型悬浮样式与点击事件，点击时手动强制请求最新版本信息并提示反馈。
+2. **全链路版本升级至 `v1.1.65`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.65`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **单元测试通过**：全模块自动化测试 100% PASS。
+2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
+3. **零残留**：工作区 0 `.fpk` 文件残留。
