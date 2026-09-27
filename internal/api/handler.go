@@ -1331,7 +1331,7 @@ func (h *Handler) handleGetAvailablePort(w http.ResponseWriter, r *http.Request)
 	}
 
 	recommended := proxy.RecommendAvailablePort(startPort, usedPorts)
-	h.jsonResponse(w, r, map[string]int{"recommended_port": recommended}, http.StatusOK)
+	h.jsonResponse(w, r, map[string]int{"recommended_port": recommended, "port": recommended}, http.StatusOK)
 }
 
 // IconInfo represents icon metadata in the icon library.

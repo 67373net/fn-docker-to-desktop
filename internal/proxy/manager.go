@@ -95,12 +95,13 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 	}
 
 	// Parse target URL
-	target, err := url.Parse(targetURL)
+	urlStr := strings.TrimSpace(targetURL)
+	if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
+		urlStr = "http://" + urlStr
+	}
+	target, err := url.Parse(urlStr)
 	if err != nil {
 		return fmt.Errorf("无效的目标地址: %w", err)
-	}
-	if target.Scheme == "" {
-		target.Scheme = "http"
 	}
 
 	// Create listener
@@ -155,6 +156,14 @@ func (m *Manager) StartProxy(id string, port int, targetURL string, skipTLSVerif
 
 		originalDirector(req)
 		req.Host = target.Host
+
+		// Prevent duplicate path prefix if incoming request path already includes target's path prefix
+		targetBasePath := strings.TrimRight(target.Path, "/")
+		if targetBasePath != "" && targetBasePath != "/" {
+			if strings.HasPrefix(req.URL.Path, targetBasePath+targetBasePath) {
+				req.URL.Path = strings.TrimPrefix(req.URL.Path, targetBasePath)
+			}
+		}
 
 		// 1. Rewrite Origin to target's origin if present
 		// This bypasses target server's CSRF / Host mismatch / CORS blocking

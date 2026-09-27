@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.67">
+  <link rel="stylesheet" href="style.css?v=1.1.68">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -510,7 +510,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.67</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.68</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -609,17 +609,28 @@
           <!-- Section for Proxy -->
           <div class="mode-field-group" id="fields-proxy" style="display: none;">
             <div class="form-group">
-              <label class="form-label">局域网/广域网目标地址</label>
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                <label class="form-label" style="margin-bottom: 0;">目标地址</label>
+                <button type="button" id="btn-target-url-help" class="info-circle-help-btn" title="点击查看说明" aria-label="查看说明">!</button>
+              </div>
               <div class="input-with-action">
-                <input type="text" id="item-target-url" class="form-input" placeholder="例如：https://192.168.1.100:8006">
+                <input type="text" id="item-target-url" class="form-input" placeholder="例如：http://192.168.1.288:5288/wild">
                 <button type="button" class="btn btn-secondary" id="btn-test-target">测试连通</button>
+              </div>
+              <div id="item-target-url-help" class="form-tip" style="display: none; margin-top: 6px; font-size: 12px; color: var(--text-muted); background: var(--bg-surface-subtle); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); line-height: 1.6;">
+                <ul style="margin: 0; padding-left: 18px;">
+                  <li>可以添加局域网 / 广域网地址；</li>
+                  <li>可以使用 http 或 https；</li>
+                  <li>注意设置正确的端口；</li>
+                  <li>可以添加路径。</li>
+                </ul>
               </div>
               <div class="test-result" id="test-target-result"></div>
             </div>
 
             <div class="form-row">
               <div class="form-group flex-1">
-                <label class="form-label">本机代理监听端口</label>
+                <label class="form-label">本机代理端口</label>
                 <div class="input-with-action">
                   <input type="number" id="item-proxy-port" class="form-input" placeholder="例如：18006">
                   <button type="button" class="btn btn-secondary" id="btn-recommend-port">推荐端口</button>
@@ -1029,6 +1040,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.67"></script>
+  <script src="app.js?v=1.1.68"></script>
 </body>
 </html>

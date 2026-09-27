@@ -5301,3 +5301,43 @@ INFO
 ### 验证与产物清单 (Artifacts & Verification)
 1. **代码审查验证**：双端逻辑严谨闭环，完全杜绝文件名不匹配与 404 问题。
 2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。
+---
+
+## Turn 84 - v1.1.68 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **端口映射字段精简与合并**：
+   - 桌面图标编辑中将协议和访问路径合并入目标地址；
+   - “局域网/广域网目标地址”更名为“目标地址”，示例占位符调整为 `http://192.168.1.288:5288/wild`；
+   - 旁边新增圆圈感叹号帮助按钮，点击展开 4 点提示（局域网/广域网、http/https、端口、路径）。
+2. **代理端口重命名与智能预填**：
+   - “本机代理监听端口”重命名为“本机代理端口”；
+   - 切换到或打开代理模式时，若本机代理端口为空，自动异步预填可用推荐端口；
+   - 严格的脏表单（未保存提示）约束：用户未作实质修改而仅有系统自动推荐端口时，关闭弹窗不提示未保存修改。
+3. **样式统一**：
+   - 所有圆圈感叹号帮助按钮统一采用超链接经典蓝色（#2563eb）。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **UI 布局与字段简化 (`web/index.html`, `web/style.css`)**：
+   - 统一采用 `#2563eb` 及 hover 状态高亮 `.info-circle-help-btn`；
+   - 端口映射栏目标题更名为“目标地址”，占位符更新为 `http://192.168.1.288:5288/wild`，增加折叠说明面板；
+   - 监听端口标签更名为“本机代理端口”。
+2. **前端智能交互与脏表单逻辑优化 (`web/app.js`)**：
+   - 端口映射模式下隐藏单独的协议与路径输入行，保存时自动从“目标地址”中解析 pathname 与 scheme；
+   - 新增 `autoFillRecommendedProxyPort()`，在打开/切换代理模式且端口为空时自动获取 `/api/ports/available?start=18000` 并填入；
+   - 记录 `state.autoFilledProxyPort`，并在 `isDesktopItemFormDirty()` 中识别自动填充场景，用户未进行其他修改关闭时不弹出未保存确认；用户手动修改端口时自动重置该标志；
+   - 兼容回显逻辑：打开已有代理图标时，若旧数据中包含独立 path 且未在 target_url 中，自动合并展示为统一 URL。
+3. **后端反向代理路径兼容优化 (`internal/proxy/manager.go`, `internal/api/handler.go`)**：
+   - `StartProxy` URL 解析增强：自动补全协议前缀，防止无协议格式导致 host 解析缺失；
+   - 动态反向代理 Director 优化：处理目标地址带有 path 前缀时客户端请求重复路径前缀的消除；
+   - 可用端口接口兼容返回 `recommended_port` 与 `port`。
+4. **全链路版本升级至 `v1.1.68`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.68`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **代码审查验证**：字段合并与表单脏检查逻辑严密闭环，交互体验显著提升。
+2. **打包验证**：工作区纯净，零残留 `.fpk` 文件。

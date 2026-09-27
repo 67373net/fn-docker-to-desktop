@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.67';
+  const ver = state.settings?.version || '1.1.68';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -272,6 +272,7 @@ let state = {
   activeIconTab: 'text',
   currentTextIconDataUrl: null,
   desktopItemFormSnapshot: null,
+  autoFilledProxyPort: null,
   originalSettings: null,
   isSettingsDirty: false,
   eventSource: null,
@@ -1228,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.67';
+  const ver = state.settings?.version || '1.1.68';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -2415,7 +2416,8 @@ function isDesktopItemFormDirty() {
         console.log('[DIRTY-CHECK] targetUrl dirty in switched mode:', snap.targetUrl, '->', u);
         return true;
       }
-      if (p && p !== (snap.proxyPort || '').trim()) {
+      const isAutoPort = state.autoFilledProxyPort && p === String(state.autoFilledProxyPort) && !(snap.proxyPort || '').trim();
+      if (!isAutoPort && p && p !== (snap.proxyPort || '').trim()) {
         console.log('[DIRTY-CHECK] proxyPort dirty in switched mode:', snap.proxyPort, '->', p);
         return true;
       }
@@ -2457,16 +2459,13 @@ function isDesktopItemFormDirty() {
       console.log('[DIRTY-CHECK] targetUrl modified:', snap.targetUrl, '->', cur.targetUrl);
       return true;
     }
-    if ((cur.proxyPort || '').trim() !== (snap.proxyPort || '').trim()) {
+    const isAutoPort = state.autoFilledProxyPort && (cur.proxyPort || '').trim() === String(state.autoFilledProxyPort) && !(snap.proxyPort || '').trim();
+    if (!isAutoPort && (cur.proxyPort || '').trim() !== (snap.proxyPort || '').trim()) {
       console.log('[DIRTY-CHECK] proxyPort modified:', snap.proxyPort, '->', cur.proxyPort);
       return true;
     }
     if (!!cur.skipTls !== !!snap.skipTls) {
       console.log('[DIRTY-CHECK] skipTls modified:', snap.skipTls, '->', cur.skipTls);
-      return true;
-    }
-    if ((cur.path || '').trim() !== (snap.path || '').trim()) {
-      console.log('[DIRTY-CHECK] path modified:', snap.path, '->', cur.path);
       return true;
     }
     if (cur.uiType !== snap.uiType) {
@@ -2553,6 +2552,25 @@ function initModals() {
   if (btnFileTypesHelp && helpFileTypes) {
     btnFileTypesHelp.addEventListener('click', () => {
       helpFileTypes.style.display = helpFileTypes.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+
+  // Target URL help toggle
+  const btnTargetUrlHelp = document.getElementById('btn-target-url-help');
+  const helpTargetUrl = document.getElementById('item-target-url-help');
+  if (btnTargetUrlHelp && helpTargetUrl) {
+    btnTargetUrlHelp.addEventListener('click', () => {
+      helpTargetUrl.style.display = helpTargetUrl.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+
+  // Proxy port input listener to reset auto-filled flag when user manually changes port
+  const elProxyPortInput = document.getElementById('item-proxy-port');
+  if (elProxyPortInput) {
+    elProxyPortInput.addEventListener('input', () => {
+      if (state.autoFilledProxyPort && elProxyPortInput.value.trim() !== state.autoFilledProxyPort) {
+        state.autoFilledProxyPort = null;
+      }
     });
   }
 
@@ -2722,7 +2740,7 @@ function setDesktopModalMode(mode) {
 
   const rowProtoPath = document.getElementById('row-protocol-path');
   if (rowProtoPath) {
-    rowProtoPath.style.display = mode === 'shortcut' ? 'none' : 'flex';
+    rowProtoPath.style.display = mode === 'local' ? 'flex' : 'none';
   }
   const groupUiType = document.getElementById('group-ui-type');
   if (groupUiType) {
@@ -2731,6 +2749,28 @@ function setDesktopModalMode(mode) {
   const groupFileTypes = document.getElementById('form-group-file-types');
   if (groupFileTypes) {
     groupFileTypes.style.display = mode === 'shortcut' ? 'none' : 'block';
+  }
+
+  if (mode === 'proxy') {
+    autoFillRecommendedProxyPort();
+  }
+}
+
+async function autoFillRecommendedProxyPort() {
+  const elProxyPort = document.getElementById('item-proxy-port');
+  if (!elProxyPort || elProxyPort.value.trim()) return;
+  try {
+    const res = await fetch(apiUrl('/api/ports/available?start=18000'));
+    if (res.ok) {
+      const data = await res.json();
+      const port = data.recommended_port || data.port;
+      if (port && !elProxyPort.value.trim()) {
+        elProxyPort.value = port;
+        state.autoFilledProxyPort = String(port);
+      }
+    }
+  } catch (err) {
+    console.error('Auto recommend port error:', err);
   }
 }
 
@@ -4080,6 +4120,9 @@ function resetDesktopForm() {
   if (elFileTypes) elFileTypes.value = '';
   const helpFileTypes = document.getElementById('item-file-types-help');
   if (helpFileTypes) helpFileTypes.style.display = 'none';
+  const helpTargetUrl = document.getElementById('item-target-url-help');
+  if (helpTargetUrl) helpTargetUrl.style.display = 'none';
+  state.autoFilledProxyPort = null;
   const chkNoDisplay = document.getElementById('item-no-display');
   if (chkNoDisplay) chkNoDisplay.checked = false;
 
@@ -4221,7 +4264,17 @@ function openCreateDesktopModalFromWatchcow(id) {
     document.getElementById('item-local-port').value = item.port || '';
     setDesktopModalMode('local');
   } else if (mode === 'proxy') {
-    document.getElementById('item-target-url').value = item.target_url || '';
+    let tUrl = item.target_url || '';
+    if (tUrl && item.path && item.path !== '/' && !tUrl.includes(item.path)) {
+      try {
+        const u = new URL(tUrl);
+        u.pathname = (u.pathname.replace(/\/$/, '') + '/' + item.path.replace(/^\//, '')).replace(/\/+/g, '/');
+        tUrl = u.toString();
+      } catch (_) {
+        tUrl = tUrl.replace(/\/$/, '') + (item.path.startsWith('/') ? item.path : '/' + item.path);
+      }
+    }
+    document.getElementById('item-target-url').value = tUrl;
     document.getElementById('item-proxy-port').value = item.port || '';
     document.getElementById('item-skip-tls').checked = !!item.skip_tls_verify;
     setDesktopModalMode('proxy');
@@ -4385,7 +4438,17 @@ function openEditDesktopModal(id) {
     document.getElementById('item-local-port').value = item.port || '';
     setDesktopModalMode('local');
   } else if (item.mode === 'proxy') {
-    document.getElementById('item-target-url').value = item.target_url || '';
+    let tUrl = item.target_url || '';
+    if (tUrl && item.path && item.path !== '/' && !tUrl.includes(item.path)) {
+      try {
+        const u = new URL(tUrl);
+        u.pathname = (u.pathname.replace(/\/$/, '') + '/' + item.path.replace(/^\//, '')).replace(/\/+/g, '/');
+        tUrl = u.toString();
+      } catch (_) {
+        tUrl = tUrl.replace(/\/$/, '') + (item.path.startsWith('/') ? item.path : '/' + item.path);
+      }
+    }
+    document.getElementById('item-target-url').value = tUrl;
     document.getElementById('item-proxy-port').value = item.port || '';
     document.getElementById('item-skip-tls').checked = !!item.skip_tls_verify;
     setDesktopModalMode('proxy');
@@ -4534,8 +4597,8 @@ async function handleSaveDesktopItem(e) {
     const id = document.getElementById('item-id').value.trim();
     const mode = document.getElementById('item-mode').value;
     const name = document.getElementById('item-name').value.trim();
-    const protocol = document.getElementById('item-protocol').value;
-    const path = document.getElementById('item-path').value.trim() || '/';
+    let protocol = 'http';
+    let path = '/';
     const uiType = document.getElementById('item-ui-type').value;
     const allUsers = document.getElementById('item-all-users').value === 'true';
     let icon = '';
@@ -4594,6 +4657,8 @@ async function handleSaveDesktopItem(e) {
     let skipTls = false;
 
     if (mode === 'local') {
+      protocol = document.getElementById('item-protocol').value || 'http';
+      path = document.getElementById('item-path').value.trim() || '/';
       port = parseInt(document.getElementById('item-local-port').value, 10);
       if (!port || port <= 0) {
         document.getElementById('item-local-port').focus();
@@ -4607,9 +4672,20 @@ async function handleSaveDesktopItem(e) {
         document.getElementById('item-target-url').focus();
         return showToast('请输入目标地址', 'error');
       }
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = 'http://' + targetUrl;
+      }
+      try {
+        const u = new URL(targetUrl);
+        path = u.pathname || '/';
+        protocol = 'http';
+      } catch (_) {
+        path = '/';
+        protocol = 'http';
+      }
       if (!port || port <= 0) {
         document.getElementById('item-proxy-port').focus();
-        return showToast('请输入本机代理监听端口', 'error');
+        return showToast('请输入本机代理端口', 'error');
       }
     } else if (mode === 'shortcut') {
       targetUrl = document.getElementById('item-shortcut-url').value.trim();
@@ -4620,6 +4696,8 @@ async function handleSaveDesktopItem(e) {
       if (!/^https?:\/\//i.test(targetUrl)) {
         targetUrl = 'https://' + targetUrl;
       }
+      path = targetUrl;
+      protocol = '';
     }
 
     let enabled = true;
@@ -4839,8 +4917,10 @@ async function handleRecommendPort() {
     const res = await fetch(apiUrl('/api/ports/available?start=18000'));
     if (res.ok) {
       const data = await res.json();
-      if (data.recommended_port) {
-        document.getElementById('item-proxy-port').value = data.recommended_port;
+      const port = data.recommended_port || data.port;
+      if (port) {
+        document.getElementById('item-proxy-port').value = port;
+        state.autoFilledProxyPort = null;
       }
     }
   } catch (err) {
@@ -5014,7 +5094,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.67';
+      const ver = state.settings?.version || '1.1.68';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
