@@ -115,6 +115,6 @@ jobs:
           files: |
             fn-docker-to-desktop-x86.fpk
             fn-docker-to-desktop-arm.fpk
-          generate_release_notes: true
+          generate_release_notes: false
 
 
