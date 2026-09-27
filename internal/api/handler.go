@@ -2309,43 +2309,21 @@ func (h *Handler) handleToggleDockLabelItem(w http.ResponseWriter, r *http.Reque
 		}
 		targetItem.AppName = appName
 
-		iconToUse := targetItem.LocalIconPath
-		if isLocal, baseName := desktop.IsLocalOrLoopbackIconURL(targetItem.Icon); isLocal && baseName != "" {
-			target := filepath.Join(h.iconsDir, baseName)
-			if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
-				iconToUse = target
-			} else if resolved := desktop.ResolveWatchcowIconPath(baseName, "", nil); resolved != "" {
-				if data, err := os.ReadFile(resolved); err == nil {
-					_ = os.WriteFile(target, data, 0644)
-				}
-				iconToUse = resolved
-			}
-		}
-		if iconToUse == "" && targetItem.Icon != "" {
-			iconToUse = desktop.ResolveWatchcowIconPath(targetItem.Icon, "", nil)
-		}
-		if iconToUse == "" {
-			iconToUse = targetItem.Icon
-		}
-		if strings.HasPrefix(iconToUse, "http://") || strings.HasPrefix(iconToUse, "https://") {
-			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(iconToUse)))
-			ext := filepath.Ext(iconToUse)
-			if ext == "" || len(ext) > 5 {
-				ext = ".png"
-			}
-			cachePath := filepath.Join(h.iconsDir, "dock_cache_"+hash+ext)
-			legacyCachePath := filepath.Join(h.iconsDir, "wc_cache_"+hash+ext)
-			if info, err := os.Stat(cachePath); err == nil && info.Size() > 0 {
-				iconToUse = cachePath
-			} else if info, err := os.Stat(legacyCachePath); err == nil && info.Size() > 0 {
-				iconToUse = legacyCachePath
-			}
-		}
-		idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(targetItem.ID)))
-		idCachePath := filepath.Join(h.iconsDir, "dock_cache_"+idHash+".png")
-		if (iconToUse == "" || strings.HasPrefix(iconToUse, "http")) {
-			if fi, err := os.Stat(idCachePath); err == nil && fi.Size() > 0 {
-				iconToUse = idCachePath
+		targetName := fmt.Sprintf("copy_%s.png", targetItem.ID)
+		targetPath := filepath.Join(h.iconsDir, targetName)
+		iconToUse := targetName
+
+		if data, _, err := desktop.ResolveDockLabelIconBytes(targetItem, h.iconsDir); err == nil && len(data) > 0 {
+			_ = os.WriteFile(targetPath, data, 0644)
+		} else {
+			idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(targetItem.ID)))
+			idCachePath := filepath.Join(h.iconsDir, "dock_cache_"+idHash+".png")
+			if data, err := os.ReadFile(idCachePath); err == nil && len(data) > 0 {
+				_ = os.WriteFile(targetPath, data, 0644)
+			} else if targetItem.LocalIconPath != "" {
+				iconToUse = targetItem.LocalIconPath
+			} else {
+				iconToUse = targetItem.Icon
 			}
 		}
 

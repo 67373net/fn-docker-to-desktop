@@ -617,7 +617,7 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 				pathVal = "/"
 			}
 
-			defaultEnabled := defaultEntry["enable"] != "false"
+			defaultEnabled := false
 			enabled := defaultEnabled
 			if stateResolver != nil {
 				enabled = stateResolver(itemID, defaultEnabled)
@@ -740,7 +740,7 @@ func ScanDockLabelItems(stateResolver func(id string, defaultEnabled bool) bool)
 				pathVal = "/"
 			}
 
-			defaultEnabled := eData["enable"] != "false"
+			defaultEnabled := false
 			enabled := defaultEnabled
 			if stateResolver != nil {
 				enabled = stateResolver(itemID, defaultEnabled)

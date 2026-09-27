@@ -5153,6 +5153,35 @@ INFO
 3. **零 .fpk 文件残留**：
    - 打包验证后立即执行清理，工作区保持纯净，无任何 `.fpk` 文件残留。
 
+---
+
+## Turn 79 - v1.1.63 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **Watchcow 默认状态调整**：读取 Watchcow 配置后，默认运行状态应为非启用。
+2. **桌面图标 Bug 修复**：修复列表显示正常但桌面图标显示为本 App 默认图标或未知网络图标的问题。
+3. **更新说明精简**：Release 更新说明保持极简，仅体现 Bug 修复与基础功能调整。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **基础功能调整**：
+   - [`internal/desktop/docklabel.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/docklabel.go)：将扫描 Watchcow 容器时的默认运行状态由启用调整为非启用（`defaultEnabled := false`）。
+2. **桌面图标 Bug 修复**：
+   - [`internal/desktop/icons.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/icons.go)：移除快捷方式打包时对 `cleanCustom == "icon.png"` 写入本 App 产品图标的错误拦截；
+   - [`internal/desktop/icons.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/icons.go)：在 [`PersistItemIcon`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/icons.go) 中对 Watchcow/DockLabel 容器项目优先通过统一解析器获取物理图标，禁止回退至 Homarr 官方镜像名称模糊匹配避免下载无关图标；
+   - [`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go) & [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)：快捷方式安装与恢复时统一通过 [`ResolveDockLabelIconBytes`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/docklabel.go) 预先持久化物理图标文件。
+3. **全链路版本升级至 `v1.1.63`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.63`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **单元测试通过**：全模块自动化测试 100% PASS。
+2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
+3. **零残留**：工作区 0 `.fpk` 文件残留。
+
+
 
 
 

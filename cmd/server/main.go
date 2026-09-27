@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -26,7 +27,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.62"
+const appVersion = "1.1.63"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -450,6 +451,24 @@ func main() {
 							activeApps[li.AppName] = true
 						}
 						installer.SetItemReconcileStatus(li.ID, li.AppName, "恢复中...")
+						targetName := fmt.Sprintf("copy_%s.png", li.ID)
+						targetPath := filepath.Join(iconsDir, targetName)
+						iconToUse := targetName
+						if fi, err := os.Stat(targetPath); err != nil || fi.Size() == 0 {
+							if data, _, err := desktop.ResolveDockLabelIconBytes(&li, iconsDir); err == nil && len(data) > 0 {
+								_ = os.WriteFile(targetPath, data, 0644)
+							} else {
+								idHash := fmt.Sprintf("%x", sha256.Sum256([]byte(li.ID)))
+								idCachePath := filepath.Join(iconsDir, "dock_cache_"+idHash+".png")
+								if data, err := os.ReadFile(idCachePath); err == nil && len(data) > 0 {
+									_ = os.WriteFile(targetPath, data, 0644)
+								} else if li.LocalIconPath != "" {
+									iconToUse = li.LocalIconPath
+								} else {
+									iconToUse = li.Icon
+								}
+							}
+						}
 						dItem := desktop.DesktopItem{
 							ID:            li.ID,
 							Name:          li.Name,
@@ -462,7 +481,7 @@ func main() {
 							TargetURL:     li.TargetURL,
 							UIType:        li.UIType,
 							AllUsers:      li.AllUsers,
-							Icon:          li.Icon,
+							Icon:          iconToUse,
 							FileTypes:     li.FileTypes,
 							NoDisplay:     li.NoDisplay,
 							Enabled:       true,

@@ -55,6 +55,7 @@ else
   mkdir -p /tmp/gocache
   mkdir -p /tmp/gopath
   docker run --rm \
+    -e GOPROXY="https://goproxy.cn,direct" \
     -v "${ROOT_DIR}:/build" \
     -v "/tmp/gocache:/root/.cache/go-build" \
     -v "/tmp/gopath:/go" \

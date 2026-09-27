@@ -54,9 +54,8 @@ func WriteProductIcons(pkgDir string) error {
 // iconsDir: server icons cache directory
 // candidates: list of candidate names (image, container name, service name, title) to auto-resolve
 func WritePackageIcons(pkgDir string, customIconPathOrURL string, iconsDir string, candidates ...string) error {
-	// If this is our own product package or user requested icon.png, always write product icon
-	cleanCustom := strings.TrimPrefix(strings.TrimSpace(customIconPathOrURL), "/")
-	if cleanCustom == "icon.png" || filepath.Base(pkgDir) == "fn-docker-to-desktop" {
+	// If this is our own product package, always write product icon
+	if filepath.Base(pkgDir) == "fn-docker-to-desktop" {
 		return WriteProductIcons(pkgDir)
 	}
 
@@ -249,6 +248,93 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 		}
 	}
 
+	isDockLabel := strings.HasPrefix(item.ID, "docklabel-") || strings.HasPrefix(item.ID, "watchcow-") ||
+		strings.Contains(item.Icon, "/api/desktop/docklabel/icon") || strings.Contains(item.Icon, "/api/desktop/watchcow/icon")
+
+	if isDockLabel {
+		// 1. If targetPath already exists with content, point to it
+		if fi, err := os.Stat(targetPath); err == nil && fi.Size() > 0 {
+			item.Icon = targetName
+			return true
+		}
+
+		// 2. Check disk cache hashes
+		cleanID := strings.TrimPrefix(strings.TrimPrefix(item.ID, "docklabel-"), "watchcow-")
+		hashes := []string{
+			fmt.Sprintf("%x", sha256.Sum256([]byte(item.ID))),
+			fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+cleanID))),
+			fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+cleanID))),
+		}
+		if u, err := url.Parse(item.Icon); err == nil {
+			if qID := u.Query().Get("id"); qID != "" {
+				qClean := strings.TrimPrefix(strings.TrimPrefix(qID, "docklabel-"), "watchcow-")
+				hashes = append(hashes,
+					fmt.Sprintf("%x", sha256.Sum256([]byte(qID))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+qClean))),
+					fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+qClean))),
+				)
+			}
+		}
+		for _, h := range hashes {
+			for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
+				cp := filepath.Join(iconsDir, prefix+h+".png")
+				if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
+					if err := os.WriteFile(targetPath, data, 0644); err == nil {
+						item.Icon = targetName
+						slog.Info("从 DockLabel 缓存物理持久化图标成功", "id", item.ID, "target", targetName)
+						return true
+					}
+				}
+			}
+		}
+
+		// 3. Resolve directly via ScanDockLabelItems and ResolveDockLabelIconBytes
+		if dItems, err := ScanDockLabelItems(nil); err == nil {
+			for i := range dItems {
+				dClean := strings.TrimPrefix(strings.TrimPrefix(dItems[i].ID, "docklabel-"), "watchcow-")
+				if dItems[i].ID == item.ID || dClean == cleanID || (item.ContainerName != "" && dItems[i].ContainerName == item.ContainerName) {
+					data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir)
+					if err == nil && len(data) > 0 {
+						if err := os.WriteFile(targetPath, data, 0644); err == nil {
+							item.Icon = targetName
+							slog.Info("通过统一解析器物理持久化 DockLabel 图标成功", "id", item.ID, "target", targetName)
+							return true
+						}
+					}
+					break
+				}
+			}
+		}
+
+		// 4. Try host icon path resolution
+		if item.Icon != "" && item.Icon != "icon.png" {
+			if resolved := ResolveWatchcowIconPath(item.Icon, "", nil); resolved != "" {
+				if data, err := os.ReadFile(resolved); err == nil && len(data) > 0 {
+					if err := os.WriteFile(targetPath, data, 0644); err == nil {
+						item.Icon = targetName
+						return true
+					}
+				}
+			}
+		}
+
+		// 5. Try loading via loadIconImage if it's not a generic icon name
+		if item.Icon != "icon.png" {
+			if img, err := loadIconImage(item.Icon, iconsDir); err == nil && img != nil {
+				buf := new(bytes.Buffer)
+				if err := png.Encode(buf, img); err == nil && buf.Len() > 0 {
+					if err := os.WriteFile(targetPath, buf.Bytes(), 0644); err == nil {
+						item.Icon = targetName
+						return true
+					}
+				}
+			}
+		}
+
+		// For docklabel/watchcow items, do NOT fall back to random candidate search from mirrors
+		return false
+	}
+
 	// If pointing to copy_<id>.png but physical file does not exist (e.g. fresh reinstall with persisted state),
 	// attempt to restore from container label / docklabel scan before falling back
 	if item.Icon == targetName || strings.HasPrefix(item.Icon, "copy_") {
@@ -273,53 +359,10 @@ func PersistItemIcon(item *DesktopItem, iconsDir string) bool {
 
 	// If icon is already a clean local file in iconsDir and NOT a proxy URL or remote URL, keep it!
 	cleanName := strings.TrimPrefix(strings.TrimPrefix(item.Icon, "/icons/"), "icons/")
-	if !strings.Contains(cleanName, "/") && !strings.Contains(cleanName, "?") && !strings.Contains(cleanName, ":") {
+	if cleanName != "icon.png" && !strings.Contains(cleanName, "/") && !strings.Contains(cleanName, "?") && !strings.Contains(cleanName, ":") {
 		localPath := filepath.Join(iconsDir, cleanName)
 		if fi, err := os.Stat(localPath); err == nil && !fi.IsDir() && fi.Size() > 0 {
 			return false
-		}
-	}
-
-	// 1. If it's a docklabel icon URL (/api/desktop/docklabel/icon?id=... or /api/desktop/watchcow/icon?id=...)
-	if strings.Contains(item.Icon, "/api/desktop/docklabel/icon") || strings.Contains(item.Icon, "/api/desktop/watchcow/icon") {
-		if u, err := url.Parse(item.Icon); err == nil {
-			id := u.Query().Get("id")
-			if id != "" {
-				cleanID := strings.TrimPrefix(strings.TrimPrefix(id, "docklabel-"), "watchcow-")
-				for _, h := range []string{
-					fmt.Sprintf("%x", sha256.Sum256([]byte(id))),
-					fmt.Sprintf("%x", sha256.Sum256([]byte("docklabel-"+cleanID))),
-					fmt.Sprintf("%x", sha256.Sum256([]byte("watchcow-"+cleanID))),
-				} {
-					for _, prefix := range []string{"dock_cache_", "wc_cache_"} {
-						cp := filepath.Join(iconsDir, prefix+h+".png")
-						if data, err := os.ReadFile(cp); err == nil && len(data) > 0 {
-							if err := os.WriteFile(targetPath, data, 0644); err == nil {
-								item.Icon = targetName
-								slog.Info("从 DockLabel 缓存物理持久化图标成功", "id", item.ID, "target", targetName)
-								return true
-							}
-						}
-					}
-				}
-				// If not cached yet, resolve it directly via ResolveDockLabelIconBytes
-				if dItems, err := ScanDockLabelItems(nil); err == nil {
-					for i := range dItems {
-						dClean := strings.TrimPrefix(strings.TrimPrefix(dItems[i].ID, "docklabel-"), "watchcow-")
-						if dItems[i].ID == id || dClean == cleanID || (item.ContainerName != "" && dItems[i].ContainerName == item.ContainerName) {
-							data, _, err := ResolveDockLabelIconBytes(&dItems[i], iconsDir)
-							if err == nil && len(data) > 0 {
-								if err := os.WriteFile(targetPath, data, 0644); err == nil {
-									item.Icon = targetName
-									slog.Info("通过统一解析器物理持久化 DockLabel 图标成功", "id", item.ID, "target", targetName)
-									return true
-								}
-							}
-							break
-						}
-					}
-				}
-			}
 		}
 	}
 
@@ -502,7 +545,7 @@ func loadIconImage(source string, iconsDir string) (image.Image, error) {
 	}
 
 	// 0. Check if it's an internal Docklabel icon proxy URL (e.g. /api/desktop/docklabel/icon?id=docklabel-xxx)
-	if strings.Contains(source, "/api/desktop/docklabel/icon") {
+	if strings.Contains(source, "/api/desktop/docklabel/icon") || strings.Contains(source, "/api/desktop/watchcow/icon") {
 		if u, err := url.Parse(source); err == nil {
 			id := u.Query().Get("id")
 			if id != "" {
