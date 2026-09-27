@@ -303,6 +303,11 @@ html, body {
   transition: border-color 0.15s;
 }
 
+.search-box input[type="search"]::-webkit-search-decoration,
+.search-box input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
 .search-box input:focus {
   border-color: var(--primary);
 }

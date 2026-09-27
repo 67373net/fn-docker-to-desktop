@@ -560,22 +560,55 @@ cat << 'EOFCGIHTML'
 <script>
 (function() {
   let TARGET_URL = %s;
-  try {
-    const parsed = new URL(TARGET_URL, window.location.href);
-    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
-        window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      parsed.hostname = window.location.hostname;
-      TARGET_URL = parsed.toString();
-    }
-  } catch(e) {}
+  const APP_NAME = %q;
+  const UI_TYPE = %q;
+  const PORT = %d;
+  const URL_PATH = %q;
   const skipKey = 'fn_notice_skip_%s';
   const today = new Date().toISOString().slice(0, 10);
-  try { if (localStorage.getItem(skipKey) === today) { window.location.replace(TARGET_URL); return; } } catch(e){}
+
+  function isIPOrLocalhost(host) {
+    if (!host) return true;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
+  }
+
+  try {
+    const curHost = window.location.hostname;
+    const isRemoteDomain = !isIPOrLocalhost(curHost);
+
+    if (isRemoteDomain && PORT > 0 && APP_NAME) {
+      const sub = APP_NAME.replace(/\./g, '-');
+      const proto = window.location.protocol;
+      const portPart = (window.location.port && window.location.port !== '80' && window.location.port !== '443') ? (':' + window.location.port) : '';
+      TARGET_URL = proto + '//' + sub + '.' + curHost + portPart + URL_PATH;
+    } else {
+      const parsed = new URL(TARGET_URL, window.location.href);
+      if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+          curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
+        parsed.hostname = curHost;
+        TARGET_URL = parsed.toString();
+      }
+    }
+  } catch(e) {}
+
+  function doNavigate() {
+    if (UI_TYPE === 'url') {
+      try {
+        if (window.top && window.top !== window) {
+          window.top.location.href = TARGET_URL;
+          return;
+        }
+      } catch (e) {}
+    }
+    window.location.replace(TARGET_URL);
+  }
+
+  try { if (localStorage.getItem(skipKey) === today) { doNavigate(); return; } } catch(e){}
   const btn = document.getElementById('btn-proceed');
   const chk = document.getElementById('skip-today');
   function proceed() {
     if (chk && chk.checked) { try { localStorage.setItem(skipKey, today); } catch(e){} }
-    window.location.replace(TARGET_URL);
+    doNavigate();
   }
   if (btn) { btn.addEventListener('click', proceed); btn.focus(); }
   window.addEventListener('keydown', function(e) { if (e.key === 'Enter') proceed(); });
@@ -585,7 +618,7 @@ cat << 'EOFCGIHTML'
 </html>
 EOFCGIHTML
 exit 0
-`, escapedTitle, escapedTitle, escapedNotice, targetJsExpr, cfg.AppName)
+`, escapedTitle, escapedTitle, escapedNotice, targetJsExpr, cfg.AppName, uiType, cfg.Port, urlPath, cfg.AppName)
 		} else {
 			cgiScript = fmt.Sprintf(`#!/bin/bash
 # CGI redirect for fn-docker-to-desktop

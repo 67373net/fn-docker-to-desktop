@@ -10,9 +10,15 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.65">
+  <link rel="stylesheet" href="style.css?v=1.1.66">
 </head>
 <body>
+  <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
+  <div style="position: absolute; left: -9999px; top: -9999px; width: 0; height: 0; opacity: 0; pointer-events: none;" aria-hidden="true">
+    <input type="text" name="dummy_fn_username" tabindex="-1" autocomplete="username">
+    <input type="password" name="dummy_fn_password" tabindex="-1" autocomplete="current-password">
+  </div>
+
   <!-- Header Bar -->
   <header class="app-header">
 
@@ -59,7 +65,7 @@
         <button type="button" class="btn btn-primary" id="btn-toolbar-host-config" title="添加主机">添加主机</button>
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="port-search" placeholder="搜索">
+          <input type="search" id="port-search" name="fn_search_ports_query" placeholder="搜索" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         </div>
 
         <!-- Custom Filter Dropdown: Source -->
@@ -133,7 +139,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="desktop-search" placeholder="搜索">
+          <input type="search" id="desktop-search" name="fn_search_desktop_query" placeholder="搜索" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         </div>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置与图标资源为 ZIP 压缩包">导出</button>
@@ -168,7 +174,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="proc-search" placeholder="搜索">
+          <input type="search" id="proc-search" name="fn_search_proc_query" placeholder="搜索" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         </div>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-refresh-procs" title="刷新系统进程">刷新</button>
@@ -203,7 +209,7 @@
       <div class="toolbar">
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="log-search-input" placeholder="搜索">
+          <input type="search" id="log-search-input" name="fn_search_logs_query" placeholder="搜索" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         </div>
 
         <div class="segmented-control" id="log-source-segments" role="radiogroup" aria-label="日志来源筛选">
@@ -425,12 +431,12 @@
 
             <div class="form-group">
               <label class="form-label">访问密码 (可选，留空则免密)</label>
-              <input type="password" id="setting-portal-password" class="form-input" placeholder="输入新密码，留空保持当前设置">
+              <input type="password" id="setting-portal-password" class="form-input" placeholder="输入新密码，留空保持当前设置" autocomplete="new-password">
             </div>
 
             <div class="form-group" id="group-password-confirm">
               <label class="form-label">确认密码</label>
-              <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认">
+              <input type="password" id="setting-portal-password-confirm" class="form-input" placeholder="再次输入新密码以二次确认" autocomplete="new-password">
               <div class="form-tip" id="password-match-tip" style="margin-top: 6px; font-size: 13px; min-height: 18px;"></div>
             </div>
 
@@ -504,7 +510,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.65</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.66</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -990,14 +996,14 @@
 
           <div id="host-auth-password-group" class="form-group" style="margin-bottom: 1rem;">
             <label class="form-label" for="host-form-password">SSH 密码</label>
-            <input type="password" id="host-form-password" class="form-input" placeholder="输入远程主机 SSH 密码">
+            <input type="password" id="host-form-password" class="form-input" placeholder="输入远程主机 SSH 密码" autocomplete="new-password">
           </div>
 
           <div id="host-auth-key-group" class="form-group" style="display: none; margin-bottom: 1rem;">
             <label class="form-label" for="host-form-key">SSH 私钥 (PEM / OpenSSH)</label>
             <textarea id="host-form-key" class="form-input" rows="4" style="font-family: monospace; font-size: 0.82rem;" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
             <label class="form-label" for="host-form-passphrase" style="margin-top: 8px;">私钥 Passphrase（若无密码请留空）</label>
-            <input type="password" id="host-form-passphrase" class="form-input" placeholder="私钥密码（可选）">
+            <input type="password" id="host-form-passphrase" class="form-input" placeholder="私钥密码（可选）" autocomplete="new-password">
           </div>
 
           <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 4px;">
@@ -1023,6 +1029,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.65"></script>
+  <script src="app.js?v=1.1.66"></script>
 </body>
 </html>

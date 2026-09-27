@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.65';
+  const ver = state.settings?.version || '1.1.66';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -653,6 +653,10 @@ function switchTab(tab) {
   });
 
   if (tab === 'ports') {
+    if (!state.portSearch) {
+      const ps = document.getElementById('port-search');
+      if (ps && ps.value !== '') ps.value = '';
+    }
     loadHostPorts(state.currentHostId || 'localhost', { force: false, silent: false });
   } else if (tab === 'desktop') {
     fetchDesktopItems();
@@ -1224,7 +1228,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.65';
+  const ver = state.settings?.version || '1.1.66';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5013,7 +5017,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.65';
+      const ver = state.settings?.version || '1.1.66';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5346,6 +5350,11 @@ function selectHost(val) {
   }
 
   state.currentHostId = targetId;
+  const ps = document.getElementById('port-search');
+  if (ps) {
+    ps.value = '';
+  }
+  state.portSearch = '';
   updateHostSelectDropdown();
   if (state.currentTab !== 'ports') {
     switchTab('ports');

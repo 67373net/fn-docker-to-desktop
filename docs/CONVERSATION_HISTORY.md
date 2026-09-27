@@ -5236,3 +5236,29 @@ INFO
 1. **单元测试通过**：全模块自动化测试 100% PASS。
 2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
 3. **零残留**：工作区 0 `.fpk` 文件残留。
+
+---
+
+## Turn 82 - v1.1.66 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **搜索框防浏览器自动填充**：彻底禁止浏览器密码管理器向搜索框预填充用户名。
+2. **开屏提示支持直达与跨窗口跳转**：开屏提示页面显示可收藏的应用直达网址，新标签页模式下破窗直达应用真实地址。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **搜索框防自动填充**：
+   - [`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) & [`web/style.css`](file:///home/net67373/fn-docker-to-desktop/web/style.css)：搜索输入框改为标准 `type="search"` 并添加 `autocomplete="off"` 及防嗅探属性；在页面顶部插入隐藏的防嗅探桩，密码项补齐 `autocomplete="new-password"`；
+   - [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js)：切换主机与 Tab 时主动重置并清空搜索框内容。
+2. **开屏提示与外网直达优化**：
+   - [`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go) & [`internal/desktop/installer.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer.go)：开屏提示页面智能解析飞牛 Connect 独立二级域名，展示可收藏的直达链接并支持一键复制；“新标签页”模式下跳转至顶层窗口，避免留在桌面临时窗口。
+3. **全链路版本升级至 `v1.1.66`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.66`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **单元测试通过**：全模块自动化测试 100% PASS。
+2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
+3. **零残留**：工作区 0 `.fpk` 文件残留。

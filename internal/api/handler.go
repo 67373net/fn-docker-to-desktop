@@ -1865,6 +1865,17 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
 
 	targetJson, _ := json.Marshal(target)
 	idJson, _ := json.Marshal(item.ID)
+	appNameJson, _ := json.Marshal(item.AppName)
+	uiType := item.UIType
+	if uiType == "" {
+		uiType = "url"
+	}
+	uiTypeJson, _ := json.Marshal(uiType)
+	pathVal := item.Path
+	if pathVal == "" {
+		pathVal = "/"
+	}
+	pathJson, _ := json.Marshal(pathVal)
 
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2008,6 +2019,52 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
     .btn-proceed:active {
       transform: scale(0.98);
     }
+    .direct-url-bar {
+      margin-top: -8px;
+      margin-bottom: 16px;
+      padding: 8px 12px;
+      background: var(--bg-page);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+    }
+    .direct-url-label {
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-weight: 500;
+    }
+    .direct-url-link {
+      color: var(--primary);
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .direct-url-link:hover {
+      text-decoration: underline;
+    }
+    .btn-copy-url {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .btn-copy-url:hover {
+      color: var(--text-main);
+      border-color: var(--primary);
+    }
   </style>
 </head>
 <body>
@@ -2019,6 +2076,11 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
       </div>
     </div>
     <div class="notice-body">%s</div>
+    <div class="direct-url-bar" id="direct-url-bar" style="display: none;">
+      <span class="direct-url-label">直达网址：</span>
+      <a href="#" class="direct-url-link" id="direct-url-link" target="_blank" rel="noopener noreferrer"></a>
+      <button type="button" class="btn-copy-url" id="btn-copy-url" title="复制直达网址">复制</button>
+    </div>
     <div class="notice-footer">
       <label class="skip-label">
         <input type="checkbox" id="skip-today">
@@ -2031,23 +2093,82 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
     (function() {
       let TARGET_URL = %s;
       const ITEM_ID = %s;
+      const APP_NAME = %s;
+      const UI_TYPE = %s;
+      const PORT = %d;
+      const URL_PATH = %s;
       const skipKey = 'fn_notice_skip_' + ITEM_ID;
       const today = new Date().toISOString().slice(0, 10);
 
-      // If target URL points to localhost or 127.0.0.1, but browser is accessing from a remote host/IP,
-      // dynamically resolve to the actual host/IP the user is browsing from!
+      function isIPOrLocalhost(host) {
+        if (!host) return true;
+        return host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':');
+      }
+
       try {
-        const parsed = new URL(TARGET_URL, window.location.href);
-        if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
-            window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-          parsed.hostname = window.location.hostname;
-          TARGET_URL = parsed.toString();
+        const curHost = window.location.hostname;
+        const isRemoteDomain = !isIPOrLocalhost(curHost);
+
+        if (isRemoteDomain && PORT > 0 && APP_NAME) {
+          const sub = APP_NAME.replace(/\./g, '-');
+          const proto = window.location.protocol;
+          const portPart = (window.location.port && window.location.port !== '80' && window.location.port !== '443') ? (':' + window.location.port) : '';
+          TARGET_URL = proto + '//' + sub + '.' + curHost + portPart + URL_PATH;
+        } else {
+          const parsed = new URL(TARGET_URL, window.location.href);
+          if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+              curHost && curHost !== 'localhost' && curHost !== '127.0.0.1') {
+            parsed.hostname = curHost;
+            TARGET_URL = parsed.toString();
+          }
         }
       } catch (e) {}
 
+      const directBar = document.getElementById('direct-url-bar');
+      const directLink = document.getElementById('direct-url-link');
+      const btnCopy = document.getElementById('btn-copy-url');
+      if (directBar && directLink && TARGET_URL) {
+        directBar.style.display = 'flex';
+        directLink.textContent = TARGET_URL;
+        directLink.href = TARGET_URL;
+        directLink.title = '点击直接在新标签页打开（可收藏此网址）';
+        if (btnCopy) {
+          btnCopy.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(TARGET_URL).then(function() {
+                btnCopy.textContent = '已复制';
+                setTimeout(function() { btnCopy.textContent = '复制'; }, 2000);
+              });
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = TARGET_URL;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              btnCopy.textContent = '已复制';
+              setTimeout(function() { btnCopy.textContent = '复制'; }, 2000);
+            }
+          });
+        }
+      }
+
+      function doNavigate() {
+        if (UI_TYPE === 'url') {
+          try {
+            if (window.top && window.top !== window) {
+              window.top.location.href = TARGET_URL;
+              return;
+            }
+          } catch (e) {}
+        }
+        window.location.replace(TARGET_URL);
+      }
+
       try {
         if (localStorage.getItem(skipKey) === today) {
-          window.location.replace(TARGET_URL);
+          doNavigate();
           return;
         }
       } catch (e) {}
@@ -2061,7 +2182,7 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
             localStorage.setItem(skipKey, today);
           } catch (e) {}
         }
-        window.location.replace(TARGET_URL);
+        doNavigate();
       }
 
       if (btn) {
@@ -2077,7 +2198,7 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
     })();
   </script>
 </body>
-</html>`, escapedTitle, iconDataUrl, escapedTitle, escapedNotice, string(targetJson), string(idJson))
+</html>`, escapedTitle, iconDataUrl, escapedTitle, escapedNotice, string(targetJson), string(idJson), string(appNameJson), string(uiTypeJson), item.Port, string(pathJson))
 }
 
 // Auth handlers
