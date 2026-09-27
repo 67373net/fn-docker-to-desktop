@@ -5188,3 +5188,27 @@ INFO
 
 
 
+
+---
+
+## Turn 80 - v1.1.64 发布记录
+
+### 用户需求总结 (User Requirements)
+1. **开屏提示跳转 Bug 修复**：修复快捷方式配置开屏提示后，打开页面跳转重定向为 `http://localhost:13292/` 导致无法访问的问题。
+
+---
+
+### 核心实现 (Core Implementation)
+1. **开屏提示重定向修复**：
+   - [`internal/cgi/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/cgi/handler.go)：CGI 代理转发时从环境变量提取客户端原始 Host 并设置 `X-Forwarded-Host`；
+   - [`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go)：重定向时优先获取客户端真实 Host，避免硬编码 `localhost`；
+   - [`internal/api/handler.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler.go) & [`internal/desktop/installer.go`](file:///home/net67373/fn-docker-to-desktop/internal/desktop/installer.go)：开屏提示前端页面支持客户端动态纠正目标 Host，确保远程与局域网访问一致。
+2. **全链路版本升级至 `v1.1.64`**：
+   - 同步升级 [`cmd/server/main.go`](file:///home/net67373/fn-docker-to-desktop/cmd/server/main.go)、[`fnos-app/manifest`](file:///home/net67373/fn-docker-to-desktop/fnos-app/manifest)、[`internal/api/handler_test.go`](file:///home/net67373/fn-docker-to-desktop/internal/api/handler_test.go)、[`web/index.html`](file:///home/net67373/fn-docker-to-desktop/web/index.html) 以及 [`web/app.js`](file:///home/net67373/fn-docker-to-desktop/web/app.js) 至 `1.1.64`。
+
+---
+
+### 验证与产物清单 (Artifacts & Verification)
+1. **单元测试通过**：全模块自动化测试 100% PASS。
+2. **打包验证**：生成 `fn-docker-to-desktop-x86.fpk` 打包与校验通过。
+3. **零残留**：工作区 0 `.fpk` 文件残留。

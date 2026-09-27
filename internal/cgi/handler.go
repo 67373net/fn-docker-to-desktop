@@ -67,6 +67,33 @@ func isSocket(path string) bool {
 func newUnixSocketProxy(socketPath string) *httputil.ReverseProxy {
 	target, _ := url.Parse("http://localhost")
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	origDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		clientHost := req.Host
+		if clientHost == "" || clientHost == "localhost" || clientHost == "127.0.0.1" {
+			if h := os.Getenv("HTTP_X_FORWARDED_HOST"); h != "" {
+				clientHost = h
+			} else if h := os.Getenv("HTTP_HOST"); h != "" {
+				clientHost = h
+			} else if s := os.Getenv("SERVER_NAME"); s != "" {
+				clientHost = s
+			} else if s := os.Getenv("SERVER_ADDR"); s != "" {
+				clientHost = s
+			}
+		}
+		origDirector(req)
+		if clientHost != "" {
+			req.Host = clientHost
+			req.Header.Set("X-Forwarded-Host", clientHost)
+		}
+		if proto := os.Getenv("HTTP_X_FORWARDED_PROTO"); proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		} else if os.Getenv("HTTPS") == "on" || os.Getenv("SERVER_PORT") == "443" {
+			req.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			req.Header.Set("X-Forwarded-Proto", "http")
+		}
+	}
 
 	proxy.Transport = &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {

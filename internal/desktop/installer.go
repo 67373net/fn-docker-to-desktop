@@ -559,7 +559,15 @@ cat << 'EOFCGIHTML'
 </div>
 <script>
 (function() {
-  const TARGET_URL = %s;
+  let TARGET_URL = %s;
+  try {
+    const parsed = new URL(TARGET_URL, window.location.href);
+    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+        window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      parsed.hostname = window.location.hostname;
+      TARGET_URL = parsed.toString();
+    }
+  } catch(e) {}
   const skipKey = 'fn_notice_skip_%s';
   const today = new Date().toISOString().slice(0, 10);
   try { if (localStorage.getItem(skipKey) === today) { window.location.replace(TARGET_URL); return; } } catch(e){}

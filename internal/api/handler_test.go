@@ -317,6 +317,9 @@ func TestNoticePageRedirect(t *testing.T) {
 	if !strings.Contains(body1, "进入应用") {
 		t.Errorf("Expected proceed button '进入应用' in body, got: %s", body1)
 	}
+	if !strings.Contains(body1, "window.location.hostname") {
+		t.Errorf("Expected client-side hostname resolution logic in notice page")
+	}
 
 	// Test 2: Access item without notice -> expect 302 Found direct redirect
 	req2 := httptest.NewRequest("GET", "/redirect/fndocker.nonotice-123456/_", nil)
@@ -330,6 +333,19 @@ func TestNoticePageRedirect(t *testing.T) {
 	location2 := rec2.Header().Get("Location")
 	if !strings.Contains(location2, ":8082") {
 		t.Errorf("Expected redirect target to contain port 8082, got: %s", location2)
+	}
+
+	// Test 3: Access item via localhost (e.g. Unix socket proxy without X-Forwarded-Host) -> resolves to LAN IP or has dynamic replacement
+	req3 := httptest.NewRequest("GET", "/redirect/fndocker.withnotice-123456/_", nil)
+	req3.Host = "localhost"
+	rec3 := httptest.NewRecorder()
+	mux.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Errorf("Expected notice page 200 OK for localhost request, got %d", rec3.Code)
+	}
+	body3 := rec3.Body.String()
+	if !strings.Contains(body3, "window.location.hostname") {
+		t.Errorf("Expected dynamic hostname resolution script in body3")
 	}
 }
 
@@ -487,7 +503,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.63",
+		AppVersion: "1.1.64",
 	})
 
 	mux := http.NewServeMux()
@@ -602,7 +618,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.63",
+		AppVersion: "1.1.64",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -642,8 +658,8 @@ func TestCompareVersions(t *testing.T) {
 	}{
 		{"1.1.47", "1.1.47", 0},
 		{"v1.1.47", "1.1.47", 0},
-		{"1.1.62", "v1.1.63", -1},
-		{"1.1.63", "1.1.62", 1},
+		{"1.1.63", "v1.1.64", -1},
+		{"1.1.64", "1.1.63", 1},
 		{"1.1.47", "1.2.0", -1},
 		{"1.2.0", "1.1.99", 1},
 		{"v2.0.0", "v1.9.9", 1},
@@ -667,12 +683,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.63",
+		AppVersion: "1.1.64",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.63",
-		LatestVersion:  "1.1.63",
+		CurrentVersion: "1.1.64",
+		LatestVersion:  "1.1.64",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -695,8 +711,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.63" {
-		t.Errorf("Expected current version 1.1.63, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.64" {
+		t.Errorf("Expected current version 1.1.64, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -785,7 +801,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.63",
+		AppVersion:    "1.1.64",
 	})
 
 	mux := http.NewServeMux()

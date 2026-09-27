@@ -1668,6 +1668,45 @@ func (h *Handler) handleServeIcon(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, iconPath)
 }
 
+// resolveRedirectHost resolves the external or LAN host for constructing redirect URLs.
+func resolveRedirectHost(r *http.Request) string {
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if hName, _, err := net.SplitHostPort(host); err == nil {
+		host = hName
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		if lanIP := getOutboundLANIP(); lanIP != "" {
+			return lanIP
+		}
+	}
+	return host
+}
+
+func getOutboundLANIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err == nil {
+		defer conn.Close()
+		if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok && localAddr.IP != nil {
+			return localAddr.IP.String()
+		}
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ip4 := ipNet.IP.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return "localhost"
+}
+
 // /redirect or /api/redirect: supports target query param and WatchCow CGI path: /redirect/<appName>/_
 func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("target")
@@ -1691,7 +1730,7 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 			appName := parts[0]
 			if item, ok := h.storage.GetItemByAppName(appName); ok {
 				foundItem = &item
-				if item.TargetURL != "" {
+				if item.Mode == desktop.ModeShortcut && item.TargetURL != "" {
 					target = item.TargetURL
 				} else if item.Port > 0 {
 					proto := item.Protocol
@@ -1702,11 +1741,10 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 					if p == "" {
 						p = "/"
 					}
-					host := r.Host
-					if hName, _, err := net.SplitHostPort(host); err == nil {
-						host = hName
-					}
+					host := resolveRedirectHost(r)
 					target = fmt.Sprintf("%s://%s:%d%s", proto, host, item.Port, p)
+				} else if item.TargetURL != "" {
+					target = item.TargetURL
 				}
 			}
 		}
@@ -1717,7 +1755,7 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 			if item, ok := h.storage.GetItem(id); ok {
 				foundItem = &item
 				if target == "" {
-					if item.TargetURL != "" {
+					if item.Mode == desktop.ModeShortcut && item.TargetURL != "" {
 						target = item.TargetURL
 					} else if item.Port > 0 {
 						proto := item.Protocol
@@ -1728,11 +1766,10 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
 						if p == "" {
 							p = "/"
 						}
-						host := r.Host
-						if hName, _, err := net.SplitHostPort(host); err == nil {
-							host = hName
-						}
+						host := resolveRedirectHost(r)
 						target = fmt.Sprintf("%s://%s:%d%s", proto, host, item.Port, p)
+					} else if item.TargetURL != "" {
+						target = item.TargetURL
 					}
 				}
 			}
@@ -1769,7 +1806,16 @@ func (h *Handler) handleRedirect(w http.ResponseWriter, r *http.Request) {
     <meta http-equiv="refresh" content="0; url=%s">
     <title>正在跳转...</title>
     <script>
-        window.location.replace("%s");
+        let target = "%s";
+        try {
+            const parsed = new URL(target, window.location.href);
+            if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+                window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                parsed.hostname = window.location.hostname;
+                target = parsed.toString();
+            }
+        } catch(e) {}
+        window.location.replace(target);
     </script>
 </head>
 <body>
@@ -1983,10 +2029,21 @@ func (h *Handler) renderNoticePage(w http.ResponseWriter, item desktop.DesktopIt
   </div>
   <script>
     (function() {
-      const TARGET_URL = %s;
+      let TARGET_URL = %s;
       const ITEM_ID = %s;
       const skipKey = 'fn_notice_skip_' + ITEM_ID;
       const today = new Date().toISOString().slice(0, 10);
+
+      // If target URL points to localhost or 127.0.0.1, but browser is accessing from a remote host/IP,
+      // dynamically resolve to the actual host/IP the user is browsing from!
+      try {
+        const parsed = new URL(TARGET_URL, window.location.href);
+        if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1') &&
+            window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          parsed.hostname = window.location.hostname;
+          TARGET_URL = parsed.toString();
+        }
+      } catch (e) {}
 
       try {
         if (localStorage.getItem(skipKey) === today) {
