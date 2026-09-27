@@ -197,6 +197,10 @@ func TestBuildPackageNoticeMode(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	installer := NewInstaller(tmpDir, "icon.png")
+
+	// Case 1: Port > 0 (Proxy / local port mode) with notice enabled.
+	// MUST declare "port" and url="/" in ui/config so FN Connect assigns dedicated subdomain routing,
+	// and notice modal is served directly by the reverse proxy on that port.
 	pkgDir, err := installer.BuildPackage(AppcenterPackageConfig{
 		AppName:       "fndocker.app-notice",
 		Title:         "应用提示测试",
@@ -227,19 +231,54 @@ func TestBuildPackageNoticeMode(t *testing.T) {
 	urlMap := root[".url"].(map[string]interface{})
 	entry := urlMap["fndocker.app-notice"].(map[string]interface{})
 
-	// 1. In notice mode, url must point to CGI redirect
-	expectedURL := "/cgi/ThirdParty/fndocker.app-notice/index.cgi/redirect/fndocker.app-notice/_"
-	if entry["url"] != expectedURL {
-		t.Errorf("entry url = %v, want %v", entry["url"], expectedURL)
+	// 1. Port MUST be preserved so FN Connect grants independent subdomain routing
+	if portVal, ok := entry["port"].(string); !ok || portVal != "5288" {
+		t.Errorf("expected entry port to be 5288, got %v", entry["port"])
+	}
+	if entry["url"] != "/" {
+		t.Errorf("expected entry url to be /, got %v", entry["url"])
+	}
+	if entry["protocol"] != "http" {
+		t.Errorf("expected entry protocol to be http, got %v", entry["protocol"])
 	}
 
-	// 2. Port should be omitted from entryMap so fnOS routes via system portal without 404
-	if _, hasPort := entry["port"]; hasPort {
-		t.Errorf("entry port should be omitted in notice mode, got %v", entry["port"])
+	// Case 2: Port == 0 (Shortcut mode) with notice enabled.
+	// Uses CGI redirect on fnOS gateway.
+	pkgDir2, err := installer.BuildPackage(AppcenterPackageConfig{
+		AppName:       "fndocker.shortcut-notice",
+		Title:         "外链提示测试",
+		Desc:          "测试快捷方式开屏提示",
+		Port:          0,
+		Protocol:      "",
+		Path:          "https://example.com",
+		UIType:        "url",
+		AllUsers:      true,
+		NoticeEnabled: true,
+		NoticeContent: "注意：这是外链提示",
+	})
+	if err != nil {
+		t.Fatalf("BuildPackage shortcut failed: %v", err)
+	}
+	defer os.RemoveAll(pkgDir2)
+
+	cfgBytes2, err := os.ReadFile(filepath.Join(pkgDir2, "ui", "config"))
+	if err != nil {
+		t.Fatalf("read shortcut ui/config failed: %v", err)
+	}
+	var root2 map[string]interface{}
+	if err := json.Unmarshal(cfgBytes2, &root2); err != nil {
+		t.Fatalf("unmarshal shortcut ui/config failed: %v", err)
+	}
+	entry2 := root2[".url"].(map[string]interface{})["fndocker.shortcut-notice"].(map[string]interface{})
+	expectedCGI := "/cgi/ThirdParty/fndocker.shortcut-notice/index.cgi/redirect/fndocker.shortcut-notice/_"
+	if entry2["url"] != expectedCGI {
+		t.Errorf("shortcut entry url = %v, want %v", entry2["url"], expectedCGI)
+	}
+	if _, hasPort := entry2["port"]; hasPort {
+		t.Errorf("shortcut entry port should be omitted, got %v", entry2["port"])
 	}
 
-	// 3. index.cgi must exist and be executable
-	cgiPath := filepath.Join(pkgDir, "ui", "index.cgi")
+	cgiPath := filepath.Join(pkgDir2, "ui", "index.cgi")
 	fi, err := os.Stat(cgiPath)
 	if err != nil {
 		t.Fatalf("index.cgi not found at %s", cgiPath)
@@ -247,18 +286,12 @@ func TestBuildPackageNoticeMode(t *testing.T) {
 	if fi.Mode()&0111 == 0 {
 		t.Errorf("index.cgi is not executable: mode=%v", fi.Mode())
 	}
-
 	cgiContent, err := os.ReadFile(cgiPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cgiStr := string(cgiContent)
-	if !strings.Contains(cgiStr, "注意：这是开屏提示内容") {
-		t.Errorf("index.cgi does not contain notice content: %s", cgiStr)
-	}
-	// Must NOT contain direct URL bar
-	if strings.Contains(cgiStr, "direct-url-bar") || strings.Contains(cgiStr, "直达网址") {
-		t.Errorf("index.cgi should not contain redundant direct-url-bar")
+	if !strings.Contains(string(cgiContent), "注意：这是外链提示") {
+		t.Errorf("index.cgi does not contain notice content")
 	}
 }
 

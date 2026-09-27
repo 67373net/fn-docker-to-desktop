@@ -124,9 +124,13 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 		return fmt.Errorf("无效的目标地址: %w", err)
 	}
 
-	// Create listener
+	// Create listener with retry in case previous instance just closed
 	addr := fmt.Sprintf(":%d", port)
 	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		time.Sleep(100 * time.Millisecond)
+		ln, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		return fmt.Errorf("无法监听本地端口 %d: %w", port, err)
 	}
