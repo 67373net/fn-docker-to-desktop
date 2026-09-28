@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.76">
+  <link rel="stylesheet" href="style.css?v=1.1.77">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -510,7 +510,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.76</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.77</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -630,7 +630,10 @@
                 <span class="url-segment-sep">://</span>
                 <input type="text" id="item-proxy-host" class="form-input url-segment-host" placeholder="IP 或域名">
                 <span class="url-segment-sep">:</span>
-                <input type="number" id="item-proxy-target-port" class="form-input url-segment-port" placeholder="端口号，可留空" min="1" max="65535">
+                <div class="url-segment-port-wrapper">
+                  <input type="number" id="item-proxy-target-port" class="form-input url-segment-port url-segment-port-optional" placeholder="端口，可留空" min="1" max="65535" title="端口可留空，默认使用协议端口（HTTP 80 / HTTPS 443）">
+                  <div class="input-popup-tip" role="tooltip">端口可留空，默认使用协议端口（HTTP 80 / HTTPS 443）</div>
+                </div>
                 <span class="url-segment-sep">/</span>
                 <input type="text" id="item-proxy-path" class="form-input url-segment-path" placeholder="路径，可留空">
                 <button type="button" class="btn btn-secondary url-segment-btn" id="btn-test-target">测试连通</button>
@@ -1035,6 +1038,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.76"></script>
+  <script src="app.js?v=1.1.77"></script>
 </body>
 </html>

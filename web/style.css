@@ -1131,6 +1131,10 @@ table.data-table td.table-sink-divider-cell {
   flex-shrink: 0;
 }
 
+.url-segment-port-optional {
+  width: 116px;
+}
+
 .url-segment-port::-webkit-inner-spin-button,
 .url-segment-port::-webkit-outer-spin-button {
   -webkit-appearance: none;
@@ -1138,6 +1142,53 @@ table.data-table td.table-sink-divider-cell {
 }
 .url-segment-port {
   -moz-appearance: textfield;
+}
+
+.url-segment-port-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.input-popup-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: rgba(15, 23, 42, 0.94);
+  color: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  line-height: 1.25;
+  padding: 5px 9px;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s cubic-bezier(0.4, 0, 0.2, 1), transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.18s;
+  z-index: 50;
+}
+
+.input-popup-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: rgba(15, 23, 42, 0.94) transparent transparent transparent;
+}
+
+.url-segment-port-wrapper:focus-within .input-popup-tip,
+.url-segment-port-wrapper:hover .input-popup-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 .url-segment-path {
@@ -1219,6 +1270,10 @@ table.data-table td.table-sink-divider-cell {
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+}
+
+#modal-desktop-item .modal-dialog {
+  max-width: 660px;
 }
 
 .modal-dialog-sm {

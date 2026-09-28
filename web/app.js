@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.76';
+  const ver = state.settings?.version || '1.1.77';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.76';
+  const ver = state.settings?.version || '1.1.77';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5193,7 +5193,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.76';
+      const ver = state.settings?.version || '1.1.77';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
