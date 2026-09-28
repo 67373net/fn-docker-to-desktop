@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.75">
+  <link rel="stylesheet" href="style.css?v=1.1.76">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -510,7 +510,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.75</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.76</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -601,29 +601,39 @@
           <!-- Section for Local Port -->
           <div class="mode-field-group" id="fields-local">
             <div class="form-group">
-              <label class="form-label">本机端口</label>
-              <input type="number" id="item-local-port" class="form-input" placeholder="例如：8080">
+              <label class="form-label">目标地址</label>
+              <div class="url-segmented-row">
+                <select id="item-protocol" class="form-select url-segment-protocol">
+                  <option value="http">http</option>
+                  <option value="https">https</option>
+                </select>
+                <span class="url-segment-sep">://</span>
+                <input type="text" id="item-local-host" class="form-input url-segment-host-locked" value="localhost" readonly tabindex="-1">
+                <span class="url-segment-sep">:</span>
+                <input type="number" id="item-local-port" class="form-input url-segment-port" placeholder="端口号" min="1" max="65535">
+                <span class="url-segment-sep">/</span>
+                <input type="text" id="item-path" class="form-input url-segment-path" placeholder="路径，可留空">
+              </div>
             </div>
           </div>
 
           <!-- Section for Proxy -->
           <div class="mode-field-group" id="fields-proxy" style="display: none;">
+            <input type="hidden" id="item-target-url">
             <div class="form-group">
-              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
-                <label class="form-label" style="margin-bottom: 0;">目标地址</label>
-                <button type="button" id="btn-target-url-help" class="info-circle-help-btn" title="点击查看说明" aria-label="查看说明">!</button>
-              </div>
-              <div class="input-with-action">
-                <input type="text" id="item-target-url" class="form-input" placeholder="例如：http://192.168.1.288:5288/wild">
-                <button type="button" class="btn btn-secondary" id="btn-test-target">测试连通</button>
-              </div>
-              <div id="item-target-url-help" class="form-tip" style="display: none; margin-top: 6px; font-size: 12px; color: var(--text-muted); background: var(--bg-surface-subtle); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); line-height: 1.6;">
-                <ul style="margin: 0; padding-left: 18px;">
-                  <li>可以添加局域网 / 广域网地址；</li>
-                  <li>可以使用 http 或 https；</li>
-                  <li>注意设置正确的端口；</li>
-                  <li>可以添加路径。</li>
-                </ul>
+              <label class="form-label">目标地址</label>
+              <div class="url-segmented-row">
+                <select id="item-proxy-protocol" class="form-select url-segment-protocol">
+                  <option value="http">http</option>
+                  <option value="https">https</option>
+                </select>
+                <span class="url-segment-sep">://</span>
+                <input type="text" id="item-proxy-host" class="form-input url-segment-host" placeholder="IP 或域名">
+                <span class="url-segment-sep">:</span>
+                <input type="number" id="item-proxy-target-port" class="form-input url-segment-port" placeholder="端口号，可留空" min="1" max="65535">
+                <span class="url-segment-sep">/</span>
+                <input type="text" id="item-proxy-path" class="form-input url-segment-path" placeholder="路径，可留空">
+                <button type="button" class="btn btn-secondary url-segment-btn" id="btn-test-target">测试连通</button>
               </div>
               <div class="test-result" id="test-target-result"></div>
             </div>
@@ -651,21 +661,6 @@
             <div class="form-group">
               <label class="form-label">目标网址</label>
               <input type="text" id="item-shortcut-url" class="form-input" placeholder="例如：https://github.com">
-            </div>
-          </div>
-
-          <!-- Common Settings -->
-          <div class="form-row" id="row-protocol-path">
-            <div class="form-group flex-1">
-              <label class="form-label">协议</label>
-              <select id="item-protocol" class="form-select">
-                <option value="http">http</option>
-                <option value="https">https</option>
-              </select>
-            </div>
-            <div class="form-group flex-1">
-              <label class="form-label">访问路径</label>
-              <input type="text" id="item-path" class="form-input" value="/" placeholder="/">
             </div>
           </div>
 
@@ -1040,6 +1035,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.75"></script>
+  <script src="app.js?v=1.1.76"></script>
 </body>
 </html>

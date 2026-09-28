@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.75';
+  const ver = state.settings?.version || '1.1.76';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.75';
+  const ver = state.settings?.version || '1.1.76';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -2324,6 +2324,95 @@ function closeModal(id) {
   if (el) el.classList.remove('active');
 }
 
+function setProxyTargetUrlFields(urlStr) {
+  const elProto = document.getElementById('item-proxy-protocol');
+  const elHost = document.getElementById('item-proxy-host');
+  const elPort = document.getElementById('item-proxy-target-port');
+  const elPath = document.getElementById('item-proxy-path');
+  const elTarget = document.getElementById('item-target-url');
+
+  if (elTarget) elTarget.value = urlStr || '';
+
+  if (!urlStr) {
+    if (elProto) elProto.value = 'http';
+    if (elHost) elHost.value = '';
+    if (elPort) elPort.value = '';
+    if (elPath) elPath.value = '';
+    return;
+  }
+
+  urlStr = urlStr.trim();
+  let proto = 'http';
+  let host = '';
+  let port = '';
+  let path = '';
+
+  if (/^https?:\/\//i.test(urlStr)) {
+    try {
+      const u = new URL(urlStr);
+      proto = (u.protocol || 'http').replace(':', '').toLowerCase();
+      host = u.hostname || '';
+      port = u.port || '';
+      path = (u.pathname && u.pathname !== '/') ? u.pathname : '';
+      if (u.search) path += u.search;
+    } catch (_) {
+      const m = urlStr.match(/^(https?):\/\/([^:/]+)(?::(\d+))?(\/.*)?$/i);
+      if (m) {
+        proto = (m[1] || 'http').toLowerCase();
+        host = m[2] || '';
+        port = m[3] || '';
+        path = m[4] || '';
+      }
+    }
+  } else {
+    const m = urlStr.match(/^([^:/]+)(?::(\d+))?(\/.*)?$/);
+    if (m) {
+      host = m[1] || '';
+      port = m[2] || '';
+      path = m[3] || '';
+    } else {
+      host = urlStr;
+    }
+  }
+
+  if (path === '/') path = '';
+  if (path.startsWith('/')) path = path.slice(1);
+
+  if (elProto) elProto.value = proto === 'https' ? 'https' : 'http';
+  if (elHost) elHost.value = host;
+  if (elPort) elPort.value = port;
+  if (elPath) elPath.value = path;
+}
+
+function getProxyTargetUrlFromFields() {
+  const proto = document.getElementById('item-proxy-protocol')?.value || 'http';
+  let host = (document.getElementById('item-proxy-host')?.value || '').trim();
+  let port = (document.getElementById('item-proxy-target-port')?.value || '').trim();
+  let path = (document.getElementById('item-proxy-path')?.value || '').trim();
+
+  if (!host) return '';
+
+  if (/^https?:\/\//i.test(host)) {
+    try {
+      const u = new URL(host);
+      host = u.hostname;
+      if (!port && u.port) port = u.port;
+      if (!path && u.pathname && u.pathname !== '/') path = u.pathname.slice(1);
+    } catch (_) {
+      host = host.replace(/^https?:\/\//i, '');
+    }
+  }
+
+  let url = `${proto}://${host}`;
+  if (port) {
+    url += `:${port}`;
+  }
+  if (path && path !== '/') {
+    url += path.startsWith('/') ? path : '/' + path;
+  }
+  return url;
+}
+
 function getDesktopItemFormSnapshot() {
   return JSON.stringify({
     mode: document.getElementById('item-mode')?.value || '',
@@ -2331,12 +2420,16 @@ function getDesktopItemFormSnapshot() {
     appName: document.getElementById('item-app-name')?.value || '',
     containerName: document.getElementById('item-container-name')?.value || '',
     localPort: document.getElementById('item-local-port')?.value || '',
-    targetUrl: document.getElementById('item-target-url')?.value || '',
+    protocol: document.getElementById('item-protocol')?.value || 'http',
+    path: document.getElementById('item-path')?.value || '',
+    proxyProto: document.getElementById('item-proxy-protocol')?.value || 'http',
+    proxyHost: document.getElementById('item-proxy-host')?.value || '',
+    proxyTargetPort: document.getElementById('item-proxy-target-port')?.value || '',
+    proxyPath: document.getElementById('item-proxy-path')?.value || '',
+    targetUrl: getProxyTargetUrlFromFields(),
     proxyPort: document.getElementById('item-proxy-port')?.value || '',
     skipTls: !!document.getElementById('item-skip-tls')?.checked,
     shortcutUrl: document.getElementById('item-shortcut-url')?.value || '',
-    protocol: document.getElementById('item-protocol')?.value || 'http',
-    path: document.getElementById('item-path')?.value || '/',
     uiType: document.getElementById('item-ui-type')?.value || 'url',
     allUsers: document.getElementById('item-all-users')?.value || 'false',
     noticeContent: document.getElementById('item-notice-content')?.value || '',
@@ -2555,12 +2648,15 @@ function initModals() {
     });
   }
 
-  // Target URL help toggle
-  const btnTargetUrlHelp = document.getElementById('btn-target-url-help');
-  const helpTargetUrl = document.getElementById('item-target-url-help');
-  if (btnTargetUrlHelp && helpTargetUrl) {
-    btnTargetUrlHelp.addEventListener('click', () => {
-      helpTargetUrl.style.display = helpTargetUrl.style.display === 'none' ? 'block' : 'none';
+  // Smart paste on proxy host input to auto-split full URL
+  const elProxyHostInput = document.getElementById('item-proxy-host');
+  if (elProxyHostInput) {
+    elProxyHostInput.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+      if (/^https?:\/\//i.test(text.trim())) {
+        e.preventDefault();
+        setProxyTargetUrlFields(text.trim());
+      }
     });
   }
 
@@ -2738,10 +2834,7 @@ function setDesktopModalMode(mode) {
   document.getElementById('fields-proxy').style.display = mode === 'proxy' ? 'block' : 'none';
   document.getElementById('fields-shortcut').style.display = mode === 'shortcut' ? 'block' : 'none';
 
-  const rowProtoPath = document.getElementById('row-protocol-path');
-  if (rowProtoPath) {
-    rowProtoPath.style.display = mode === 'local' ? 'flex' : 'none';
-  }
+
   const groupUiType = document.getElementById('group-ui-type');
   if (groupUiType) {
     groupUiType.style.display = mode === 'shortcut' ? 'none' : 'block';
@@ -4078,17 +4171,29 @@ function resetDesktopForm() {
 
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = '';
-  document.getElementById('item-local-port').value = '';
-  document.getElementById('item-target-url').value = '';
-  document.getElementById('item-proxy-port').value = '';
-  document.getElementById('item-shortcut-url').value = '';
-  document.getElementById('item-protocol').value = 'http';
-  document.getElementById('item-path').value = '/';
+  const elLocalHost = document.getElementById('item-local-host');
+  if (elLocalHost) elLocalHost.value = 'localhost';
+  const elLocalPort = document.getElementById('item-local-port');
+  if (elLocalPort) elLocalPort.value = '';
+  const elProtocol = document.getElementById('item-protocol');
+  if (elProtocol) elProtocol.value = 'http';
+  const elPath = document.getElementById('item-path');
+  if (elPath) elPath.value = '';
+
+  setProxyTargetUrlFields('');
+  const elProxyPort = document.getElementById('item-proxy-port');
+  if (elProxyPort) elProxyPort.value = '';
+  const elShortcutUrl = document.getElementById('item-shortcut-url');
+  if (elShortcutUrl) elShortcutUrl.value = '';
   document.getElementById('item-ui-type').value = 'url';
   document.getElementById('item-all-users').value = 'false';
   document.getElementById('item-icon').value = '';
   document.getElementById('item-skip-tls').checked = false;
-  document.getElementById('test-target-result').textContent = '';
+  const elTestRes = document.getElementById('test-target-result');
+  if (elTestRes) {
+    elTestRes.textContent = '';
+    elTestRes.className = 'test-result';
+  }
 
   const textInput = document.getElementById('icon-text-input');
   if (textInput) textInput.value = '';
@@ -4120,8 +4225,7 @@ function resetDesktopForm() {
   if (elFileTypes) elFileTypes.value = '';
   const helpFileTypes = document.getElementById('item-file-types-help');
   if (helpFileTypes) helpFileTypes.style.display = 'none';
-  const helpTargetUrl = document.getElementById('item-target-url-help');
-  if (helpTargetUrl) helpTargetUrl.style.display = 'none';
+
   state.autoFilledProxyPort = null;
   const chkNoDisplay = document.getElementById('item-no-display');
   if (chkNoDisplay) chkNoDisplay.checked = false;
@@ -4210,8 +4314,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
       }
     }
     setDesktopModalMode('proxy');
-    const elTarget = document.getElementById('item-target-url');
-    if (elTarget) elTarget.value = `http://${hostAddr}:${port}`;
+    setProxyTargetUrlFields(`http://${hostAddr}:${port}`);
     if (hostAlias) {
       document.getElementById('item-name').value = `${name} (${hostAlias})`;
     }
@@ -4262,6 +4365,8 @@ function openCreateDesktopModalFromWatchcow(id) {
   const mode = item.mode || 'local';
   if (mode === 'local') {
     document.getElementById('item-local-port').value = item.port || '';
+    document.getElementById('item-protocol').value = item.protocol || 'http';
+    document.getElementById('item-path').value = (item.path && item.path !== '/') ? (item.path.startsWith('/') ? item.path.slice(1) : item.path) : '';
     setDesktopModalMode('local');
   } else if (mode === 'proxy') {
     let tUrl = item.target_url || '';
@@ -4274,7 +4379,7 @@ function openCreateDesktopModalFromWatchcow(id) {
         tUrl = tUrl.replace(/\/$/, '') + (item.path.startsWith('/') ? item.path : '/' + item.path);
       }
     }
-    document.getElementById('item-target-url').value = tUrl;
+    setProxyTargetUrlFields(tUrl);
     document.getElementById('item-proxy-port').value = item.port || '';
     document.getElementById('item-skip-tls').checked = !!item.skip_tls_verify;
     setDesktopModalMode('proxy');
@@ -4283,8 +4388,6 @@ function openCreateDesktopModalFromWatchcow(id) {
     setDesktopModalMode('shortcut');
   }
 
-  document.getElementById('item-protocol').value = item.protocol || 'http';
-  document.getElementById('item-path').value = item.path || '/';
   document.getElementById('item-ui-type').value = item.ui_type || 'url';
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
 
@@ -4356,7 +4459,7 @@ function openEditDesktopModal(id) {
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = item.container_name || '';
   document.getElementById('item-protocol').value = item.protocol || 'http';
-  document.getElementById('item-path').value = item.path || '/';
+  document.getElementById('item-path').value = (item.path && item.path !== '/') ? (item.path.startsWith('/') ? item.path.slice(1) : item.path) : '';
   document.getElementById('item-ui-type').value = item.ui_type || 'url';
   document.getElementById('item-all-users').value = item.all_users ? 'true' : 'false';
   document.getElementById('item-icon').value = item.icon || '';
@@ -4436,6 +4539,8 @@ function openEditDesktopModal(id) {
 
   if (item.mode === 'local') {
     document.getElementById('item-local-port').value = item.port || '';
+    document.getElementById('item-protocol').value = item.protocol || 'http';
+    document.getElementById('item-path').value = (item.path && item.path !== '/') ? (item.path.startsWith('/') ? item.path.slice(1) : item.path) : '';
     setDesktopModalMode('local');
   } else if (item.mode === 'proxy') {
     let tUrl = item.target_url || '';
@@ -4448,7 +4553,7 @@ function openEditDesktopModal(id) {
         tUrl = tUrl.replace(/\/$/, '') + (item.path.startsWith('/') ? item.path : '/' + item.path);
       }
     }
-    document.getElementById('item-target-url').value = tUrl;
+    setProxyTargetUrlFields(tUrl);
     document.getElementById('item-proxy-port').value = item.port || '';
     document.getElementById('item-skip-tls').checked = !!item.skip_tls_verify;
     setDesktopModalMode('proxy');
@@ -4657,34 +4762,28 @@ async function handleSaveDesktopItem(e) {
     let skipTls = false;
 
     if (mode === 'local') {
-      protocol = document.getElementById('item-protocol').value || 'http';
-      path = document.getElementById('item-path').value.trim() || '/';
-      port = parseInt(document.getElementById('item-local-port').value, 10);
+      protocol = document.getElementById('item-protocol')?.value || 'http';
+      let rawPath = (document.getElementById('item-path')?.value || '').trim();
+      path = (!rawPath || rawPath === '/') ? '/' : (rawPath.startsWith('/') ? rawPath : '/' + rawPath);
+      port = parseInt(document.getElementById('item-local-port')?.value, 10);
       if (!port || port <= 0) {
-        document.getElementById('item-local-port').focus();
-        return showToast('请输入有效的本机端口', 'error');
+        document.getElementById('item-local-port')?.focus();
+        return showToast('请输入有效的端口号', 'error');
       }
     } else if (mode === 'proxy') {
-      targetUrl = document.getElementById('item-target-url').value.trim();
-      port = parseInt(document.getElementById('item-proxy-port').value, 10);
-      skipTls = document.getElementById('item-skip-tls').checked;
-      if (!targetUrl) {
-        document.getElementById('item-target-url').focus();
-        return showToast('请输入目标地址', 'error');
+      const proxyHost = (document.getElementById('item-proxy-host')?.value || '').trim();
+      if (!proxyHost) {
+        document.getElementById('item-proxy-host')?.focus();
+        return showToast('请输入目标 IP 或域名', 'error');
       }
-      if (!/^https?:\/\//i.test(targetUrl)) {
-        targetUrl = 'http://' + targetUrl;
-      }
-      try {
-        const u = new URL(targetUrl);
-        path = u.pathname || '/';
-        protocol = 'http';
-      } catch (_) {
-        path = '/';
-        protocol = 'http';
-      }
+      targetUrl = getProxyTargetUrlFromFields();
+      port = parseInt(document.getElementById('item-proxy-port')?.value, 10);
+      skipTls = !!document.getElementById('item-skip-tls')?.checked;
+      protocol = 'http';
+      let rawProxyPath = (document.getElementById('item-proxy-path')?.value || '').trim();
+      path = (!rawProxyPath || rawProxyPath === '/') ? '/' : (rawProxyPath.startsWith('/') ? rawProxyPath : '/' + rawProxyPath);
       if (!port || port <= 0) {
-        document.getElementById('item-proxy-port').focus();
+        document.getElementById('item-proxy-port')?.focus();
         return showToast('请输入本机代理端口', 'error');
       }
     } else if (mode === 'shortcut') {
@@ -4881,11 +4980,11 @@ async function handleSaveDesktopItem(e) {
 }
 
 async function handleTestTarget() {
-  const targetUrl = document.getElementById('item-target-url').value.trim();
+  const targetUrl = getProxyTargetUrlFromFields();
   const resEl = document.getElementById('test-target-result');
   if (!targetUrl) {
     resEl.className = 'test-result error';
-    resEl.textContent = '请先输入目标地址';
+    resEl.textContent = '请先输入目标 IP 或域名';
     return;
   }
 
@@ -5094,7 +5193,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.75';
+      const ver = state.settings?.version || '1.1.76';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

@@ -1087,6 +1087,77 @@ table.data-table td.table-sink-divider-cell {
   flex: 1;
 }
 
+/* ==================== URL Segmented Input Row ==================== */
+.url-segmented-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.url-segment-sep {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.95rem;
+  user-select: none;
+  flex-shrink: 0;
+  padding: 0 1px;
+}
+
+.url-segment-protocol {
+  width: 82px;
+  flex-shrink: 0;
+  padding: 0.55rem 0.5rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.url-segment-host-locked {
+  width: 95px;
+  flex-shrink: 0;
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-align: center;
+}
+
+.url-segment-host {
+  flex: 1.8;
+  min-width: 100px;
+}
+
+.url-segment-port {
+  width: 88px;
+  flex-shrink: 0;
+}
+
+.url-segment-port::-webkit-inner-spin-button,
+.url-segment-port::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.url-segment-port {
+  -moz-appearance: textfield;
+}
+
+.url-segment-path {
+  flex: 1.2;
+  min-width: 80px;
+}
+
+.url-segment-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 0.55rem 0.75rem;
+}
+
+@media (max-width: 540px) {
+  .url-segmented-row {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+}
+
 .file-upload-btn {
   position: relative;
   overflow: hidden;
