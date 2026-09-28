@@ -123,13 +123,24 @@ func TestProxyNoticeInterception(t *testing.T) {
 	if !strings.Contains(body2, "Hello from backend service!") {
 		t.Errorf("Expected backend service content when ack cookie present, got: %s", body2)
 	}
+	// Verify that fn_notice_ack cookie is cleared on entry
+	foundClearCookie := false
+	for _, c := range resp2.Cookies() {
+		if c.Name == "fn_notice_ack_"+id && c.MaxAge <= 0 {
+			foundClearCookie = true
+			break
+		}
+	}
+	if !foundClearCookie {
+		t.Errorf("Expected Set-Cookie clearing fn_notice_ack on successful entry")
+	}
 
-	// Request 3: With fn_notice_today_ cookie -> should bypass notice even with cross-site launch
+	// Request 3: With fn_notice_today_ cookie -> should bypass notice even when launched from desktop
 	req3, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
-	req3.Header.Set("Sec-Fetch-Site", "cross-site")
+	req3.Header.Set("Referer", "https://example.5ddd.com/")
 	req3.AddCookie(&http.Cookie{Name: "fn_notice_today_" + id, Value: "1"})
 	resp3, err := client.Do(req3)
 	if err != nil {
@@ -142,21 +153,37 @@ func TestProxyNoticeInterception(t *testing.T) {
 		t.Errorf("Expected backend service content when today cookie present, got: %s", body3)
 	}
 
-	// Request 4: With only fn_notice_ack_ but launched from desktop (Sec-Fetch-Site: cross-site) -> should show notice
+	// Request 4: Subsequent desktop launch without today cookie -> should show notice page
 	req4, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
-	req4.Header.Set("Sec-Fetch-Site", "cross-site")
-	req4.AddCookie(&http.Cookie{Name: "fn_notice_ack_" + id, Value: "1"})
+	req4.Header.Set("Referer", "https://example.5ddd.com/")
 	resp4, err := client.Do(req4)
 	if err != nil {
-		t.Fatalf("Failed to do request with cross-site ack cookie: %v", err)
+		t.Fatalf("Failed to do request: %v", err)
 	}
 	defer resp4.Body.Close()
 	bodyBytes4, _ := io.ReadAll(resp4.Body)
 	body4 := string(bodyBytes4)
 	if !strings.Contains(body4, "系统维护开屏提示") {
-		t.Errorf("Expected notice page for fresh cross-site desktop launch without today cookie, got: %s", body4)
+		t.Errorf("Expected notice page for subsequent desktop launch without today cookie, got: %s", body4)
+	}
+
+	// Request 5: Internal navigation inside the app (Referer matches host) -> should bypass notice
+	req5, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req5.Header.Set("Referer", fmt.Sprintf("http://127.0.0.1:%d/dashboard", port))
+	resp5, err := client.Do(req5)
+	if err != nil {
+		t.Fatalf("Failed to do request with internal referer: %v", err)
+	}
+	defer resp5.Body.Close()
+	bodyBytes5, _ := io.ReadAll(resp5.Body)
+	body5 := string(bodyBytes5)
+	if !strings.Contains(body5, "Hello from backend service!") {
+		t.Errorf("Expected backend service content for internal app navigation, got: %s", body5)
 	}
 }

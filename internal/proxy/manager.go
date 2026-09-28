@@ -308,6 +308,15 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 			resp.Header["Set-Cookie"] = newCookies
 		}
 
+		// 6. If request carried a short-lived fn_notice_ack cookie, clear it now so that
+		// future desktop launches will prompt the notice modal again (unless "今日不再提示" was checked)
+		if resp.Request != nil {
+			if c, err := resp.Request.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
+				clearAckCookie := fmt.Sprintf("fn_notice_ack_%s=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax", id)
+				resp.Header.Add("Set-Cookie", clearAckCookie)
+			}
+		}
+
 		return nil
 	}
 
@@ -535,18 +544,13 @@ func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 	if !isRootOrTarget {
 		return false
 	}
-	// 5. Internal navigation inside app
+	// 5. Short-lived ack cookie (set when user clicks "进入应用", cleared immediately on response)
+	if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
+		return false
+	}
+	// 6. Internal navigation inside app (Referer host matches current Host)
 	if ref := r.Header.Get("Referer"); ref != "" {
 		if refURL, err := url.Parse(ref); err == nil && strings.EqualFold(refURL.Host, r.Host) {
-			if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
-				return false
-			}
-		}
-	}
-	// 6. Ack cookie from clicking "进入应用"
-	if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
-		secFetchSite := strings.ToLower(r.Header.Get("Sec-Fetch-Site"))
-		if secFetchSite != "cross-site" {
 			return false
 		}
 	}
@@ -722,6 +726,15 @@ func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDa
   <script>
     (function() {
       const ITEM_ID = %q;
+      const sessionKey = 'fn_notice_session_' + ITEM_ID;
+      try {
+        if (sessionStorage.getItem(sessionKey) === '1') {
+          document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; max-age=10; SameSite=Lax';
+          window.location.reload();
+          return;
+        }
+      } catch(e) {}
+
       const btn = document.getElementById('btn-proceed');
       const chk = document.getElementById('skip-today');
       function proceed() {
@@ -730,7 +743,8 @@ func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDa
           d.setTime(d.getTime() + 24*60*60*1000);
           document.cookie = 'fn_notice_today_' + ITEM_ID + '=1; path=/; expires=' + d.toUTCString() + '; SameSite=Lax';
         }
-        document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; SameSite=Lax';
+        try { sessionStorage.setItem(sessionKey, '1'); } catch(e) {}
+        document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; max-age=10; SameSite=Lax';
         window.location.reload();
       }
       if (btn) btn.addEventListener('click', proceed);
