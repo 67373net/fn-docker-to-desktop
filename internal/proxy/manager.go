@@ -222,7 +222,14 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 			req.Header.Set("X-Forwarded-Host", incomingHost)
 		}
 
-		// 4. Strip internal notice ack cookies from forwarded request
+		// 4. Strip _notice_ack from query string before forwarding to target
+		if req.URL.Query().Has("_notice_ack") {
+			q := req.URL.Query()
+			q.Del("_notice_ack")
+			req.URL.RawQuery = q.Encode()
+		}
+
+		// 5. Strip internal notice ack cookies from forwarded request
 		if rawCookie := req.Header.Get("Cookie"); rawCookie != "" {
 			cookies := strings.Split(rawCookie, ";")
 			var filtered []string
@@ -308,14 +315,9 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 			resp.Header["Set-Cookie"] = newCookies
 		}
 
-		// 6. If request carried a short-lived fn_notice_ack cookie, clear it now so that
-		// future desktop launches will prompt the notice modal again (unless "今日不再提示" was checked)
-		if resp.Request != nil {
-			if c, err := resp.Request.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
-				clearAckCookie := fmt.Sprintf("fn_notice_ack_%s=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax", id)
-				resp.Header.Add("Set-Cookie", clearAckCookie)
-			}
-		}
+		// 6. Proactively clear any legacy fn_notice_ack cookie so it doesn't linger in client browsers
+		clearAckCookie := fmt.Sprintf("fn_notice_ack_%s=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax", id)
+		resp.Header.Add("Set-Cookie", clearAckCookie)
 
 		return nil
 	}
@@ -515,6 +517,17 @@ func RecommendAvailablePort(basePort int, usedPorts map[int]bool) int {
 	return 0
 }
 
+func normalizeHost(h string) string {
+	h = strings.ToLower(strings.TrimSpace(h))
+	if strings.HasSuffix(h, ":80") {
+		return strings.TrimSuffix(h, ":80")
+	}
+	if strings.HasSuffix(h, ":443") {
+		return strings.TrimSuffix(h, ":443")
+	}
+	return h
+}
+
 func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 	if r.Method != http.MethodGet {
 		return false
@@ -526,7 +539,7 @@ func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 	if c, err := r.Cookie("fn_notice_today_" + id); err == nil && c.Value != "" {
 		return false
 	}
-	// 2. Query param bypass
+	// 2. Query param bypass (set only when user clicks "进入应用")
 	if r.URL.Query().Get("_notice_ack") == "1" {
 		return false
 	}
@@ -544,13 +557,15 @@ func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 	if !isRootOrTarget {
 		return false
 	}
-	// 5. Short-lived ack cookie (set when user clicks "进入应用", cleared immediately on response)
-	if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
-		return false
+	// 5. If browser supports Fetch Metadata, only top-level navigation (document / iframe) triggers notice
+	if secDest := r.Header.Get("Sec-Fetch-Dest"); secDest != "" {
+		if secDest != "document" && secDest != "iframe" {
+			return false
+		}
 	}
 	// 6. Internal navigation inside app (Referer host matches current Host)
 	if ref := r.Header.Get("Referer"); ref != "" {
-		if refURL, err := url.Parse(ref); err == nil && strings.EqualFold(refURL.Host, r.Host) {
+		if refURL, err := url.Parse(ref); err == nil && normalizeHost(refURL.Host) == normalizeHost(r.Host) {
 			return false
 		}
 	}
@@ -726,13 +741,10 @@ func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDa
   <script>
     (function() {
       const ITEM_ID = %q;
-      const sessionKey = 'fn_notice_session_' + ITEM_ID;
       try {
-        if (sessionStorage.getItem(sessionKey) === '1') {
-          document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; max-age=10; SameSite=Lax';
-          window.location.reload();
-          return;
-        }
+        // Clear any legacy ack cookie or sessionStorage from previous versions
+        document.cookie = 'fn_notice_ack_' + ITEM_ID + '=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+        sessionStorage.removeItem('fn_notice_session_' + ITEM_ID);
       } catch(e) {}
 
       const btn = document.getElementById('btn-proceed');
@@ -743,9 +755,9 @@ func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDa
           d.setTime(d.getTime() + 24*60*60*1000);
           document.cookie = 'fn_notice_today_' + ITEM_ID + '=1; path=/; expires=' + d.toUTCString() + '; SameSite=Lax';
         }
-        try { sessionStorage.setItem(sessionKey, '1'); } catch(e) {}
-        document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; max-age=10; SameSite=Lax';
-        window.location.reload();
+        const u = new URL(window.location.href);
+        u.searchParams.set('_notice_ack', '1');
+        window.location.replace(u.toString());
       }
       if (btn) btn.addEventListener('click', proceed);
       document.addEventListener('keydown', function(e) {
