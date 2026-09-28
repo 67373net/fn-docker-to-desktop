@@ -886,6 +886,26 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 			h.jsonResponse(w, r, map[string]string{"error": "启动反向代理失败: " + err.Error()}, http.StatusBadRequest)
 			return
 		}
+	} else if item.Mode == desktop.ModeLocalPort && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.Port > 0 {
+		if item.ProxyPort <= 0 {
+			item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
+			slog.Info("[API] 自动分配本地容器开屏提示代理端口", "proxyPort", item.ProxyPort)
+		}
+		opts := proxy.ProxyOptions{
+			NoticeEnabled: true,
+			NoticeContent: item.NoticeContent,
+			Title:         item.Name,
+			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+		}
+		targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", item.Port, item.Path)
+		if strings.EqualFold(item.Protocol, "https") {
+			targetURL = fmt.Sprintf("https://127.0.0.1:%d%s", item.Port, item.Path)
+		}
+		if err := h.proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts); err != nil {
+			slog.Error("[API] 启动本地容器开屏提示代理失败", "id", item.ID, "proxyPort", item.ProxyPort, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "启动开屏提示代理失败: " + err.Error()}, http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Ensure icon is permanently saved into iconsDir
@@ -980,8 +1000,26 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
 		}
 		_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts)
-	} else if item.Mode != desktop.ModeProxy {
+	} else if item.Mode == desktop.ModeLocalPort && item.Enabled && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.Port > 0 {
+		if item.ProxyPort <= 0 {
+			item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
+		}
+		opts := proxy.ProxyOptions{
+			NoticeEnabled: true,
+			NoticeContent: item.NoticeContent,
+			Title:         item.Name,
+			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+		}
+		targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", item.Port, item.Path)
+		if strings.EqualFold(item.Protocol, "https") {
+			targetURL = fmt.Sprintf("https://127.0.0.1:%d%s", item.Port, item.Path)
+		}
+		_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts)
+	} else {
 		h.proxyMgr.StopProxy(item.ID)
+		if item.Mode == desktop.ModeLocalPort && !item.NoticeEnabled {
+			item.ProxyPort = 0
+		}
 	}
 
 	// Derive or validate app name
@@ -1175,6 +1213,21 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 				IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
 			}
 			_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts)
+		} else if item.Mode == desktop.ModeLocalPort && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.Port > 0 {
+			if item.ProxyPort <= 0 {
+				item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
+			}
+			opts := proxy.ProxyOptions{
+				NoticeEnabled: true,
+				NoticeContent: item.NoticeContent,
+				Title:         item.Name,
+				IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
+			}
+			targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", item.Port, item.Path)
+			if strings.EqualFold(item.Protocol, "https") {
+				targetURL = fmt.Sprintf("https://127.0.0.1:%d%s", item.Port, item.Path)
+			}
+			_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts)
 		}
 		slog.Info("[API] 正在启用并安装桌面应用...", "appName", item.AppName, "name", item.Name)
 		if err := h.installer.InstallItem(item); err != nil {
@@ -1184,9 +1237,7 @@ func (h *Handler) handleToggleDesktopItem(w http.ResponseWriter, r *http.Request
 		}
 		item.Installed = true
 	} else {
-		if item.Mode == desktop.ModeProxy {
-			h.proxyMgr.StopProxy(item.ID)
-		}
+		h.proxyMgr.StopProxy(item.ID)
 		slog.Info("[API] 正在禁用并卸载桌面应用...", "appName", item.AppName, "name", item.Name)
 		_ = h.installer.UninstallItem(item)
 		item.Installed = false

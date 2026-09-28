@@ -22,6 +22,7 @@ type DesktopItem struct {
 	Image         string    `json:"image,omitempty"`          // Docker image name (e.g. linuxserver/qbittorrent)
 	TargetURL     string    `json:"target_url,omitempty"`     // Target backend URL (for proxy / shortcut)
 	Port          int       `json:"port"`                     // Local port (for local port or proxy mode)
+	ProxyPort     int       `json:"proxy_port,omitempty"`     // Internal reverse proxy port allocated for notice / proxy
 	Protocol      string    `json:"protocol"`                 // "http" or "https" (default: "http")
 	Path          string    `json:"path"`                     // Path (default: "/")
 	UIType        string    `json:"ui_type"`                  // "url" (browser new tab) or "iframe" (fnOS window)

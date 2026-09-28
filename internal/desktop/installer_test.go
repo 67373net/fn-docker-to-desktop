@@ -293,5 +293,25 @@ func TestBuildPackageNoticeMode(t *testing.T) {
 	if !strings.Contains(string(cgiContent), "注意：这是外链提示") {
 		t.Errorf("index.cgi does not contain notice content")
 	}
+
+	// Case 3: Port > 0 with AllUsers: false in input should still produce allUsers: true in ui/config
+	// to prevent FN Connect 403 WAN rejection.
+	pkgDir3, err := installer.BuildPackage(AppcenterPackageConfig{
+		AppName:       "fndocker.app-allusers",
+		Title:         "权限隔离测试",
+		Port:          5289,
+		AllUsers:      false,
+	})
+	if err != nil {
+		t.Fatalf("BuildPackage failed: %v", err)
+	}
+	defer os.RemoveAll(pkgDir3)
+	cfgBytes3, _ := os.ReadFile(filepath.Join(pkgDir3, "ui", "config"))
+	var root3 map[string]interface{}
+	_ = json.Unmarshal(cfgBytes3, &root3)
+	entry3 := root3[".url"].(map[string]interface{})["fndocker.app-allusers"].(map[string]interface{})
+	if entry3["allUsers"] != true {
+		t.Errorf("expected allUsers to be true when port > 0, got %v", entry3["allUsers"])
+	}
 }
 

@@ -123,4 +123,40 @@ func TestProxyNoticeInterception(t *testing.T) {
 	if !strings.Contains(body2, "Hello from backend service!") {
 		t.Errorf("Expected backend service content when ack cookie present, got: %s", body2)
 	}
+
+	// Request 3: With fn_notice_today_ cookie -> should bypass notice even with cross-site launch
+	req3, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req3.Header.Set("Sec-Fetch-Site", "cross-site")
+	req3.AddCookie(&http.Cookie{Name: "fn_notice_today_" + id, Value: "1"})
+	resp3, err := client.Do(req3)
+	if err != nil {
+		t.Fatalf("Failed to do request with today cookie: %v", err)
+	}
+	defer resp3.Body.Close()
+	bodyBytes3, _ := io.ReadAll(resp3.Body)
+	body3 := string(bodyBytes3)
+	if !strings.Contains(body3, "Hello from backend service!") {
+		t.Errorf("Expected backend service content when today cookie present, got: %s", body3)
+	}
+
+	// Request 4: With only fn_notice_ack_ but launched from desktop (Sec-Fetch-Site: cross-site) -> should show notice
+	req4, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req4.Header.Set("Sec-Fetch-Site", "cross-site")
+	req4.AddCookie(&http.Cookie{Name: "fn_notice_ack_" + id, Value: "1"})
+	resp4, err := client.Do(req4)
+	if err != nil {
+		t.Fatalf("Failed to do request with cross-site ack cookie: %v", err)
+	}
+	defer resp4.Body.Close()
+	bodyBytes4, _ := io.ReadAll(resp4.Body)
+	body4 := string(bodyBytes4)
+	if !strings.Contains(body4, "系统维护开屏提示") {
+		t.Errorf("Expected notice page for fresh cross-site desktop launch without today cookie, got: %s", body4)
+	}
 }

@@ -228,7 +228,7 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 			var filtered []string
 			for _, c := range cookies {
 				trimmed := strings.TrimSpace(c)
-				if !strings.HasPrefix(trimmed, "fn_notice_ack_") {
+				if !strings.HasPrefix(trimmed, "fn_notice_ack_") && !strings.HasPrefix(trimmed, "fn_notice_today_") {
 					filtered = append(filtered, trimmed)
 				}
 			}
@@ -513,13 +513,15 @@ func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return false
 	}
-	cookieName := "fn_notice_ack_" + id
-	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+	// 1. If "今日不再提示" is active, skip notice
+	if c, err := r.Cookie("fn_notice_today_" + id); err == nil && c.Value != "" {
 		return false
 	}
+	// 2. Query param bypass
 	if r.URL.Query().Get("_notice_ack") == "1" {
 		return false
 	}
+	// 3. Static assets
 	reqPath := strings.ToLower(r.URL.Path)
 	staticExts := []string{".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".map", ".json", ".wasm"}
 	for _, ext := range staticExts {
@@ -527,9 +529,29 @@ func shouldShowNotice(r *http.Request, id, targetPath string) bool {
 			return false
 		}
 	}
-	accept := r.Header.Get("Accept")
+	// 4. Target path check (only root or entry path)
 	targetBase := strings.ToLower(strings.TrimRight(targetPath, "/"))
-	if strings.Contains(accept, "text/html") || reqPath == "/" || reqPath == "" || (targetBase != "" && (reqPath == targetBase || reqPath == targetBase+"/")) {
+	isRootOrTarget := reqPath == "/" || reqPath == "" || (targetBase != "" && (reqPath == targetBase || reqPath == targetBase+"/"))
+	if !isRootOrTarget {
+		return false
+	}
+	// 5. Internal navigation inside app
+	if ref := r.Header.Get("Referer"); ref != "" {
+		if refURL, err := url.Parse(ref); err == nil && strings.EqualFold(refURL.Host, r.Host) {
+			if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
+				return false
+			}
+		}
+	}
+	// 6. Ack cookie from clicking "进入应用"
+	if c, err := r.Cookie("fn_notice_ack_" + id); err == nil && c.Value != "" {
+		secFetchSite := strings.ToLower(r.Header.Get("Sec-Fetch-Site"))
+		if secFetchSite != "cross-site" {
+			return false
+		}
+	}
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "text/html") || accept == "" || accept == "*/*" {
 		return true
 	}
 	return false
@@ -703,14 +725,12 @@ func renderProxyNotice(w http.ResponseWriter, r *http.Request, id, title, iconDa
       const btn = document.getElementById('btn-proceed');
       const chk = document.getElementById('skip-today');
       function proceed() {
-        const cookieName = 'fn_notice_ack_' + ITEM_ID;
         if (chk && chk.checked) {
           const d = new Date();
           d.setTime(d.getTime() + 24*60*60*1000);
-          document.cookie = cookieName + '=1; path=/; expires=' + d.toUTCString() + '; SameSite=Lax';
-        } else {
-          document.cookie = cookieName + '=1; path=/; SameSite=Lax';
+          document.cookie = 'fn_notice_today_' + ITEM_ID + '=1; path=/; expires=' + d.toUTCString() + '; SameSite=Lax';
         }
+        document.cookie = 'fn_notice_ack_' + ITEM_ID + '=1; path=/; SameSite=Lax';
         window.location.reload();
       }
       if (btn) btn.addEventListener('click', proceed);

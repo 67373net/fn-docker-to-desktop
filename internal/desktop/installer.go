@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -447,6 +448,10 @@ desktop_uidir=ui
 			entryMap["port"] = portStr
 		}
 		entryMap["url"] = urlPath
+		// External subdomain routing via FN Connect requires allUsers: true,
+		// otherwise FN Connect cloud gateway rejects external WAN subdomain visits with
+		// "FN Connect 暂无权限访问该服务..." due to cookie domain isolation across subdomains.
+		entryMap["allUsers"] = true
 	} else if (cfg.Port == 0 && isExternalURL) || isNotice {
 		// CGI redirect mode for shortcut mode (port == 0) or external shortcut with notice
 		entryMap["type"] = uiType
@@ -763,6 +768,11 @@ func (i *Installer) InstallItem(item DesktopItem) error {
 		path = target
 		protocol = ""
 		uiType = "url"
+	} else if item.Mode == ModeLocalPort && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" {
+		if item.ProxyPort <= 0 {
+			item.ProxyPort = findAvailableLocalPort(18000)
+		}
+		port = item.ProxyPort
 	}
 
 	// Ensure physical icon file exists in iconsDir before building package
@@ -891,32 +901,90 @@ func isManagedApp(appName string) bool {
 	return strings.HasPrefix(appName, "fndocker.") || strings.HasPrefix(appName, "put-port.")
 }
 
+func findAvailableLocalPort(startPort int) int {
+	for p := startPort; p < startPort+2000; p++ {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+		if err == nil {
+			_ = ln.Close()
+			return p
+		}
+	}
+	ln, err := net.Listen("tcp", ":0")
+	if err == nil {
+		defer ln.Close()
+		return ln.Addr().(*net.TCPAddr).Port
+	}
+	return 18001
+}
+
 // needsPackageUpgrade checks if an installed app needs re-installation
-// (e.g. restoring direct port declaration that was wiped out by legacy notice packaging).
+// (e.g. restoring direct port declaration that was wiped out by legacy notice packaging,
+// ensuring allUsers is true for FN Connect, or updating to proxy port).
 func (i *Installer) needsPackageUpgrade(item DesktopItem, appName string) bool {
-	if item.Port <= 0 {
+	expectedPort := item.Port
+	if item.Mode == ModeLocalPort && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.ProxyPort > 0 {
+		expectedPort = item.ProxyPort
+	}
+	if expectedPort <= 0 {
 		return false
 	}
 	candidateDirs := []string{
 		filepath.Join("/var/apps", appName, "target"),
 		filepath.Join("/var/apps", appName),
 		filepath.Join("/usr/local/apps/@appcenter", appName),
+		filepath.Join("/usr/local/apps/@appcenter", appName, "target"),
 		filepath.Join("/host/root/var/apps", appName, "target"),
+		filepath.Join("/host/root/var/apps", appName),
 		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
+		filepath.Join("/host/root/usr/local/apps/@appcenter", appName, "target"),
 	}
+	for v := 1; v <= 12; v++ {
+		vol := fmt.Sprintf("/vol%d", v)
+		candidateDirs = append(candidateDirs,
+			filepath.Join(vol, "@appcenter", appName),
+			filepath.Join(vol, "@appcenter", appName, "target"),
+			filepath.Join(vol, "@appstore", appName),
+			filepath.Join(vol, "@appstore", appName, "target"),
+			filepath.Join("/host/root", vol, "@appcenter", appName),
+			filepath.Join("/host/root", vol, "@appcenter", appName, "target"),
+			filepath.Join("/host/root", vol, "@appstore", appName),
+			filepath.Join("/host/root", vol, "@appstore", appName, "target"),
+		)
+	}
+	foundConfig := false
 	for _, dir := range candidateDirs {
 		for _, sub := range []string{"ui/config", "app/ui/config"} {
 			cfgPath := filepath.Join(dir, sub)
 			data, err := os.ReadFile(cfgPath)
 			if err == nil && len(data) > 0 {
+				foundConfig = true
 				content := string(data)
-				// Any item with Port > 0 MUST declare "port" and MUST NOT use CGI redirect
-				if strings.Contains(content, "/cgi/ThirdParty/") || !strings.Contains(content, `"port"`) {
+				// 1. Any item with Port > 0 MUST NOT use CGI redirect
+				if strings.Contains(content, "/cgi/ThirdParty/") {
+					return true
+				}
+				// 2. Any item with Port > 0 MUST declare "port"
+				if !strings.Contains(content, `"port"`) {
+					return true
+				}
+				// 3. Must have "allUsers": true (otherwise FN Connect rejects WAN access with 403)
+				if !strings.Contains(content, `"allUsers": true`) && !strings.Contains(content, `"allUsers":true`) {
+					return true
+				}
+				// 4. Must declare matching port
+				expectedPortStr := fmt.Sprintf(`"port": "%d"`, expectedPort)
+				expectedPortStrNoSpace := fmt.Sprintf(`"port":"%d"`, expectedPort)
+				if !strings.Contains(content, expectedPortStr) && !strings.Contains(content, expectedPortStrNoSpace) {
 					return true
 				}
 				return false
 			}
 		}
+	}
+	// If the app is recorded in appcenter-cli list but ui/config cannot be confirmed,
+	// force package reinstall to ensure consistency and correct config.
+	if !foundConfig {
+		return true
 	}
 	return false
 }
@@ -1199,6 +1267,15 @@ func (i *Installer) SyncSelfApp(settings Settings) error {
 		filepath.Join("/host/root/var/apps", appName, "target"),
 		filepath.Join("/host/root/usr/local/apps/@appcenter", appName),
 	)
+	for v := 1; v <= 12; v++ {
+		vol := fmt.Sprintf("/vol%d", v)
+		possibleDirs = append(possibleDirs,
+			filepath.Join(vol, "@appcenter", appName),
+			filepath.Join(vol, "@appstore", appName),
+			filepath.Join("/host/root", vol, "@appcenter", appName),
+			filepath.Join("/host/root", vol, "@appstore", appName),
+		)
+	}
 
 	seenDirs := make(map[string]bool)
 	var validDirs []string

@@ -27,7 +27,7 @@ import (
 	"fn-docker-to-desktop/web"
 )
 
-const appVersion = "1.1.72"
+const appVersion = "1.1.73"
 
 const startupHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -352,16 +352,38 @@ func main() {
 
 	// Restore active proxies from database
 	items := storage.GetAllItems()
-	for _, item := range items {
-		if item.Mode == desktop.ModeProxy && item.Enabled && item.Port > 0 && item.TargetURL != "" {
+	for idx := range items {
+		item := &items[idx]
+		if !item.Enabled {
+			continue
+		}
+		if item.Mode == desktop.ModeProxy && item.Port > 0 && item.TargetURL != "" {
 			opts := proxy.ProxyOptions{
 				NoticeEnabled: item.NoticeEnabled,
 				NoticeContent: item.NoticeContent,
 				Title:         item.Name,
-				IconDataUrl:   desktop.GetItemIconDataURL(item, iconsDir),
+				IconDataUrl:   desktop.GetItemIconDataURL(*item, iconsDir),
 			}
 			if err := proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts); err != nil {
 				slog.Error("恢复代理失败", "id", item.ID, "port", item.Port, "error", err)
+			}
+		} else if item.Mode == desktop.ModeLocalPort && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.Port > 0 {
+			if item.ProxyPort <= 0 {
+				item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
+				_ = storage.SaveItem(*item)
+			}
+			opts := proxy.ProxyOptions{
+				NoticeEnabled: true,
+				NoticeContent: item.NoticeContent,
+				Title:         item.Name,
+				IconDataUrl:   desktop.GetItemIconDataURL(*item, iconsDir),
+			}
+			targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", item.Port, item.Path)
+			if strings.EqualFold(item.Protocol, "https") {
+				targetURL = fmt.Sprintf("https://127.0.0.1:%d%s", item.Port, item.Path)
+			}
+			if err := proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts); err != nil {
+				slog.Error("恢复本地容器开屏提示代理失败", "id", item.ID, "proxyPort", item.ProxyPort, "error", err)
 			}
 		}
 	}
