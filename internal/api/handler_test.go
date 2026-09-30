@@ -506,7 +506,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.78",
+		AppVersion: "1.1.79",
 	})
 
 	mux := http.NewServeMux()
@@ -621,7 +621,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.78",
+		AppVersion: "1.1.79",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -699,12 +699,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.78",
+		AppVersion: "1.1.79",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.78",
-		LatestVersion:  "1.1.78",
+		CurrentVersion: "1.1.79",
+		LatestVersion:  "1.1.79",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -727,8 +727,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.78" {
-		t.Errorf("Expected current version 1.1.78, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.79" {
+		t.Errorf("Expected current version 1.1.79, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -817,7 +817,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.78",
+		AppVersion:    "1.1.79",
 	})
 
 	mux := http.NewServeMux()
@@ -893,7 +893,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.78",
+		AppVersion: "1.1.79",
 	})
 
 	mux := http.NewServeMux()

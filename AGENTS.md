@@ -20,7 +20,7 @@
 
 - **演进记录文件**：[`docs/CONVERSATION_HISTORY.md`](docs/CONVERSATION_HISTORY.md)
 - **要求**：
-  - 项目历经数十个版本的快速迭代（已记录至 `Turn 94` / `v1.1.78`）。
+  - 项目历经数十个版本的快速迭代（已记录至 `Turn 95` / `v1.1.79`）。
   - 处理涉及开屏弹窗、端口映射、外网穿透权限、图标管理等复杂逻辑时，**必须先阅读该文档中最近版本的相关条目**，了解此前修复的技术背景，严禁反复引发历史已修复的问题。
   - 每次完成发布或重要修改后，必须严格遵循相同的极简格式在 [`docs/CONVERSATION_HISTORY.md`](docs/CONVERSATION_HISTORY.md) 末尾追加记录。
 

@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.78';
+  const ver = state.settings?.version || '1.1.79';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.78';
+  const ver = state.settings?.version || '1.1.79';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5236,7 +5236,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.78';
+      const ver = state.settings?.version || '1.1.79';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5953,13 +5953,13 @@ function initApp() {
     btnCleanAllDesktop.addEventListener('click', async () => {
       const count = (state.desktopItems || []).length;
       const confirmMsg = count > 0
-        ? `确定要一键清理全部 ${count} 个桌面图标吗？\n\n此操作将注销并移除飞牛系统中所有由本程序注册的桌面应用，彻底释放系统端口接管。`
-        : '确定要执行一键清理吗？\n\n此操作将扫描并注销飞牛系统中所有由本程序注册的桌面快捷方式，彻底释放端口接管并恢复系统环境。';
+        ? `确定要一键清空全部 ${count} 个桌面图标吗？\n\n此操作将注销并移除飞牛系统中所有由本程序注册的桌面应用，彻底释放系统端口接管。`
+        : '确定要执行一键清空吗？\n\n此操作将扫描并注销飞牛系统中所有由本程序注册的桌面快捷方式，彻底释放端口接管并恢复系统环境。';
       if (!confirm(confirmMsg)) {
         return;
       }
       btnCleanAllDesktop.disabled = true;
-      btnCleanAllDesktop.textContent = '清理中...';
+      btnCleanAllDesktop.textContent = '清空中...';
       try {
         const res = await fetch(apiUrl('/api/desktop/clear-all'), { method: 'POST' });
         if (res.status === 401) {
@@ -5968,7 +5968,7 @@ function initApp() {
         }
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
-          showToast(`已成功清理 ${data.cleaned_count || 0} 个桌面图标并释放接管`, 'success');
+          showToast(`已成功清空 ${data.cleaned_count || 0} 个桌面图标并释放接管`, 'success');
           state.desktopItems = [];
           updateDesktopCountBadge();
           renderDesktopTable();
@@ -5977,13 +5977,13 @@ function initApp() {
           fetchWatchcowItems();
         } else {
           const errData = await res.json().catch(() => ({}));
-          showToast('清理失败: ' + (errData.error || res.statusText), 'error');
+          showToast('清空失败: ' + (errData.error || res.statusText), 'error');
         }
       } catch (e) {
-        showToast('清理异常: ' + e.message, 'error');
+        showToast('清空异常: ' + e.message, 'error');
       } finally {
         btnCleanAllDesktop.disabled = false;
-        btnCleanAllDesktop.textContent = '一键清理';
+        btnCleanAllDesktop.textContent = '一键清空';
       }
     });
   }

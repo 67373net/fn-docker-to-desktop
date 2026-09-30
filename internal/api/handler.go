@@ -1203,7 +1203,7 @@ func (h *Handler) handleClearAllDesktopItems(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	slog.Warn("[AUDIT] 用户触发一键清理全部桌面图标与系统应用...")
+	slog.Warn("[AUDIT] 用户触发一键清空全部桌面图标与系统应用...")
 
 	if h.proxyMgr != nil {
 		h.proxyMgr.StopAll()
@@ -1223,7 +1223,7 @@ func (h *Handler) handleClearAllDesktopItems(w http.ResponseWriter, r *http.Requ
 
 	_ = h.storage.ClearAllItems()
 
-	slog.Info("<=== [AUDIT] 一键清理完成，已注销全部桌面图标并恢复系统环境", "cleanedCount", cleanedCount)
+	slog.Info("<=== [AUDIT] 一键清空完成，已注销全部桌面图标并恢复系统环境", "cleanedCount", cleanedCount)
 	h.jsonResponse(w, r, map[string]interface{}{
 		"success":       true,
 		"cleaned_count": cleanedCount,
