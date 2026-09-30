@@ -156,6 +156,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/desktop/items/{id}", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/delete", h.handleDeleteDesktopItem)
 	mux.HandleFunc("POST /api/desktop/items/{id}/toggle", h.handleToggleDesktopItem)
+	mux.HandleFunc("POST /api/desktop/clear-all", h.handleClearAllDesktopItems)
 	mux.HandleFunc("GET /api/desktop/export", h.handleExportDesktopItems)
 	mux.HandleFunc("GET /api/desktop/docklabel", h.handleGetDockLabelItems)
 	mux.HandleFunc("POST /api/desktop/docklabel/{id}/toggle", h.handleToggleDockLabelItem)
@@ -874,6 +875,12 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		if item.Port <= 0 {
 			item.Port = proxy.RecommendAvailablePort(18000, nil)
 			slog.Info("[API] 自动推荐分配反向代理本地端口", "port", item.Port)
+		} else {
+			if err := h.checkProxyPortConflict(item.Port, item.ID); err != nil {
+				slog.Warn("[API] 代理端口存在冲突拦截", "port", item.Port, "error", err)
+				h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+				return
+			}
 		}
 		opts := proxy.ProxyOptions{
 			NoticeEnabled: item.NoticeEnabled,
@@ -890,6 +897,12 @@ func (h *Handler) handleCreateDesktopItem(w http.ResponseWriter, r *http.Request
 		if item.ProxyPort <= 0 {
 			item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
 			slog.Info("[API] 自动分配本地容器开屏提示代理端口", "proxyPort", item.ProxyPort)
+		} else {
+			if err := h.checkProxyPortConflict(item.ProxyPort, item.ID); err != nil {
+				slog.Warn("[API] 开屏代理端口存在冲突拦截", "proxyPort", item.ProxyPort, "error", err)
+				h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+				return
+			}
 		}
 		opts := proxy.ProxyOptions{
 			NoticeEnabled: true,
@@ -993,16 +1006,33 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 	}
 
 	if item.Mode == desktop.ModeProxy && item.Enabled {
+		if item.Port > 0 {
+			if err := h.checkProxyPortConflict(item.Port, item.ID); err != nil {
+				slog.Warn("[API] 更新代理端口存在冲突拦截", "port", item.Port, "error", err)
+				h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+				return
+			}
+		}
 		opts := proxy.ProxyOptions{
 			NoticeEnabled: item.NoticeEnabled,
 			NoticeContent: item.NoticeContent,
 			Title:         item.Name,
 			IconDataUrl:   desktop.GetItemIconDataURL(item, h.iconsDir),
 		}
-		_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts)
+		if err := h.proxyMgr.StartProxyWithOptions(item.ID, item.Port, item.TargetURL, item.SkipTLSVerify, opts); err != nil {
+			slog.Error("[API] 启动更新反向代理失败", "id", item.ID, "port", item.Port, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "启动反向代理失败: " + err.Error()}, http.StatusBadRequest)
+			return
+		}
 	} else if item.Mode == desktop.ModeLocalPort && item.Enabled && item.NoticeEnabled && strings.TrimSpace(item.NoticeContent) != "" && item.Port > 0 {
 		if item.ProxyPort <= 0 {
 			item.ProxyPort = proxy.RecommendAvailablePort(18000, nil)
+		} else {
+			if err := h.checkProxyPortConflict(item.ProxyPort, item.ID); err != nil {
+				slog.Warn("[API] 更新开屏代理端口存在冲突拦截", "proxyPort", item.ProxyPort, "error", err)
+				h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+				return
+			}
 		}
 		opts := proxy.ProxyOptions{
 			NoticeEnabled: true,
@@ -1014,7 +1044,11 @@ func (h *Handler) handleUpdateDesktopItem(w http.ResponseWriter, r *http.Request
 		if strings.EqualFold(item.Protocol, "https") {
 			targetURL = fmt.Sprintf("https://127.0.0.1:%d%s", item.Port, item.Path)
 		}
-		_ = h.proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts)
+		if err := h.proxyMgr.StartProxyWithOptions(item.ID, item.ProxyPort, targetURL, item.SkipTLSVerify, opts); err != nil {
+			slog.Error("[API] 启动更新开屏代理失败", "id", item.ID, "proxyPort", item.ProxyPort, "error", err)
+			h.jsonResponse(w, r, map[string]string{"error": "启动开屏提示代理失败: " + err.Error()}, http.StatusBadRequest)
+			return
+		}
 	} else {
 		h.proxyMgr.StopProxy(item.ID)
 		if item.Mode == desktop.ModeLocalPort && !item.NoticeEnabled {
@@ -1122,6 +1156,78 @@ func (h *Handler) handleDeleteDesktopItem(w http.ResponseWriter, r *http.Request
 
 	slog.Info("<=== [AUDIT] 桌面图标已成功从飞牛桌面注销并从存储数据库移除", "id", id)
 	h.jsonResponse(w, r, map[string]bool{"success": true}, http.StatusOK)
+}
+
+func (h *Handler) checkProxyPortConflict(portToCheck int, itemID string) error {
+	if portToCheck <= 0 {
+		return nil
+	}
+	// 1. 检查是否已被其他活动的 proxy 实例占用
+	if h.proxyMgr != nil {
+		runningPorts := h.proxyMgr.GetRunningPorts()
+		if ownerID, ok := runningPorts[portToCheck]; ok && ownerID != itemID {
+			return fmt.Errorf("本机代理端口 %d 已被内部服务 [%s] 占用，请更换端口", portToCheck, ownerID)
+		}
+	}
+
+	// 2. 检查本机活跃端口（包括 Docker 容器暴露的端口和系统原生监听端口）
+	activePorts := monitor.ScanPorts(h.procPath, false)
+	for _, p := range activePorts {
+		if p.LocalPort == portToCheck {
+			occupant := "系统原生进程"
+			if p.Docker.ContainerName != "" {
+				occupant = fmt.Sprintf("Docker 容器 [%s]", p.Docker.ContainerName)
+			} else if p.ProcessName != "" {
+				occupant = fmt.Sprintf("进程 [%s]", p.ProcessName)
+			}
+			return fmt.Errorf("本机代理端口 %d 已被 %s 占用，为防止服务冲突崩溃，请更换其他端口（或点击“推荐端口”）", portToCheck, occupant)
+		}
+	}
+
+	// 3. 检查本机端口是否能正常建立监听
+	if !proxy.CheckPortAvailable(portToCheck) {
+		return fmt.Errorf("本机代理端口 %d 当前不可用（可能被外部占用），请更换其他端口", portToCheck)
+	}
+
+	return nil
+}
+
+func (h *Handler) handleClearAllDesktopItems(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.jsonResponse(w, r, map[string]string{"error": "Method not allowed"}, http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "未授权访问，请先登录"}, http.StatusUnauthorized)
+		return
+	}
+
+	slog.Warn("[AUDIT] 用户触发一键清理全部桌面图标与系统应用...")
+
+	if h.proxyMgr != nil {
+		h.proxyMgr.StopAll()
+		slog.Info("[AUDIT] 已停止所有反向代理监听器")
+	}
+
+	items := h.storage.GetAllItems()
+	cleanedCount := 0
+	if h.installer != nil {
+		for _, item := range items {
+			_ = h.installer.UninstallItem(item)
+			cleanedCount++
+		}
+		// 强制注销系统中所有孤立的 fndocker.* 和 put-port.* 应用
+		_ = h.installer.PruneOrphanApps(make(map[string]bool))
+	}
+
+	_ = h.storage.ClearAllItems()
+
+	slog.Info("<=== [AUDIT] 一键清理完成，已注销全部桌面图标并恢复系统环境", "cleanedCount", cleanedCount)
+	h.jsonResponse(w, r, map[string]interface{}{
+		"success":       true,
+		"cleaned_count": cleanedCount,
+	}, http.StatusOK)
 }
 
 type clientLogRequest struct {

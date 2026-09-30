@@ -506,7 +506,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.77",
+		AppVersion: "1.1.78",
 	})
 
 	mux := http.NewServeMux()
@@ -621,7 +621,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.77",
+		AppVersion: "1.1.78",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -699,12 +699,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.77",
+		AppVersion: "1.1.78",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.77",
-		LatestVersion:  "1.1.77",
+		CurrentVersion: "1.1.78",
+		LatestVersion:  "1.1.78",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -727,8 +727,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.77" {
-		t.Errorf("Expected current version 1.1.77, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.78" {
+		t.Errorf("Expected current version 1.1.78, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -817,7 +817,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.77",
+		AppVersion:    "1.1.78",
 	})
 
 	mux := http.NewServeMux()
@@ -871,6 +871,58 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		t.Fatalf("Expected host %s to be deleted from remote store", savedHost.ID)
 	}
 }
+
+func TestClearAllDesktopItems(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-test-clearall-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, _ := desktop.NewStorage(tempDir)
+	_ = storage.SaveItem(desktop.DesktopItem{
+		ID:      "item-1",
+		Name:    "App 1",
+		AppName: "fndocker.app-1",
+		Port:    8081,
+		Mode:    desktop.ModeLocalPort,
+		Enabled: true,
+	})
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.78",
+	})
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("POST", "/api/desktop/clear-all", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp["success"] != true {
+		t.Fatalf("Expected success: true, got %+v", resp)
+	}
+
+	items := storage.GetAllItems()
+	if len(items) != 0 {
+		t.Fatalf("Expected 0 items remaining, got %d", len(items))
+	}
+}
+
 
 
 

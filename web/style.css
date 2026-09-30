@@ -1276,6 +1276,39 @@ table.data-table td.table-sink-divider-cell {
   max-width: 660px;
 }
 
+.panel-app-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background-color: var(--bg-surface-subtle);
+  border: 1px solid var(--primary, #2563eb);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 1rem;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.panel-alert-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.panel-alert-text {
+  flex: 1;
+}
+
+.panel-alert-text code {
+  background-color: var(--bg-card);
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  font-size: 0.8rem;
+}
+
 .modal-dialog-sm {
   max-width: 400px;
 }

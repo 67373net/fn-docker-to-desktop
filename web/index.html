@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.77">
+  <link rel="stylesheet" href="style.css?v=1.1.78">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -144,6 +144,7 @@
         <div class="toolbar-spacer"></div>
         <button class="btn btn-secondary" id="btn-export-desktop" title="导出当前所有桌面图标配置与图标资源为 ZIP 压缩包">导出</button>
         <button class="btn btn-secondary" id="btn-refresh-desktop" title="刷新桌面图标列表">刷新</button>
+        <button class="btn btn-secondary" id="btn-clean-all-desktop" title="注销并清理所有桌面图标，彻底释放系统端口接管">一键清理</button>
         <button class="btn btn-primary" id="btn-open-create-modal">
           <span>添加桌面图标</span>
         </button>
@@ -510,7 +511,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.77</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.78</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -542,6 +543,17 @@
             <li><strong>兼容 Watchcow 标签</strong>：自动读取 Docker Compose 中的 Watchcow label 配置，可以直接启用或复制。</li>
           </ol>
           <p class="about-md-p">其他特色：文字图标生成器，开屏弹窗备忘，同一端口多入口，可忽略自签证书，图标上传 / 管理与备份恢复，等等。</p>
+          <hr class="about-md-hr">
+          <h3 class="about-md-h3">常见问题与提示</h3>
+          <ul class="about-md-ul" style="padding-left: 1.2rem; font-size: 0.9rem; line-height: 1.7; color: var(--text-muted);">
+            <li><strong>1Panel / Portainer 等面板添加到桌面后打不开？</strong>
+              <div style="font-size: 0.85rem; color: var(--text-main); margin-top: 2px;">
+                ① <strong>打开方式</strong>：此类运维面板具备防嵌套机制，请选择<strong>“新标签页”</strong>打开；<br>
+                ② <strong>安全入口</strong>：若开启了安全入口，请在添加时将路径填写完整（如 <code>/1panel</code>）；<br>
+                ③ <strong>外网穿透</strong>：通过 FN Connect 外网访问时，需在面板设置中将穿透域名加入允许访问白名单。
+              </div>
+            </li>
+          </ul>
           <hr class="about-md-hr">
           <div class="donate-section">
             <h3 class="donate-title">🙇🏻 请作者吃顿外卖 🥺</h3>
@@ -597,6 +609,13 @@
             <label class="form-label">应用包名标识（建议保持默认）</label>
             <input type="text" id="item-app-name" class="form-input" placeholder="例如：fndocker.my-app-123456" autocomplete="off" spellcheck="false">
             <div id="item-app-name-duplicate-tip" style="display: none; color: var(--danger, #ef4444); font-size: 0.82rem; margin-top: 4px;"></div>
+          </div>
+
+          <div id="item-panel-app-alert" class="panel-app-alert" style="display: none;">
+            <span class="panel-alert-icon">💡</span>
+            <div class="panel-alert-text">
+              <strong>检测到运维面板应用</strong>：此类应用自带防嵌套保护，建议在<strong>【新标签页】</strong>打开；若开启了安全入口，请在<strong>【路径】</strong>栏填写完整入口（如 <code>/1panel</code>）。
+            </div>
           </div>
 
           <!-- Section for Local Port -->
@@ -1039,6 +1058,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.77"></script>
+  <script src="app.js?v=1.1.78"></script>
 </body>
 </html>

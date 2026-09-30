@@ -199,6 +199,14 @@ func (s *Storage) DeleteItem(id string) error {
 	return s.saveItemsLocked()
 }
 
+// ClearAllItems removes all desktop items from storage.
+func (s *Storage) ClearAllItems() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items = make(map[string]DesktopItem)
+	return s.saveItemsLocked()
+}
+
 func (s *Storage) loadDockLabelStates() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.77';
+  const ver = state.settings?.version || '1.1.78';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.77';
+  const ver = state.settings?.version || '1.1.78';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -2700,6 +2700,16 @@ function initModals() {
   const formItem = document.getElementById('form-desktop-item');
   if (formItem) {
     formItem.addEventListener('submit', handleSaveDesktopItem);
+  }
+
+  const itemNameInput = document.getElementById('item-name');
+  if (itemNameInput) {
+    itemNameInput.addEventListener('input', () => {
+      const containerName = document.getElementById('item-container-name')?.value || '';
+      const formEl = document.getElementById('form-desktop-item');
+      const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
+      updatePanelAppAlert(itemNameInput.value, containerName, image);
+    });
   }
 
   // Save as new button in edit modal
@@ -4230,9 +4240,32 @@ function resetDesktopForm() {
   const chkNoDisplay = document.getElementById('item-no-display');
   if (chkNoDisplay) chkNoDisplay.checked = false;
 
+  const panelAlert = document.getElementById('item-panel-app-alert');
+  if (panelAlert) panelAlert.style.display = 'none';
+
   setDesktopModalMode('local');
   collapseIconPicker('modal');
   saveIconSnapshot('modal');
+}
+
+function isPanelManagementApp(name, containerName, image) {
+  const text = `${name || ''} ${containerName || ''} ${image || ''}`.toLowerCase();
+  const keywords = ['1panel', 'portainer', 'baota', 'bt-panel', 'cockpit', 'qinglong', 'dockge', 'casaos', 'heimdall', 'homarr'];
+  return keywords.some(k => text.includes(k));
+}
+
+function updatePanelAppAlert(name, containerName, image) {
+  const alertEl = document.getElementById('item-panel-app-alert');
+  if (!alertEl) return;
+  if (isPanelManagementApp(name, containerName, image)) {
+    alertEl.style.display = 'flex';
+    const uiTypeSelect = document.getElementById('item-ui-type');
+    if (uiTypeSelect && !document.getElementById('item-id')?.value) {
+      uiTypeSelect.value = 'url';
+    }
+  } else {
+    alertEl.style.display = 'none';
+  }
 }
 
 function openCreateDesktopModalWithPort(port, name, containerName, image) {
@@ -4246,6 +4279,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   if (formEl && image) {
     formEl.dataset.image = image;
   }
+  updatePanelAppAlert(name, containerName, image);
 
   // Pre-generate unique package identifier for fnOS
   state.appShortId = Math.floor(100000 + Math.random() * 900000).toString();
@@ -4455,6 +4489,7 @@ function openEditDesktopModal(id) {
   if (formEl && item.image) {
     formEl.dataset.image = item.image;
   }
+  updatePanelAppAlert(item.name, item.container_name, item.image);
 
   const elContainer = document.getElementById('item-container-name');
   if (elContainer) elContainer.value = item.container_name || '';
@@ -4785,6 +4820,14 @@ async function handleSaveDesktopItem(e) {
       if (!port || port <= 0) {
         document.getElementById('item-proxy-port')?.focus();
         return showToast('请输入本机代理端口', 'error');
+      }
+      const conflictPort = (state.ports || []).find(p => p.port === port);
+      if (conflictPort) {
+        const occupant = conflictPort.container_name
+          ? `Docker 容器 [${conflictPort.container_name}]`
+          : (conflictPort.process_name ? `进程 [${conflictPort.process_name}]` : '本地服务');
+        document.getElementById('item-proxy-port')?.focus();
+        return showToast(`本机代理端口 ${port} 已被 ${occupant} 占用，为防止服务冲突崩溃，请更换其他端口！`, 'error');
       }
     } else if (mode === 'shortcut') {
       targetUrl = document.getElementById('item-shortcut-url').value.trim();
@@ -5193,7 +5236,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.77';
+      const ver = state.settings?.version || '1.1.78';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -5902,6 +5945,46 @@ function initApp() {
     btnRefreshDesktop.addEventListener('click', () => {
       fetchDesktopItems();
       fetchWatchcowItems();
+    });
+  }
+
+  const btnCleanAllDesktop = document.getElementById('btn-clean-all-desktop');
+  if (btnCleanAllDesktop) {
+    btnCleanAllDesktop.addEventListener('click', async () => {
+      const count = (state.desktopItems || []).length;
+      const confirmMsg = count > 0
+        ? `确定要一键清理全部 ${count} 个桌面图标吗？\n\n此操作将注销并移除飞牛系统中所有由本程序注册的桌面应用，彻底释放系统端口接管。`
+        : '确定要执行一键清理吗？\n\n此操作将扫描并注销飞牛系统中所有由本程序注册的桌面快捷方式，彻底释放端口接管并恢复系统环境。';
+      if (!confirm(confirmMsg)) {
+        return;
+      }
+      btnCleanAllDesktop.disabled = true;
+      btnCleanAllDesktop.textContent = '清理中...';
+      try {
+        const res = await fetch(apiUrl('/api/desktop/clear-all'), { method: 'POST' });
+        if (res.status === 401) {
+          showAuthModal();
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(`已成功清理 ${data.cleaned_count || 0} 个桌面图标并释放接管`, 'success');
+          state.desktopItems = [];
+          updateDesktopCountBadge();
+          renderDesktopTable();
+          renderPortsTable();
+          fetchDesktopItems();
+          fetchWatchcowItems();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          showToast('清理失败: ' + (errData.error || res.statusText), 'error');
+        }
+      } catch (e) {
+        showToast('清理异常: ' + e.message, 'error');
+      } finally {
+        btnCleanAllDesktop.disabled = false;
+        btnCleanAllDesktop.textContent = '一键清理';
+      }
     });
   }
 
