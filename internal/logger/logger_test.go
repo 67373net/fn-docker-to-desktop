@@ -1,10 +1,12 @@
 package logger
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseLifecycleLogLine(t *testing.T) {
@@ -184,11 +186,15 @@ func TestDualRetentionPruning(t *testing.T) {
 
 	filePath := filepath.Join(tempDir, "test.log")
 	// Write 5 lines: 2 older than 28 days, 3 recent
+	now := time.Now()
+	recent1 := now.Add(-2 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	recent2 := now.Add(-1 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	recent3 := now.Format("2006-01-02 15:04:05")
 	content := "2020-01-01 10:00:00 [INFO] Old line 1\n" +
 		"2020-01-02 10:00:00 [INFO] Old line 2\n" +
-		"2026-09-20 10:00:00 [INFO] Recent line 1\n" +
-		"2026-09-21 10:00:00 [INFO] Recent line 2\n" +
-		"2026-09-22 10:00:00 [INFO] Recent line 3\n"
+		fmt.Sprintf("%s [INFO] Recent line 1\n", recent1) +
+		fmt.Sprintf("%s [INFO] Recent line 2\n", recent2) +
+		fmt.Sprintf("%s [INFO] Recent line 3\n", recent3)
 
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write test file: %v", err)

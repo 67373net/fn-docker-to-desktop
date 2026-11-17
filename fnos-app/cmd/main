@@ -28,10 +28,51 @@ log_msg() {
     fi
 }
 
+check_process() {
+    local pid=$1
+    if [ -z "${pid}" ]; then
+        return 1
+    fi
+    # 1. 检查 PID 是否存在于系统中
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        return 1
+    fi
+    # 2. 进程指纹强校验：必须确认进程名确实为 fn-docker-to-desktop，防止系统升级重启后 PID 复用撞车！
+    if [ -f "/proc/${pid}/cmdline" ]; then
+        if grep -qa "fn-docker-to-desktop" "/proc/${pid}/cmdline" 2>/dev/null; then
+            return 0
+        fi
+        return 1
+    fi
+    return 0
+}
+
+status() {
+    if [ -f "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if check_process "${pid}"; then
+            return 0
+        else
+            # 发现假死或失效 PID，自动清理自愈
+            rm -f "${PID_FILE}" 2>/dev/null || true
+        fi    
+    fi
+    return 1
+}
+
 start_process() {
     local start_t=$(date +%s%3N)
+
+    # 若存在失效残留，先触发一次自愈校验
     if status; then
-        return 0
+        # 即使进程存在，若核心通信 socket 丢失，仍说明服务未就绪，强制重拉
+        local sock_path="${TRIM_APPDEST}/app.sock"
+        if [ -n "${TRIM_APPDEST}" ] && [ ! -S "${sock_path}" ]; then
+            log_msg "Warning: Process is running but socket missing, restarting..."
+            stop_process
+        else
+            return 0
+        fi
     fi
 
     log_msg "Starting fn-docker-to-desktop..."
@@ -88,6 +129,7 @@ start_process() {
             if [ -f "${LOG_FILE}" ]; then
                 tail -n 30 "${LOG_FILE}" >> "${FALLBACK_LOG}" 2>/dev/null || true
             fi
+            rm -f "${PID_FILE}" 2>/dev/null || true
             return 1
         fi
         if [ -z "${sock_path}" ] || [ -S "${sock_path}" ]; then
@@ -113,53 +155,29 @@ stop_process() {
     if [ -r "${PID_FILE}" ]; then
         pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
         
-        if ! check_process "${pid}"; then
-            rm -f "${PID_FILE}"
-            local stop_end_t=$(date +%s%3N)
-            log_msg "Process ${pid} was not running, cleaned PID file (stop_process took $((stop_end_t - stop_start_t))ms)."
-            return 0
-        fi
-
-        kill -TERM ${pid} >> ${LOG_FILE} 2>&1
-
-        local count=0
-        while check_process "${pid}" && [ $count -lt 10 ]; do
-            sleep 1
-            count=$((count + 1))
-        done
-
         if check_process "${pid}"; then
-            kill -KILL "${pid}"
-            sleep 1
-            rm -f "${PID_FILE}"
+            kill -TERM ${pid} >> ${LOG_FILE} 2>&1
+
+            local count=0
+            while check_process "${pid}" && [ $count -lt 10 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+
+            if check_process "${pid}"; then
+                kill -KILL "${pid}" 2>/dev/null || true
+                sleep 1
+            fi
         fi
     fi
 
+    # 彻底杜绝残留：无论正常退出还是强杀，都无条件清理 PID 文件与 socket 文件
+    rm -f "${PID_FILE}" 2>/dev/null || true
     rm -f "${TRIM_APPDEST}/app.sock" 2>/dev/null || true
+
     local stop_end_t=$(date +%s%3N)
     log_msg "fn-docker-to-desktop stopped successfully (stop_process took $((stop_end_t - stop_start_t))ms)."
     return 0
-}
-
-check_process() {
-    local pid=$1
-    if kill -0 "${pid}" 2>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-status() {
-    if [ -f "${PID_FILE}" ]; then
-        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
-        if check_process "${pid}"; then
-            return 0
-        else
-            rm -f "${PID_FILE}"
-        fi    
-    fi
-    return 1
 }
 
 case $1 in
