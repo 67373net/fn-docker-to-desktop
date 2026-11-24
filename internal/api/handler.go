@@ -1165,8 +1165,12 @@ func (h *Handler) checkProxyPortConflict(portToCheck int, itemID string) error {
 	// 1. 检查是否已被其他活动的 proxy 实例占用
 	if h.proxyMgr != nil {
 		runningPorts := h.proxyMgr.GetRunningPorts()
-		if ownerID, ok := runningPorts[portToCheck]; ok && ownerID != itemID {
-			return fmt.Errorf("本机代理端口 %d 已被内部服务 [%s] 占用，请更换端口", portToCheck, ownerID)
+		if ownerID, ok := runningPorts[portToCheck]; ok {
+			if ownerID != itemID {
+				return fmt.Errorf("本机代理端口 %d 已被内部服务 [%s] 占用，请更换端口", portToCheck, ownerID)
+			}
+			// 当前端口正是正在编辑的条目自身运行的代理端口，直接放行
+			return nil
 		}
 	}
 

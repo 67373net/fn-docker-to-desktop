@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.80';
+  const ver = state.settings?.version || '1.1.81';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.80';
+  const ver = state.settings?.version || '1.1.81';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -4821,13 +4821,19 @@ async function handleSaveDesktopItem(e) {
         document.getElementById('item-proxy-port')?.focus();
         return showToast('请输入本机代理端口', 'error');
       }
-      const conflictPort = (state.ports || []).find(p => p.port === port);
-      if (conflictPort) {
-        const occupant = conflictPort.container_name
-          ? `Docker 容器 [${conflictPort.container_name}]`
-          : (conflictPort.process_name ? `进程 [${conflictPort.process_name}]` : '本地服务');
-        document.getElementById('item-proxy-port')?.focus();
-        return showToast(`本机代理端口 ${port} 已被 ${occupant} 占用，为防止服务冲突崩溃，请更换其他端口！`, 'error');
+      const editingId = document.getElementById('item-id')?.value || '';
+      const originalItem = (state.desktopItems || []).find(it => it.id === editingId);
+      const isSameAsOriginalPort = originalItem && (originalItem.port === port || originalItem.proxy_port === port);
+
+      if (!isSameAsOriginalPort) {
+        const conflictPort = (state.ports || []).find(p => p.port === port);
+        if (conflictPort) {
+          const occupant = conflictPort.container_name
+            ? `Docker 容器 [${conflictPort.container_name}]`
+            : (conflictPort.process_name ? `进程 [${conflictPort.process_name}]` : '本地服务');
+          document.getElementById('item-proxy-port')?.focus();
+          return showToast(`本机代理端口 ${port} 已被 ${occupant} 占用，为防止服务冲突崩溃，请更换其他端口！`, 'error');
+        }
       }
     } else if (mode === 'shortcut') {
       targetUrl = document.getElementById('item-shortcut-url').value.trim();
@@ -5236,7 +5242,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.80';
+      const ver = state.settings?.version || '1.1.81';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

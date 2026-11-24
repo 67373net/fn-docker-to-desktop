@@ -135,8 +135,18 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 		return fmt.Errorf("无法监听本地端口 %d: %w", port, err)
 	}
 
-	// Create reverse proxy
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	targetScheme := target.Scheme
+	if targetScheme == "" {
+		targetScheme = "http"
+	}
+	targetOrigin := fmt.Sprintf("%s://%s", targetScheme, target.Host)
+	targetBase, _ := url.Parse(targetOrigin)
+
+	// Create reverse proxy based on target base origin (scheme://host).
+	// This ensures that when a user specifies a default entrance path (e.g. /admin/login),
+	// the proxy forwards all incoming requests directly without erroneously prepending the entrance
+	// path to root-relative static assets (e.g. /static/...) or root APIs (e.g. /api/...), preventing 404s.
+	proxy := httputil.NewSingleHostReverseProxy(targetBase)
 	if m.bufferPool != nil {
 		proxy.BufferPool = m.bufferPool
 	}
@@ -162,12 +172,6 @@ func (m *Manager) StartProxyWithOptions(id string, port int, targetURL string, s
 		},
 	}
 	proxy.Transport = customTransport
-
-	targetScheme := target.Scheme
-	if targetScheme == "" {
-		targetScheme = "http"
-	}
-	targetOrigin := fmt.Sprintf("%s://%s", targetScheme, target.Host)
 
 	// Custom Director to ensure Host and headers are properly set
 	originalDirector := proxy.Director

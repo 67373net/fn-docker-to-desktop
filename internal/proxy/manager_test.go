@@ -209,3 +209,70 @@ func TestProxyNoticeInterception(t *testing.T) {
 		t.Errorf("Expected backend service content for internal app navigation, got: %s", body5)
 	}
 }
+
+func TestProxyWithSubpathTargetUrlRootAssets(t *testing.T) {
+	// Mock backend server that expects /admin/login, /static/css/style.css, and /api/admin/login
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>login form</html>"))
+		case "/static/css/style.css":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("body { color: red; }"))
+		case "/api/admin/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(fmt.Sprintf("not found: %s", r.URL.Path)))
+		}
+	}))
+	defer backend.Close()
+
+	mgr := NewManager()
+	port := RecommendAvailablePort(18055, nil)
+	id := "test-subpath-item"
+
+	// Start proxy with target URL containing entrance path /admin/login
+	targetWithEntrance := backend.URL + "/admin/login"
+	if err := mgr.StartProxy(id, port, targetWithEntrance, false); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer mgr.StopProxy(id)
+
+	client := &http.Client{}
+
+	// 1. Request /admin/login -> should receive 200 OK
+	res1, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/admin/login", port))
+	if err != nil || res1.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for /admin/login, got: %v (res: %+v)", err, res1)
+	}
+	b1, _ := io.ReadAll(res1.Body)
+	res1.Body.Close()
+	if !strings.Contains(string(b1), "login form") {
+		t.Errorf("Expected login form, got: %s", string(b1))
+	}
+
+	// 2. Request root-relative /static/css/style.css -> should NOT be mangled to /admin/login/static/... and should receive 200 OK
+	res2, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/static/css/style.css", port))
+	if err != nil || res2.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for root asset /static/css/style.css, got: %v (res: %+v)", err, res2)
+	}
+	b2, _ := io.ReadAll(res2.Body)
+	res2.Body.Close()
+	if !strings.Contains(string(b2), "body { color: red; }") {
+		t.Errorf("Expected css content, got: %s", string(b2))
+	}
+
+	// 3. Post to root-relative /api/admin/login -> should NOT be mangled to /admin/login/api/... and should receive 200 OK
+	res3, err := client.Post(fmt.Sprintf("http://127.0.0.1:%d/api/admin/login", port), "application/json", strings.NewReader("{}"))
+	if err != nil || res3.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for API /api/admin/login, got: %v (res: %+v)", err, res3)
+	}
+	b3, _ := io.ReadAll(res3.Body)
+	res3.Body.Close()
+	if !strings.Contains(string(b3), `"status":"ok"`) {
+		t.Errorf("Expected API response, got: %s", string(b3))
+	}
+}

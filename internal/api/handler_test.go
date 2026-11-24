@@ -23,6 +23,7 @@ import (
 	"fn-docker-to-desktop/internal/auth"
 	"fn-docker-to-desktop/internal/desktop"
 	"fn-docker-to-desktop/internal/monitor"
+	"fn-docker-to-desktop/internal/proxy"
 	"fn-docker-to-desktop/internal/remote"
 )
 
@@ -506,7 +507,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.80",
+		AppVersion: "1.1.81",
 	})
 
 	mux := http.NewServeMux()
@@ -621,7 +622,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.80",
+		AppVersion: "1.1.81",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -699,12 +700,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.80",
+		AppVersion: "1.1.81",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.80",
-		LatestVersion:  "1.1.80",
+		CurrentVersion: "1.1.81",
+		LatestVersion:  "1.1.81",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -727,8 +728,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.80" {
-		t.Errorf("Expected current version 1.1.80, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.81" {
+		t.Errorf("Expected current version 1.1.81, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -817,7 +818,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.80",
+		AppVersion:    "1.1.81",
 	})
 
 	mux := http.NewServeMux()
@@ -893,7 +894,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.80",
+		AppVersion: "1.1.81",
 	})
 
 	mux := http.NewServeMux()
@@ -920,6 +921,52 @@ func TestClearAllDesktopItems(t *testing.T) {
 	items := storage.GetAllItems()
 	if len(items) != 0 {
 		t.Fatalf("Expected 0 items remaining, got %d", len(items))
+	}
+}
+
+func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-test-ownport-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, _ := desktop.NewStorage(tempDir)
+	proxyMgr := proxy.NewManager()
+	port := proxy.RecommendAvailablePort(18060, nil)
+
+	// Save proxy item
+	item := desktop.DesktopItem{
+		ID:        "item-own-1",
+		Name:      "Own App",
+		AppName:   "fndocker.own-1",
+		Port:      port,
+		TargetURL: "http://127.0.0.1:8080",
+		Mode:      desktop.ModeProxy,
+		Enabled:   true,
+	}
+	_ = storage.SaveItem(item)
+
+	// Simulate that proxy is already running on this port for item-own-1
+	_ = proxyMgr.StartProxy(item.ID, item.Port, item.TargetURL, false)
+	defer proxyMgr.StopProxy(item.ID)
+
+	handler := NewHandler(Config{
+		Storage:    storage,
+		ProxyMgr:   proxyMgr,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.81",
+	})
+
+	// Check conflict: checking item.Port for its own item.ID should return nil (NO conflict)
+	if err := handler.checkProxyPortConflict(item.Port, item.ID); err != nil {
+		t.Errorf("Expected no conflict when checking own item's port, got: %v", err)
+	}
+
+	// But checking item.Port for a DIFFERENT item ID should return conflict error
+	if err := handler.checkProxyPortConflict(item.Port, "item-other-2"); err == nil {
+		t.Errorf("Expected conflict error when checking port occupied by another item, got nil")
 	}
 }
 
