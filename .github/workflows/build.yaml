@@ -25,6 +25,9 @@ jobs:
           - goarch: arm64
             platform: arm
             suffix: arm
+          - goarch: universal
+            platform: all
+            suffix: all
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,7 +47,7 @@ jobs:
 
       - name: Set manifest platform
         run: |
-          if [ "${{ matrix.platform }}" = "arm" ]; then
+          if [ "${{ matrix.platform }}" = "arm" ] || [ "${{ matrix.platform }}" = "all" ]; then
             sed -i '/^arch.*=.*/d' fnos-app/manifest
           fi
           sed -i "s/^platform.*=.*/platform        = ${{ matrix.platform }}/" fnos-app/manifest
@@ -72,7 +75,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fn-docker-to-desktop-${{ matrix.suffix }}-package
-          path: fn-docker-to-desktop-${{ matrix.suffix }}.fpk
+          path: fn-docker-to-desktop*.fpk
 
   release:
     needs: build
@@ -112,9 +115,7 @@ jobs:
           name: ${{ steps.vars.outputs.release_name }}
           body_path: release_notes.md
           prerelease: ${{ steps.vars.outputs.prerelease == 'true' }}
-          files: |
-            fn-docker-to-desktop-x86.fpk
-            fn-docker-to-desktop-arm.fpk
+          files: fn-docker-to-desktop*.fpk
           generate_release_notes: false
 
 

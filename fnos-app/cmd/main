@@ -80,6 +80,20 @@ start_process() {
     mkdir -p "${TRIM_PKGVAR}/data" 2>/dev/null || true
     mkdir -p "${TRIM_PKGVAR}/logs" 2>/dev/null || true
 
+    # 针对多架构通用包 (Universal all.fpk)：自动检测当前机型 CPU 架构并优先软链接对应 ELF 二进制
+    local arch_m="$(uname -m)"
+    local target_bin="fn-docker-to-desktop-amd64"
+    if [ "${arch_m}" = "aarch64" ] || [ "${arch_m}" = "arm64" ] || echo "${arch_m}" | grep -q "^armv8"; then
+        target_bin="fn-docker-to-desktop-arm64"
+    fi
+    if [ -f "${TRIM_APPDEST}/${target_bin}" ]; then
+        chmod +x "${TRIM_APPDEST}/${target_bin}" 2>/dev/null || true
+        ln -sf "${TRIM_APPDEST}/${target_bin}" "${TRIM_APPDEST}/fn-docker-to-desktop" 2>/dev/null || true
+    elif [ -f "${TRIM_APPDEST}/app/${target_bin}" ]; then
+        chmod +x "${TRIM_APPDEST}/app/${target_bin}" 2>/dev/null || true
+        ln -sf "${TRIM_APPDEST}/app/${target_bin}" "${TRIM_APPDEST}/app/fn-docker-to-desktop" 2>/dev/null || true
+    fi
+
     if [ ! -f "${CMD}" ]; then
         log_msg "Executable not at ${CMD}, searching in ${TRIM_APPDEST}..."
         FOUND_CMD=$(find "${TRIM_APPDEST}" -type f -name "fn-docker-to-desktop" 2>/dev/null | head -n 1)

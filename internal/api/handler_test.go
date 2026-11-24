@@ -507,7 +507,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 
 	mux := http.NewServeMux()
@@ -622,7 +622,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -700,12 +700,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.82",
-		LatestVersion:  "1.1.82",
+		CurrentVersion: "1.1.83",
+		LatestVersion:  "1.1.83",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -728,8 +728,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.82" {
-		t.Errorf("Expected current version 1.1.82, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.83" {
+		t.Errorf("Expected current version 1.1.83, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -818,7 +818,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.82",
+		AppVersion:    "1.1.83",
 	})
 
 	mux := http.NewServeMux()
@@ -894,7 +894,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 
 	mux := http.NewServeMux()
@@ -956,7 +956,7 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 		ProxyMgr:   proxyMgr,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 
 	// Check conflict: checking item.Port for its own item.ID should return nil (NO conflict)
@@ -982,7 +982,7 @@ func TestHandleSuggestIcons(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.82",
+		AppVersion: "1.1.83",
 	})
 	_ = os.MkdirAll(filepath.Join(tempDir, "icons"), 0755)
 
@@ -1018,6 +1018,94 @@ func TestHandleSuggestIcons(t *testing.T) {
 	}
 	if !foundQbit {
 		t.Errorf("Expected qbittorrent in suggestions, got: %+v", resp.Suggestions)
+	}
+}
+
+func TestVersionCheckAssetMatchingPriority(t *testing.T) {
+	// Test matching priorities
+	latestTag := "1.1.83"
+	arch := "x86"
+
+	targetAssetVersioned := fmt.Sprintf("fn-docker-to-desktop_%s_%s.fpk", latestTag, arch)
+	targetAssetUniversal := fmt.Sprintf("fn-docker-to-desktop_%s_all.fpk", latestTag)
+	targetAssetLegacy := fmt.Sprintf("fn-docker-to-desktop-%s.fpk", arch)
+	targetAssetLegacyUniversal := "fn-docker-to-desktop-all.fpk"
+
+	tests := []struct {
+		name     string
+		assets   []ghReleaseAsset
+		expected string
+	}{
+		{
+			name: "Versioned arch package preferred",
+			assets: []ghReleaseAsset{
+				{Name: targetAssetUniversal, BrowserDownloadURL: "http://example.com/universal"},
+				{Name: targetAssetVersioned, BrowserDownloadURL: "http://example.com/versioned"},
+				{Name: targetAssetLegacy, BrowserDownloadURL: "http://example.com/legacy"},
+			},
+			expected: "http://example.com/versioned",
+		},
+		{
+			name: "Universal versioned package fallback",
+			assets: []ghReleaseAsset{
+				{Name: targetAssetUniversal, BrowserDownloadURL: "http://example.com/universal"},
+				{Name: targetAssetLegacyUniversal, BrowserDownloadURL: "http://example.com/legacy_universal"},
+			},
+			expected: "http://example.com/universal",
+		},
+		{
+			name: "Legacy arch package fallback",
+			assets: []ghReleaseAsset{
+				{Name: targetAssetLegacy, BrowserDownloadURL: "http://example.com/legacy"},
+			},
+			expected: "http://example.com/legacy",
+		},
+		{
+			name: "Legacy universal package fallback",
+			assets: []ghReleaseAsset{
+				{Name: targetAssetLegacyUniversal, BrowserDownloadURL: "http://example.com/legacy_universal"},
+			},
+			expected: "http://example.com/legacy_universal",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var downloadURL string
+			for _, asset := range tc.assets {
+				if asset.Name == targetAssetVersioned {
+					downloadURL = asset.BrowserDownloadURL
+					break
+				}
+			}
+			if downloadURL == "" {
+				for _, asset := range tc.assets {
+					if asset.Name == targetAssetUniversal {
+						downloadURL = asset.BrowserDownloadURL
+						break
+					}
+				}
+			}
+			if downloadURL == "" {
+				for _, asset := range tc.assets {
+					if asset.Name == targetAssetLegacy {
+						downloadURL = asset.BrowserDownloadURL
+						break
+					}
+				}
+			}
+			if downloadURL == "" {
+				for _, asset := range tc.assets {
+					if asset.Name == targetAssetLegacyUniversal {
+						downloadURL = asset.BrowserDownloadURL
+						break
+					}
+				}
+			}
+			if downloadURL != tc.expected {
+				t.Errorf("Expected URL %s, got %s", tc.expected, downloadURL)
+			}
+		})
 	}
 }
 

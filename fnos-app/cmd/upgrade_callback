@@ -6,6 +6,21 @@ msg="[${ts}] [upgrade_callback] START (PID: $$, Args: $*)"
 echo "${msg}" >> "${LIFECYCLE_LOG}" 2>/dev/null || true
 rm -f "${UPGRADE_FLAG}" 2>/dev/null || true
 chmod 0666 "${LIFECYCLE_LOG}" 2>/dev/null || true
+
+# 通用全架构安装包自适应匹配链接
+TRIM_APPDEST="${TRIM_APPDEST:-/var/apps/fn-docker-to-desktop/target}"
+arch_m="$(uname -m)"
+target_bin="fn-docker-to-desktop-amd64"
+if [ "${arch_m}" = "aarch64" ] || [ "${arch_m}" = "arm64" ] || echo "${arch_m}" | grep -q "^armv8"; then
+    target_bin="fn-docker-to-desktop-arm64"
+fi
+if [ -f "${TRIM_APPDEST}/${target_bin}" ]; then
+    chmod +x "${TRIM_APPDEST}/${target_bin}" 2>/dev/null || true
+    ln -sf "${TRIM_APPDEST}/${target_bin}" "${TRIM_APPDEST}/fn-docker-to-desktop" 2>/dev/null || true
+elif [ -f "${TRIM_APPDEST}/app/${target_bin}" ]; then
+    chmod +x "${TRIM_APPDEST}/app/${target_bin}" 2>/dev/null || true
+    ln -sf "${TRIM_APPDEST}/app/${target_bin}" "${TRIM_APPDEST}/app/fn-docker-to-desktop" 2>/dev/null || true
+fi
 if [ -n "${TRIM_PKGVAR}" ] && [ -d "${TRIM_PKGVAR}/logs" ]; then
     echo "${msg}" >> "${TRIM_PKGVAR}/logs/lifecycle.log" 2>/dev/null || true
 fi

@@ -3114,15 +3114,48 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Match download URL for host architecture
-	targetAsset := fmt.Sprintf("fn-docker-to-desktop-%s.fpk", arch)
+	// Priorities:
+	// 1. Versioned package for host arch: fn-docker-to-desktop_<version>_<arch>.fpk
+	// 2. Versioned universal package: fn-docker-to-desktop_<version>_all.fpk
+	// 3. Legacy unversioned package for host arch: fn-docker-to-desktop-<arch>.fpk
+	// 4. Legacy unversioned universal package: fn-docker-to-desktop-all.fpk
+	targetAssetVersioned := fmt.Sprintf("fn-docker-to-desktop_%s_%s.fpk", latestTag, arch)
+	targetAssetUniversal := fmt.Sprintf("fn-docker-to-desktop_%s_all.fpk", latestTag)
+	targetAssetLegacy := fmt.Sprintf("fn-docker-to-desktop-%s.fpk", arch)
+	targetAssetLegacyUniversal := "fn-docker-to-desktop-all.fpk"
+
 	for _, asset := range ghRelease.Assets {
-		if asset.Name == targetAsset {
+		if asset.Name == targetAssetVersioned {
 			res.DownloadURL = asset.BrowserDownloadURL
 			break
 		}
 	}
 	if res.DownloadURL == "" {
-		res.DownloadURL = fmt.Sprintf("https://github.com/67373net/fn-docker-to-desktop/releases/download/%s/%s", ghRelease.TagName, targetAsset)
+		for _, asset := range ghRelease.Assets {
+			if asset.Name == targetAssetUniversal {
+				res.DownloadURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+	}
+	if res.DownloadURL == "" {
+		for _, asset := range ghRelease.Assets {
+			if asset.Name == targetAssetLegacy {
+				res.DownloadURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+	}
+	if res.DownloadURL == "" {
+		for _, asset := range ghRelease.Assets {
+			if asset.Name == targetAssetLegacyUniversal {
+				res.DownloadURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+	}
+	if res.DownloadURL == "" {
+		res.DownloadURL = fmt.Sprintf("https://github.com/67373net/fn-docker-to-desktop/releases/download/%s/%s", ghRelease.TagName, targetAssetVersioned)
 	}
 
 	h.versionCheckMu.Lock()

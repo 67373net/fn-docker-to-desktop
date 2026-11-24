@@ -21,5 +21,5 @@ clean:
 	rm -f *.fpk
 	rm -f fn-docker-to-desktop
 	rm -f fnos-app/app.tgz
-	rm -f fnos-app/app/fn-docker-to-desktop
+	rm -f fnos-app/app/fn-docker-to-desktop*
 
