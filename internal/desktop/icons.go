@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"image"
@@ -133,6 +134,11 @@ func SummarizeIconSource(source string) string {
 	return s
 }
 
+// GetIconCandidates returns candidate names for matching official or CDN icons from a raw name or image.
+func GetIconCandidates(raw string) []string {
+	return getIconCandidates(raw)
+}
+
 func getIconCandidates(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -190,7 +196,19 @@ func getIconCandidates(raw string) []string {
 		addCandidate(rawClean)
 	}
 
-	// 4. Common service mappings (including Chinese service titles)
+	// 4. Extract any alphanumeric continuous words from mixed titles (e.g. "我的Alist网盘" -> "alist")
+	for _, word := range strings.FieldsFunc(raw, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+	}) {
+		if len(word) >= 2 {
+			addCandidate(word)
+			if idx := strings.Index(word, "-"); idx > 0 {
+				addCandidate(word[:idx])
+			}
+		}
+	}
+
+	// 5. Common service mappings (including Chinese service titles)
 	aliasMap := map[string][]string{
 		"百度":   {"baidu", "baidupan"},
 		"百度盘":  {"baidu", "baidupan"},
@@ -206,6 +224,26 @@ func getIconCandidates(raw string) []string {
 		"夸克":   {"quark"},
 		"网易":   {"netease"},
 		"微信":   {"wechat"},
+		"青龙":   {"qinglong"},
+		"小雅":   {"xiaoya", "alist"},
+		"网盘":   {"alist", "baidupan", "alipan"},
+		"音乐":   {"music", "navidrome"},
+		"影视":   {"emby", "jellyfin", "plex"},
+		"媒体":   {"emby", "jellyfin", "plex"},
+		"下载":   {"qbittorrent", "transmission", "aria2"},
+		"照片":   {"immich", "photoprism"},
+		"相册":   {"immich", "photoprism"},
+		"笔记":   {"notion", "siyuan", "obsidian"},
+		"思源":   {"siyuan"},
+		"监控":   {"uptime-kuma", "grafana", "prometheus"},
+		"探针":   {"uptime-kuma", "nezha"},
+		"密码":   {"vaultwarden", "bitwarden"},
+		"路由":   {"openwrt", "ikuai"},
+		"容器":   {"portainer", "docker"},
+		"面板":   {"1panel", "portainer"},
+		"博客":   {"wordpress", "halo"},
+		"阅读":   {"calibre", "reader"},
+		"文件":   {"filebrowser", "nextcloud"},
 	}
 	for k, list := range aliasMap {
 		if strings.Contains(raw, k) {
@@ -216,6 +254,159 @@ func getIconCandidates(raw string) []string {
 	}
 
 	return candidates
+}
+
+// FetchFaviconFromURL attempts to fetch the favicon from a target URL.
+// It returns a base64 Data URL (e.g. data:image/png;base64,...), or an error.
+func FetchFaviconFromURL(ctx context.Context, targetURL string) (string, error) {
+	targetURL = strings.TrimSpace(targetURL)
+	if targetURL == "" {
+		return "", fmt.Errorf("empty URL")
+	}
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "http://" + targetURL
+	}
+	u, err := url.Parse(targetURL)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("invalid URL: %v", err)
+	}
+
+	client := &http.Client{
+		Timeout: 1500 * time.Millisecond,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	baseOrigin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	faviconURLs := []string{
+		baseOrigin + "/favicon.ico",
+		baseOrigin + "/favicon.png",
+		baseOrigin + "/apple-touch-icon.png",
+	}
+
+	// 1. First probe well-known favicon URLs
+	for _, fURL := range faviconURLs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fURL, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			if resp.StatusCode == http.StatusOK {
+				data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+				resp.Body.Close()
+				if err == nil && len(data) > 0 {
+					// Ensure it's not an HTML 404 error page returning 200
+					trimmed := bytes.TrimSpace(data)
+					if !bytes.HasPrefix(trimmed, []byte("<!DOCTYPE")) &&
+						!bytes.HasPrefix(trimmed, []byte("<!doctype")) &&
+						!bytes.HasPrefix(trimmed, []byte("<html")) {
+						mimeType := resp.Header.Get("Content-Type")
+						if mimeType == "" || strings.Contains(mimeType, "text/") {
+							mimeType = http.DetectContentType(data)
+						}
+						if strings.HasPrefix(mimeType, "image/") || (len(data) >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0) {
+							if len(data) >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0 {
+								mimeType = "image/x-icon"
+							}
+							return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+						}
+					}
+				}
+			} else {
+				resp.Body.Close()
+			}
+		}
+	}
+
+	// 2. If well-known URLs failed, try fetching HTML page to look for <link rel="icon"...>
+	pageReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err == nil {
+		pageResp, err := client.Do(pageReq)
+		if err == nil {
+			if pageResp.StatusCode == http.StatusOK {
+				bodyBytes, _ := io.ReadAll(io.LimitReader(pageResp.Body, 64<<10)) // 64KB limit
+				pageResp.Body.Close()
+				htmlStr := string(bodyBytes)
+				iconHref := extractFaviconHrefFromHTML(htmlStr)
+				if iconHref != "" {
+					resolvedURL := iconHref
+					if !strings.HasPrefix(iconHref, "http://") && !strings.HasPrefix(iconHref, "https://") {
+						resolvedURL = resolveRelativeURL(baseOrigin, iconHref)
+					}
+					iconReq, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedURL, nil)
+					if err == nil {
+						iconResp, err := client.Do(iconReq)
+						if err == nil && iconResp.StatusCode == http.StatusOK {
+							data, err := io.ReadAll(io.LimitReader(iconResp.Body, 1<<20))
+							iconResp.Body.Close()
+							if err == nil && len(data) > 0 {
+								mimeType := iconResp.Header.Get("Content-Type")
+								if mimeType == "" {
+									mimeType = http.DetectContentType(data)
+								}
+								return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+							}
+						} else if iconResp != nil {
+							iconResp.Body.Close()
+						}
+					}
+				}
+			} else {
+				pageResp.Body.Close()
+			}
+		}
+	}
+
+	return "", fmt.Errorf("未探测到站点 Favicon")
+}
+
+func extractFaviconHrefFromHTML(html string) string {
+	lower := strings.ToLower(html)
+	idx := 0
+	for {
+		linkIdx := strings.Index(lower[idx:], "<link")
+		if linkIdx == -1 {
+			break
+		}
+		start := idx + linkIdx
+		end := strings.Index(lower[start:], ">")
+		if end == -1 {
+			break
+		}
+		tag := html[start : start+end+1]
+		tagLower := lower[start : start+end+1]
+		if strings.Contains(tagLower, "rel=") && (strings.Contains(tagLower, "icon") || strings.Contains(tagLower, "shortcut")) {
+			if hrefIdx := strings.Index(tagLower, "href="); hrefIdx != -1 {
+				val := tag[hrefIdx+5:]
+				val = strings.TrimSpace(val)
+				if len(val) > 0 {
+					quote := val[0]
+					if quote == '"' || quote == '\'' {
+						if closeIdx := strings.IndexByte(val[1:], quote); closeIdx != -1 {
+							return val[1 : 1+closeIdx]
+						}
+					} else {
+						fields := strings.Fields(val)
+						if len(fields) > 0 {
+							return strings.TrimRight(fields[0], "/>")
+						}
+					}
+				}
+			}
+		}
+		idx = start + end + 1
+	}
+	return ""
+}
+
+func resolveRelativeURL(baseOrigin, href string) string {
+	href = strings.TrimSpace(href)
+	if strings.HasPrefix(href, "/") {
+		return strings.TrimRight(baseOrigin, "/") + href
+	}
+	return strings.TrimRight(baseOrigin, "/") + "/" + href
 }
 
 // LoadIconImage loads and decodes an icon from source (proxy URL, local URL, base64, HTTP, or local file).

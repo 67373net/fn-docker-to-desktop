@@ -507,7 +507,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.81",
+		AppVersion: "1.1.82",
 	})
 
 	mux := http.NewServeMux()
@@ -622,7 +622,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.81",
+		AppVersion: "1.1.82",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -700,12 +700,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.81",
+		AppVersion: "1.1.82",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.81",
-		LatestVersion:  "1.1.81",
+		CurrentVersion: "1.1.82",
+		LatestVersion:  "1.1.82",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -728,8 +728,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.81" {
-		t.Errorf("Expected current version 1.1.81, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.82" {
+		t.Errorf("Expected current version 1.1.82, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -818,7 +818,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.81",
+		AppVersion:    "1.1.82",
 	})
 
 	mux := http.NewServeMux()
@@ -894,7 +894,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.81",
+		AppVersion: "1.1.82",
 	})
 
 	mux := http.NewServeMux()
@@ -956,7 +956,7 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 		ProxyMgr:   proxyMgr,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.81",
+		AppVersion: "1.1.82",
 	})
 
 	// Check conflict: checking item.Port for its own item.ID should return nil (NO conflict)
@@ -967,6 +967,57 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 	// But checking item.Port for a DIFFERENT item ID should return conflict error
 	if err := handler.checkProxyPortConflict(item.Port, "item-other-2"); err == nil {
 		t.Errorf("Expected conflict error when checking port occupied by another item, got nil")
+	}
+}
+
+func TestHandleSuggestIcons(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fn-suggest-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	storage, _ := desktop.NewStorage(tempDir)
+	handler := NewHandler(Config{
+		Storage:    storage,
+		AuthMgr:    auth.NewManager(""),
+		DataDir:    tempDir,
+		AppVersion: "1.1.82",
+	})
+	_ = os.MkdirAll(filepath.Join(tempDir, "icons"), 0755)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Test suggest by name
+	req := httptest.NewRequest("GET", "/api/icons/suggest?name=qbittorrent", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp struct {
+		Query       string           `json:"query"`
+		Suggestions []IconSuggestion `json:"suggestions"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp.Query != "qbittorrent" {
+		t.Errorf("Expected query qbittorrent, got %s", resp.Query)
+	}
+	foundQbit := false
+	for _, s := range resp.Suggestions {
+		if s.Name == "qbittorrent" && s.Source == "homarr" {
+			foundQbit = true
+			break
+		}
+	}
+	if !foundQbit {
+		t.Errorf("Expected qbittorrent in suggestions, got: %+v", resp.Suggestions)
 	}
 }
 

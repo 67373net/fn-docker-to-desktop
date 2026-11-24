@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.81';
+  const ver = state.settings?.version || '1.1.82';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1229,7 +1229,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.81';
+  const ver = state.settings?.version || '1.1.82';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -2709,8 +2709,13 @@ function initModals() {
       const formEl = document.getElementById('form-desktop-item');
       const image = formEl && formEl.dataset.image ? formEl.dataset.image : '';
       updatePanelAppAlert(itemNameInput.value, containerName, image);
+      triggerIconSuggestions();
     });
   }
+
+  ['item-proxy-host', 'item-proxy-port', 'item-proxy-path', 'item-url', 'item-shortcut-url'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', () => triggerIconSuggestions());
+  });
 
   // Save as new button in edit modal
   const btnSaveAsNew = document.getElementById('btn-save-as-new');
@@ -2877,7 +2882,181 @@ async function autoFillRecommendedProxyPort() {
   }
 }
 
-// --- Icon 3-Tab Editor ---
+// --- Network Icon Suggestions & Auto Recommendation ---
+let iconSuggestDebounceTimer = null;
+let currentIconSuggestAbort = null;
+
+function triggerIconSuggestions(delay = 350) {
+  if (iconSuggestDebounceTimer) clearTimeout(iconSuggestDebounceTimer);
+  iconSuggestDebounceTimer = setTimeout(() => {
+    fetchAndRenderIconSuggestions();
+  }, delay);
+}
+
+function getDesktopModalTargetUrl() {
+  const mode = document.querySelector('input[name="item-mode"]:checked')?.value || 'proxy';
+  if (mode === 'proxy') {
+    const proto = document.getElementById('item-proxy-proto')?.value || 'http';
+    const host = document.getElementById('item-proxy-host')?.value?.trim() || '';
+    const port = document.getElementById('item-proxy-port')?.value?.trim() || '';
+    const path = document.getElementById('item-proxy-path')?.value?.trim() || '';
+    if (!host) return '';
+    let cleanPath = path;
+    if (cleanPath && !cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+    return `${proto}://${host}${port ? ':' + port : ''}${cleanPath}`;
+  } else if (mode === 'redirect') {
+    return document.getElementById('item-url')?.value?.trim() || '';
+  } else if (mode === 'shortcut') {
+    return document.getElementById('item-shortcut-url')?.value?.trim() || '';
+  }
+  return '';
+}
+
+async function fetchAndRenderIconSuggestions(customKeyword = '') {
+  const nameInput = document.getElementById('item-name');
+  const name = (customKeyword || (nameInput ? nameInput.value : '')).trim();
+  const url = getDesktopModalTargetUrl();
+  const formEl = document.getElementById('form-desktop-item');
+  const image = (formEl && formEl.dataset.image) ? formEl.dataset.image : (state.currentItem?.image || '');
+
+  const box = document.getElementById('modal-icon-suggestions-box');
+  const statusEl = document.getElementById('modal-icon-suggestions-status');
+  const listEl = document.getElementById('modal-icon-suggestions-list');
+  const gridEl = document.getElementById('modal-icon-recommend-grid');
+
+  if (!name && !url && !image) {
+    if (box) box.style.display = 'none';
+    if (gridEl) gridEl.innerHTML = '<div class="icon-recommend-empty">输入服务名称或上方搜索即可匹配网络图标</div>';
+    return;
+  }
+
+  if (box) box.style.display = 'block';
+  if (statusEl) statusEl.textContent = '正在检索匹配图标...';
+  if (listEl) listEl.innerHTML = '<span style="font-size: 11px; color: var(--text-muted); padding: 4px;">正在通过网络检索推荐图标...</span>';
+  if (gridEl) gridEl.innerHTML = '<div class="icon-recommend-empty">正在检索网络图标...</div>';
+
+  if (currentIconSuggestAbort) {
+    currentIconSuggestAbort.abort();
+  }
+  currentIconSuggestAbort = new AbortController();
+
+  try {
+    const params = new URLSearchParams();
+    if (name) params.set('name', name);
+    if (image) params.set('image', image);
+    if (url) params.set('url', url);
+
+    const res = await fetch(apiUrl('/api/icons/suggest?' + params.toString()), {
+      signal: currentIconSuggestAbort.signal
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const suggestions = data.suggestions || [];
+
+    if (suggestions.length === 0) {
+      if (statusEl) statusEl.textContent = '未检索到匹配的官方图标';
+      if (listEl) listEl.innerHTML = '<span style="font-size: 11px; color: var(--text-muted); padding: 4px;">未找到匹配的官方图标，可点击“编辑”自定义文字或上传本地图标</span>';
+      if (gridEl) gridEl.innerHTML = '<div class="icon-recommend-empty">未找到匹配的官方图标，可尝试输入英文原名搜索</div>';
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = `找到 ${suggestions.length} 个候选图标，点击即可选用`;
+    if (listEl) listEl.innerHTML = '';
+    if (gridEl) gridEl.innerHTML = '';
+
+    const currentIconVal = document.getElementById('item-icon')?.value || '';
+
+    suggestions.forEach((sug, idx) => {
+      const card = createSuggestionCard(sug, currentIconVal, (selectedSug) => {
+        applySuggestedIcon(selectedSug);
+      });
+      listEl.appendChild(card);
+
+      if (gridEl) {
+        const gridCard = createSuggestionCard(sug, currentIconVal, (selectedSug) => {
+          applySuggestedIcon(selectedSug);
+        });
+        gridEl.appendChild(gridCard);
+      }
+
+      // Auto-select first match if current icon is empty or default
+      if (idx === 0 && (!currentIconVal || currentIconVal === 'default_item_icon.png' || currentIconVal === 'icon.png' || currentIconVal.includes('dashboard-icons/png/'))) {
+        applySuggestedIcon(sug, true);
+      }
+    });
+
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.error('Fetch icon suggestions failed:', err);
+    if (statusEl) statusEl.textContent = '检索网络图标失败';
+  }
+}
+
+function createSuggestionCard(sug, currentIconVal, onSelect) {
+  const card = document.createElement('div');
+  card.className = 'icon-sug-card';
+  if (currentIconVal === sug.url) {
+    card.classList.add('selected');
+  }
+  card.title = `${sug.title} (${sug.badge})`;
+
+  const badge = document.createElement('span');
+  badge.className = 'icon-sug-badge';
+  badge.textContent = sug.badge;
+
+  const img = document.createElement('img');
+  img.src = sug.url;
+  img.alt = sug.title;
+  img.loading = 'lazy';
+  img.onerror = () => {
+    card.remove();
+  };
+
+  const title = document.createElement('span');
+  title.className = 'icon-sug-title';
+  title.textContent = sug.title;
+
+  card.appendChild(badge);
+  card.appendChild(img);
+  card.appendChild(title);
+
+  card.addEventListener('click', () => {
+    onSelect(sug);
+  });
+
+  return card;
+}
+
+function applySuggestedIcon(sug, isAuto = false) {
+  const elIcon = document.getElementById('item-icon');
+  if (elIcon) elIcon.value = sug.url;
+
+  const previewImg = document.getElementById('icon-preview-img');
+  if (previewImg) {
+    previewImg.src = sug.url;
+    previewImg.onerror = () => {
+      previewImg.src = apiUrl('/default_item_icon.png');
+    };
+  }
+
+  // Update selected class across both lists
+  document.querySelectorAll('.icon-sug-card').forEach(c => {
+    const titleEl = c.querySelector('.icon-sug-title');
+    c.classList.toggle('selected', titleEl && titleEl.textContent === sug.title);
+  });
+
+  const statusEl = document.getElementById('modal-icon-suggestions-status');
+  if (statusEl && !isAuto) {
+    statusEl.textContent = `已选用: ${sug.title}`;
+  }
+
+  const urlInput = document.getElementById('icon-url-input');
+  if (urlInput && sug.url.startsWith('http')) {
+    urlInput.value = sug.url;
+  }
+}
+
+// --- Icon 4-Tab Editor ---
 function setIconModalTab(tabName) {
   state.activeIconTab = tabName;
   document.querySelectorAll('#modal-icon-tabs .icon-tab').forEach(b => {
@@ -2889,6 +3068,9 @@ function setIconModalTab(tabName) {
 
   if (tabName === 'lib' || tabName === 'upload') {
     renderIconLibraryGrid('modal');
+  } else if (tabName === 'recommend') {
+    const kw = document.getElementById('icon-recommend-search-input')?.value?.trim();
+    fetchAndRenderIconSuggestions(kw);
   }
 }
 
@@ -3664,6 +3846,24 @@ function initIconEditor() {
     fileInput.addEventListener('change', () => handleUploadLibraryIcon('modal', fileInput));
   }
 
+  const btnRecSearch = document.getElementById('btn-icon-recommend-search');
+  if (btnRecSearch) {
+    btnRecSearch.addEventListener('click', () => {
+      const kw = document.getElementById('icon-recommend-search-input')?.value?.trim();
+      fetchAndRenderIconSuggestions(kw);
+    });
+  }
+
+  const inputRecSearch = document.getElementById('icon-recommend-search-input');
+  if (inputRecSearch) {
+    inputRecSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        fetchAndRenderIconSuggestions(inputRecSearch.value.trim());
+      }
+    });
+  }
+
   const textInput = document.getElementById('icon-text-input');
   if (textInput) {
     textInput.addEventListener('input', renderTextIconCanvas);
@@ -4365,6 +4565,7 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   }
   collapseIconPicker('modal');
   saveIconSnapshot('modal');
+  triggerIconSuggestions(50);
   openModal('modal-desktop-item');
   saveDesktopItemFormSnapshot();
 }
@@ -4467,6 +4668,7 @@ function openCreateDesktopModalFromWatchcow(id) {
 
   collapseIconPicker('modal');
   saveIconSnapshot('modal');
+  triggerIconSuggestions(50);
   openModal('modal-desktop-item');
   saveDesktopItemFormSnapshot();
 }
@@ -4642,6 +4844,7 @@ function openEditDesktopModal(id) {
 
   collapseIconPicker('modal');
   saveIconSnapshot('modal');
+  triggerIconSuggestions(50);
   openModal('modal-desktop-item');
   saveDesktopItemFormSnapshot();
 }
@@ -5242,7 +5445,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.81';
+      const ver = state.settings?.version || '1.1.82';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

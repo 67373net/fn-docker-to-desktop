@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.81">
+  <link rel="stylesheet" href="style.css?v=1.1.82">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -511,7 +511,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.81</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.82</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -730,15 +730,27 @@
                 <div class="icon-picker-expanded" id="modal-icon-picker-expanded" style="display: none;">
                   <div class="icon-picker-expanded-header">
                     <div class="icon-tabs" id="modal-icon-tabs">
-                      <button type="button" class="icon-tab active" data-icon-tab="text">文字图标</button>
+                      <button type="button" class="icon-tab active" data-icon-tab="recommend">网络推荐</button>
+                      <button type="button" class="icon-tab" data-icon-tab="text">文字图标</button>
                       <button type="button" class="icon-tab" data-icon-tab="url">网络图标</button>
                       <button type="button" class="icon-tab" data-icon-tab="lib">选择或上传</button>
                     </div>
                     <button type="button" class="btn btn-sm btn-link btn-icon-collapse" id="modal-btn-collapse-icon" title="收起编辑">收起</button>
                   </div>
 
+                  <!-- Tab Pane 0: 网络推荐 -->
+                  <div class="icon-tab-pane active" id="icon-pane-recommend">
+                    <div class="icon-recommend-search-row">
+                      <input type="text" id="icon-recommend-search-input" class="form-input" placeholder="输入关键词搜索官方图标（如 emby, alist, qbittorrent）">
+                      <button type="button" class="btn btn-secondary btn-sm" id="btn-icon-recommend-search">搜索</button>
+                    </div>
+                    <div class="icon-recommend-grid" id="modal-icon-recommend-grid">
+                      <div class="icon-recommend-empty">输入服务名称或上方搜索即可匹配网络图标</div>
+                    </div>
+                  </div>
+
                   <!-- Tab Pane 1: 文字图标 -->
-                  <div class="icon-tab-pane active" id="icon-pane-text">
+                  <div class="icon-tab-pane" id="icon-pane-text">
                     <div class="form-group" style="margin-bottom: 8px;">
                       <textarea id="icon-text-input" class="form-input" rows="2" placeholder="输入图标文字，支持换行（如 NAS 或 监控&#10;服务）" style="resize: vertical; min-height: 54px;"></textarea>
                     </div>
@@ -842,6 +854,18 @@
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- Dynamic Network Icon Suggestions -->
+            <div class="icon-suggestions-box" id="modal-icon-suggestions-box" style="display: none;">
+              <div class="icon-suggestions-header">
+                <div class="icon-suggestions-title">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                  <span>网络推荐图标</span>
+                </div>
+                <span class="icon-suggestions-status" id="modal-icon-suggestions-status"></span>
+              </div>
+              <div class="icon-suggestions-list" id="modal-icon-suggestions-list"></div>
             </div>
           </div>
 
@@ -1058,6 +1082,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.81"></script>
+  <script src="app.js?v=1.1.82"></script>
 </body>
 </html>

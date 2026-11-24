@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -175,6 +176,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ports/available", h.handleGetAvailablePort)
 
 	mux.HandleFunc("GET /api/icons", h.handleGetIcons)
+	mux.HandleFunc("GET /api/icons/suggest", h.handleSuggestIcons)
 	mux.HandleFunc("POST /api/icons/upload", h.handleUploadIcon)
 	mux.HandleFunc("DELETE /api/icons", h.handleDeleteIcon)
 	mux.HandleFunc("DELETE /api/icons/{filename...}", h.handleDeleteIcon)
@@ -1613,6 +1615,134 @@ func (h *Handler) handleGetIcons(w http.ResponseWriter, r *http.Request) {
 		list = []IconInfo{}
 	}
 	h.jsonResponse(w, r, list, http.StatusOK)
+}
+
+// IconSuggestion represents an icon suggestion candidate from homarr, favicon, domain, or local library
+type IconSuggestion struct {
+	ID     string `json:"id"`
+	Source string `json:"source"` // "homarr", "favicon", "domain", "local"
+	Badge  string `json:"badge"`  // "官方", "站点", "域名", "本地"
+	Name   string `json:"name"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+}
+
+// /api/icons/suggest
+func (h *Handler) handleSuggestIcons(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	image := strings.TrimSpace(r.URL.Query().Get("image"))
+	targetURL := strings.TrimSpace(r.URL.Query().Get("url"))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	var suggestions []IconSuggestion
+	seenURLs := make(map[string]bool)
+
+	// 1. Homarr / Dashboard Icons
+	var rawCandidates []string
+	if name != "" {
+		rawCandidates = append(rawCandidates, desktop.GetIconCandidates(name)...)
+	}
+	if image != "" {
+		rawCandidates = append(rawCandidates, desktop.GetIconCandidates(image)...)
+	}
+
+	seenNames := make(map[string]bool)
+	for _, c := range rawCandidates {
+		c = strings.TrimSpace(strings.ToLower(c))
+		if c == "" || seenNames[c] {
+			continue
+		}
+		seenNames[c] = true
+		cdnURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", c)
+		if !seenURLs[cdnURL] {
+			seenURLs[cdnURL] = true
+			suggestions = append(suggestions, IconSuggestion{
+				ID:     "homarr-" + c,
+				Source: "homarr",
+				Badge:  "官方",
+				Name:   c,
+				Title:  c,
+				URL:    cdnURL,
+			})
+		}
+	}
+
+	// 2. Target Service Favicon
+	if targetURL != "" {
+		if faviconDataURL, err := desktop.FetchFaviconFromURL(ctx, targetURL); err == nil && faviconDataURL != "" {
+			if !seenURLs[faviconDataURL] {
+				seenURLs[faviconDataURL] = true
+				suggestions = append(suggestions, IconSuggestion{
+					ID:     "favicon-site",
+					Source: "favicon",
+					Badge:  "站点",
+					Name:   "favicon",
+					Title:  "站点图标 (Favicon)",
+					URL:    faviconDataURL,
+				})
+			}
+		}
+
+		// 3. Domain Favicon for public hostnames
+		if u, err := url.Parse(targetURL); err == nil && u.Hostname() != "" {
+			host := strings.ToLower(u.Hostname())
+			ip := net.ParseIP(host)
+			if ip == nil && host != "localhost" && strings.Contains(host, ".") {
+				ddgURL := fmt.Sprintf("https://icons.duckduckgo.com/ip3/%s.ico", host)
+				if !seenURLs[ddgURL] {
+					seenURLs[ddgURL] = true
+					suggestions = append(suggestions, IconSuggestion{
+						ID:     "domain-" + host,
+						Source: "domain",
+						Badge:  "域名",
+						Name:   host,
+						Title:  host,
+						URL:    ddgURL,
+					})
+				}
+			}
+		}
+	}
+
+	// 4. Local icons matching keywords
+	if h.iconsDir != "" && len(seenNames) > 0 {
+		if entries, err := os.ReadDir(h.iconsDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+					continue
+				}
+				lowerName := strings.ToLower(entry.Name())
+				for candidate := range seenNames {
+					if strings.Contains(lowerName, candidate) {
+						localURL := "/icons/" + entry.Name()
+						if !seenURLs[localURL] {
+							seenURLs[localURL] = true
+							suggestions = append(suggestions, IconSuggestion{
+								ID:     "local-" + entry.Name(),
+								Source: "local",
+								Badge:  "本地",
+								Name:   entry.Name(),
+								Title:  entry.Name(),
+								URL:    localURL,
+							})
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if suggestions == nil {
+		suggestions = []IconSuggestion{}
+	}
+
+	h.jsonResponse(w, r, map[string]interface{}{
+		"query":       name,
+		"suggestions": suggestions,
+	}, http.StatusOK)
 }
 
 // DELETE /api/icons or /api/icons/{filename...}

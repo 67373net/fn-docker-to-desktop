@@ -150,3 +150,41 @@ func TestPersistItemIcon(t *testing.T) {
 		t.Fatalf("expected PersistItemIcon to return false when already persisted")
 	}
 }
+
+func TestGetIconCandidates(t *testing.T) {
+	candidates := GetIconCandidates("linuxserver/qbittorrent:latest")
+	found := false
+	for _, c := range candidates {
+		if c == "qbittorrent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected qbittorrent in candidates, got %v", candidates)
+	}
+
+	chineseCandidates := GetIconCandidates("青龙面板下载站")
+	foundQinglong := false
+	for _, c := range chineseCandidates {
+		if c == "qinglong" {
+			foundQinglong = true
+			break
+		}
+	}
+	if !foundQinglong {
+		t.Errorf("expected qinglong in candidates, got %v", chineseCandidates)
+	}
+
+	mixedCandidates := GetIconCandidates("我的Alist网盘")
+	foundAlist := false
+	for _, c := range mixedCandidates {
+		if c == "alist" {
+			foundAlist = true
+			break
+		}
+	}
+	if !foundAlist {
+		t.Errorf("expected alist in candidates, got %v", mixedCandidates)
+	}
+}
