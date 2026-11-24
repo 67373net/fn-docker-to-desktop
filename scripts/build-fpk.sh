@@ -125,17 +125,25 @@ echo "--> 正在打包 .fpk 安装文件..."
 FPK_VERSIONED="${ROOT_DIR}/${APP_NAME}_${VERSION}_${ARCH_TAG}.fpk"
 FPK_ALIAS="${ROOT_DIR}/${APP_NAME}-${ARCH_TAG}.fpk"
 
-if command -v fnpack >/dev/null 2>&1; then
-  cd "${FNOS_APP_DIR}"
-  fnpack build
-  mv "${APP_NAME}.fpk" "${FPK_VERSIONED}"
-  cp -f "${FPK_VERSIONED}" "${FPK_ALIAS}"
-elif [ -x "/tmp/fnpack" ]; then
-  cd "${FNOS_APP_DIR}"
-  /tmp/fnpack build
-  mv "${APP_NAME}.fpk" "${FPK_VERSIONED}"
-  cp -f "${FPK_VERSIONED}" "${FPK_ALIAS}"
-else
+PACK_SUCCESS=0
+if [ "${ARCH_MODE}" != "all" ]; then
+  FNPACK_BIN=""
+  if command -v fnpack >/dev/null 2>&1; then
+    FNPACK_BIN="fnpack"
+  elif [ -x "/tmp/fnpack" ]; then
+    FNPACK_BIN="/tmp/fnpack"
+  fi
+
+  if [ -n "${FNPACK_BIN}" ]; then
+    echo "--> 尝试使用官方 fnpack 工具打包..."
+    (
+      cd "${FNOS_APP_DIR}"
+      "${FNPACK_BIN}" build && mv "${APP_NAME}.fpk" "${FPK_VERSIONED}" && cp -f "${FPK_VERSIONED}" "${FPK_ALIAS}"
+    ) && PACK_SUCCESS=1 || echo "--> fnpack 打包未完成，自动无缝切换至官方规范标准打包流程..."
+  fi
+fi
+
+if [ "${PACK_SUCCESS}" -eq 0 ]; then
   echo "--> 正在构建符合飞牛官方规范的 app.tgz 与校验和..."
   TMP_BUILD_DIR=$(mktemp -d)
   trap 'rm -rf "${TMP_BUILD_DIR}"' EXIT
