@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.85';
+  const ver = state.settings?.version || '1.1.86';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1142,24 +1142,31 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           }
         }
 
+        if (btn) {
+          btn.textContent = '一键更新';
+          btn.classList.remove('btn-secondary');
+          btn.classList.add('btn-primary');
+          btn.disabled = false;
+        }
+        const offlineDlBtn = document.getElementById('btn-download-update-fpk');
+        if (offlineDlBtn && data.download_url) {
+          offlineDlBtn.href = data.download_url;
+        }
+
         if (triggerDownload) {
-          if (data.download_url) {
-            const dlLink = document.createElement('a');
-            dlLink.href = data.download_url;
-            dlLink.target = '_blank';
-            dlLink.rel = 'noopener noreferrer';
-            document.body.appendChild(dlLink);
-            dlLink.click();
-            dlLink.remove();
-          } else {
-            showToast('未找到安装包下载链接', 'warn');
-          }
+          startSelfUpdate();
         } else if (force) {
           showToast(`已检查更新：最新版本为 v${data.latest_version}`, 'info');
         }
       } else {
         if (dot) dot.style.display = 'none';
         if (card) card.style.display = 'none';
+        if (btn) {
+          btn.textContent = '检查更新';
+          btn.classList.remove('btn-primary');
+          btn.classList.add('btn-secondary');
+          btn.disabled = false;
+        }
         if (badge) {
           badge.style.display = 'inline-flex';
           if (data.error) {
@@ -1173,7 +1180,7 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           }
         }
         if (triggerDownload) {
-          showToast('已是最新版，无需下载', 'info');
+          showToast('已是最新版，无需更新', 'info');
         } else if (force) {
           if (data.error) {
             showToast(data.error, 'warn');
@@ -1212,7 +1219,7 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
     if (btn) {
       btn.disabled = false;
       if (updateCheckResult && updateCheckResult.has_update) {
-        btn.textContent = '从 github 下载安装包';
+        btn.textContent = '一键更新';
         btn.classList.remove('btn-secondary');
         btn.classList.add('btn-primary');
       } else {
@@ -1224,12 +1231,211 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
   }
 }
 
+// --- Self Update State and Functions ---
+let selfUpdatePollTimer = null;
+let isUpdating = false;
+let lastSelfUpdateState = 'idle';
+
+async function startSelfUpdate() {
+  if (isUpdating && lastSelfUpdateState !== 'error') {
+    openModal('modal-self-update');
+    return;
+  }
+  if (!updateCheckResult || !updateCheckResult.has_update) {
+    showToast('暂无可用新版本', 'info');
+    return;
+  }
+
+  const dlUrl = updateCheckResult.download_url || '';
+  const targetVer = updateCheckResult.latest_version || '';
+
+  const badgeEl = document.getElementById('self-update-target-badge');
+  const fillEl = document.getElementById('self-update-progress-fill');
+  const statusEl = document.getElementById('self-update-status-text');
+  const metricsEl = document.getElementById('self-update-metrics-text');
+  const errorBox = document.getElementById('self-update-error-box');
+  const cancelBtn = document.getElementById('btn-self-update-cancel');
+  const retryBtn = document.getElementById('btn-self-update-retry');
+  const closeBtn = document.getElementById('btn-self-update-close');
+  const closeX = document.getElementById('btn-close-self-update-x');
+
+  if (badgeEl) badgeEl.textContent = 'v' + targetVer;
+  if (fillEl) fillEl.style.width = '0%';
+  if (statusEl) statusEl.textContent = '正在连接服务器准备更新...';
+  if (metricsEl) metricsEl.textContent = '0 B/s · 0%';
+  if (errorBox) errorBox.style.display = 'none';
+  if (cancelBtn) {
+    cancelBtn.style.display = 'inline-block';
+    cancelBtn.disabled = false;
+  }
+  if (retryBtn) retryBtn.style.display = 'none';
+  if (closeBtn) closeBtn.style.display = 'none';
+  if (closeX) closeX.style.display = 'inline-flex';
+
+  openModal('modal-self-update');
+  isUpdating = true;
+  lastSelfUpdateState = 'downloading';
+
+  try {
+    const res = await fetch(apiUrl('/api/system/self-update'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ download_url: dlUrl, version: targetVer }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '启动更新任务失败');
+    }
+  } catch (err) {
+    isUpdating = false;
+    lastSelfUpdateState = 'error';
+    if (statusEl) statusEl.textContent = '更新任务启动失败';
+    if (errorBox) {
+      errorBox.style.display = 'block';
+      const errText = document.getElementById('self-update-error-text');
+      if (errText) errText.textContent = err.message || '启动更新失败';
+      const manualLink = document.getElementById('self-update-manual-link');
+      if (manualLink && dlUrl) manualLink.href = dlUrl;
+    }
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    if (retryBtn) retryBtn.style.display = 'inline-block';
+    if (closeBtn) closeBtn.style.display = 'inline-block';
+    return;
+  }
+
+  if (selfUpdatePollTimer) clearInterval(selfUpdatePollTimer);
+  let disconnectCount = 0;
+
+  selfUpdatePollTimer = setInterval(async () => {
+    try {
+      const sRes = await fetch(apiUrl('/api/system/self-update/status?t=' + Date.now()), { cache: 'no-store' });
+      if (sRes.ok) {
+        disconnectCount = 0;
+        const st = await sRes.json();
+        lastSelfUpdateState = st.state;
+
+        if (st.state === 'downloading') {
+          const prog = Math.min(100, Math.max(0, st.progress || 0));
+          if (fillEl) fillEl.style.width = prog + '%';
+          if (statusEl) statusEl.textContent = st.message || '正在下载安装包...';
+          if (metricsEl) metricsEl.textContent = `${st.speed || '0 B/s'} · ${Math.round(prog)}%`;
+        } else if (st.state === 'installing') {
+          if (fillEl) fillEl.style.width = '100%';
+          if (statusEl) statusEl.textContent = st.message || '下载完成，正在执行飞牛应用中心安装...';
+          if (metricsEl) metricsEl.textContent = '正在安装...';
+          if (cancelBtn) cancelBtn.disabled = true;
+          if (closeX) closeX.style.display = 'none';
+        } else if (st.state === 'restarting') {
+          if (fillEl) fillEl.style.width = '100%';
+          if (statusEl) statusEl.textContent = '安装完成，服务正在重启并重新连接...';
+          if (metricsEl) metricsEl.textContent = '重启中...';
+          if (cancelBtn) cancelBtn.disabled = true;
+          if (closeX) closeX.style.display = 'none';
+          clearInterval(selfUpdatePollTimer);
+          selfUpdatePollTimer = null;
+          pollReconnectAndReload(targetVer);
+        } else if (st.state === 'success') {
+          if (fillEl) fillEl.style.width = '100%';
+          if (statusEl) statusEl.textContent = '更新成功！正在刷新页面...';
+          if (metricsEl) metricsEl.textContent = '100%';
+          clearInterval(selfUpdatePollTimer);
+          selfUpdatePollTimer = null;
+          isUpdating = false;
+          setTimeout(() => location.reload(), 1200);
+        } else if (st.state === 'error') {
+          clearInterval(selfUpdatePollTimer);
+          selfUpdatePollTimer = null;
+          isUpdating = false;
+          if (statusEl) statusEl.textContent = '更新过程出现异常';
+          if (errorBox) {
+            errorBox.style.display = 'block';
+            const errText = document.getElementById('self-update-error-text');
+            if (errText) errText.textContent = st.error || st.message || '安装更新失败';
+            const manualLink = document.getElementById('self-update-manual-link');
+            if (manualLink && dlUrl) manualLink.href = dlUrl;
+          }
+          if (cancelBtn) cancelBtn.style.display = 'none';
+          if (retryBtn) retryBtn.style.display = 'inline-block';
+          if (closeBtn) closeBtn.style.display = 'inline-block';
+          if (closeX) closeX.style.display = 'inline-flex';
+        } else if (st.state === 'cancelled') {
+          clearInterval(selfUpdatePollTimer);
+          selfUpdatePollTimer = null;
+          isUpdating = false;
+          closeModal('modal-self-update');
+          showToast('已取消更新', 'info');
+        }
+      }
+    } catch (e) {
+      disconnectCount++;
+      if (lastSelfUpdateState === 'installing' || lastSelfUpdateState === 'restarting' || disconnectCount >= 3) {
+        if (statusEl) statusEl.textContent = '服务正在重启，正在重新连接...';
+        if (metricsEl) metricsEl.textContent = '连接中...';
+        if (cancelBtn) cancelBtn.disabled = true;
+        if (closeX) closeX.style.display = 'none';
+        clearInterval(selfUpdatePollTimer);
+        selfUpdatePollTimer = null;
+        pollReconnectAndReload(targetVer);
+      }
+    }
+  }, 500);
+}
+
+function pollReconnectAndReload(targetVer) {
+  const statusEl = document.getElementById('self-update-status-text');
+  const metricsEl = document.getElementById('self-update-metrics-text');
+  const closeBtn = document.getElementById('btn-self-update-close');
+  const startTime = Date.now();
+
+  const timer = setInterval(async () => {
+    try {
+      const res = await fetch(apiUrl('/api/system/version-check?t=' + Date.now()), { cache: 'no-store' });
+      if (res.ok) {
+        clearInterval(timer);
+        isUpdating = false;
+        if (statusEl) statusEl.textContent = '更新完成，正在进入新版本...';
+        if (metricsEl) metricsEl.textContent = '100%';
+        setTimeout(() => {
+          location.reload();
+        }, 1000);
+        return;
+      }
+    } catch (e) {
+      // Server still restarting, keep waiting
+    }
+
+    if (Date.now() - startTime > 90000) {
+      clearInterval(timer);
+      isUpdating = false;
+      if (statusEl) statusEl.textContent = '服务重启等待超时，请稍后手动刷新网页';
+      if (closeBtn) closeBtn.style.display = 'inline-block';
+    }
+  }, 1500);
+}
+
+async function cancelSelfUpdate() {
+  const cancelBtn = document.getElementById('btn-self-update-cancel');
+  if (cancelBtn) cancelBtn.disabled = true;
+  try {
+    await fetch(apiUrl('/api/system/self-update/cancel'), { method: 'POST' });
+  } catch (e) {
+    // ignore
+  }
+  if (selfUpdatePollTimer) {
+    clearInterval(selfUpdatePollTimer);
+    selfUpdatePollTimer = null;
+  }
+  isUpdating = false;
+  closeModal('modal-self-update');
+  showToast('已取消更新', 'info');
+}
+
 function updateSettingsForm() {
   const portalName = '把 Docker 放到桌面';
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.85';
+  const ver = state.settings?.version || '1.1.86';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5445,7 +5651,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.85';
+      const ver = state.settings?.version || '1.1.86';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
@@ -6311,8 +6517,50 @@ function initApp() {
   const btnCheckUpdate = document.getElementById('btn-check-update');
   if (btnCheckUpdate) {
     btnCheckUpdate.addEventListener('click', () => {
-      const isDownload = !!(updateCheckResult && updateCheckResult.has_update);
-      checkAppUpdate(true, isDownload);
+      if (updateCheckResult && updateCheckResult.has_update) {
+        startSelfUpdate();
+      } else {
+        checkAppUpdate(true, false);
+      }
+    });
+  }
+
+  const btnStartSelfUpdate = document.getElementById('btn-start-self-update');
+  if (btnStartSelfUpdate) {
+    btnStartSelfUpdate.addEventListener('click', () => {
+      startSelfUpdate();
+    });
+  }
+
+  const btnCancelSelfUpdate = document.getElementById('btn-self-update-cancel');
+  if (btnCancelSelfUpdate) {
+    btnCancelSelfUpdate.addEventListener('click', () => {
+      cancelSelfUpdate();
+    });
+  }
+
+  const btnCloseSelfUpdateX = document.getElementById('btn-close-self-update-x');
+  if (btnCloseSelfUpdateX) {
+    btnCloseSelfUpdateX.addEventListener('click', () => {
+      if (isUpdating && lastSelfUpdateState === 'downloading') {
+        cancelSelfUpdate();
+      } else if (!isUpdating || lastSelfUpdateState === 'error') {
+        closeModal('modal-self-update');
+      }
+    });
+  }
+
+  const btnCloseSelfUpdate = document.getElementById('btn-self-update-close');
+  if (btnCloseSelfUpdate) {
+    btnCloseSelfUpdate.addEventListener('click', () => {
+      closeModal('modal-self-update');
+    });
+  }
+
+  const btnRetrySelfUpdate = document.getElementById('btn-self-update-retry');
+  if (btnRetrySelfUpdate) {
+    btnRetrySelfUpdate.addEventListener('click', () => {
+      startSelfUpdate();
     });
   }
 

@@ -164,6 +164,14 @@ func (i *Installer) HasCLI() bool {
 	return i.hasAppcenterCLI
 }
 
+// GetCLIPath returns the detected appcenter-cli binary path.
+func (i *Installer) GetCLIPath() string {
+	if i == nil {
+		return ""
+	}
+	return i.cliPath
+}
+
 func findAppcenterCLI() (string, bool) {
 	paths := []string{
 		"/var/apps/appcenter/target/bin/appcenter-cli",

@@ -25,6 +25,7 @@ import (
 	"fn-docker-to-desktop/internal/monitor"
 	"fn-docker-to-desktop/internal/proxy"
 	"fn-docker-to-desktop/internal/remote"
+	"fn-docker-to-desktop/internal/updater"
 )
 
 func TestHandleExportDesktopItems(t *testing.T) {
@@ -507,7 +508,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 
 	mux := http.NewServeMux()
@@ -622,7 +623,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -700,12 +701,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.85",
-		LatestVersion:  "1.1.85",
+		CurrentVersion: "1.1.86",
+		LatestVersion:  "1.1.86",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -728,8 +729,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.85" {
-		t.Errorf("Expected current version 1.1.85, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.86" {
+		t.Errorf("Expected current version 1.1.86, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -818,7 +819,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.85",
+		AppVersion:    "1.1.86",
 	})
 
 	mux := http.NewServeMux()
@@ -894,7 +895,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 
 	mux := http.NewServeMux()
@@ -956,7 +957,7 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 		ProxyMgr:   proxyMgr,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 
 	// Check conflict: checking item.Port for its own item.ID should return nil (NO conflict)
@@ -982,7 +983,7 @@ func TestHandleSuggestIcons(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.85",
+		AppVersion: "1.1.86",
 	})
 	_ = os.MkdirAll(filepath.Join(tempDir, "icons"), 0755)
 
@@ -1023,7 +1024,7 @@ func TestHandleSuggestIcons(t *testing.T) {
 
 func TestVersionCheckAssetMatchingPriority(t *testing.T) {
 	// Test matching priorities
-	latestTag := "1.1.85"
+	latestTag := "1.1.86"
 	arch := "x86"
 
 	targetAssetVersioned := fmt.Sprintf("fn-docker-to-desktop_%s_%s.fpk", latestTag, arch)
@@ -1120,6 +1121,55 @@ func TestVersionCheckAssetMatchingPriority(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfUpdateEndpoints(t *testing.T) {
+	handler := &Handler{
+		appVersion: "1.1.86",
+		updater:    updater.NewUpdater(""),
+	}
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. Check initial status
+	req := httptest.NewRequest("GET", "/api/system/self-update/status", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var status updater.UpdateStatus
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("failed decoding status: %v", err)
+	}
+	if status.State != "idle" {
+		t.Errorf("expected idle state, got %s", status.State)
+	}
+
+	// 2. Test start update without URL and without cache
+	req = httptest.NewRequest("POST", "/api/system/self-update", strings.NewReader(`{}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty update url, got %d", rec.Code)
+	}
+
+	// 3. Test cancel update
+	req = httptest.NewRequest("POST", "/api/system/self-update/cancel", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for cancel, got %d", rec.Code)
+	}
+}
+
 
 
 

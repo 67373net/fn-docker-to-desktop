@@ -37,6 +37,7 @@ import (
 	"fn-docker-to-desktop/internal/monitor"
 	"fn-docker-to-desktop/internal/proxy"
 	"fn-docker-to-desktop/internal/remote"
+	"fn-docker-to-desktop/internal/updater"
 )
 
 // Handler handles all HTTP API requests.
@@ -63,6 +64,7 @@ type Handler struct {
 	versionCheckMu      sync.Mutex
 	versionCheckCached  *VersionCheckResponse
 	versionCheckExp     time.Time
+	updater             *updater.Updater
 }
 
 // Config holds configuration to instantiate API Handler.
@@ -112,6 +114,12 @@ func NewHandler(cfg Config) *Handler {
 		cfg.ProxyMgr.SetDialContext(smartDialer.DialContext)
 	}
 
+	var cliPath string
+	if cfg.Installer != nil {
+		cliPath = cfg.Installer.GetCLIPath()
+	}
+	upd := updater.NewUpdater(cliPath)
+
 	return &Handler{
 		storage:        cfg.Storage,
 		installer:      cfg.Installer,
@@ -128,6 +136,7 @@ func NewHandler(cfg Config) *Handler {
 		remoteSSH:      remoteSSH,
 		remoteLAN:      remoteLAN,
 		smartDialer:    smartDialer,
+		updater:        upd,
 	}
 }
 
@@ -147,6 +156,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/processes", h.handleGetProcesses)
 	mux.HandleFunc("GET /api/system", h.handleGetSystem)
 	mux.HandleFunc("GET /api/system/version-check", h.handleCheckUpdate)
+	mux.HandleFunc("POST /api/system/self-update", h.handleSelfUpdate)
+	mux.HandleFunc("GET /api/system/self-update/status", h.handleSelfUpdateStatus)
+	mux.HandleFunc("POST /api/system/self-update/cancel", h.handleSelfUpdateCancel)
 	mux.HandleFunc("GET /api/host", h.handleGetHost)
 	mux.HandleFunc("GET /api/events", h.handleEvents)
 
@@ -3567,4 +3579,78 @@ func (h *Handler) handleTriggerLANScan(w http.ResponseWriter, r *http.Request) {
 	h.remoteLAN.TriggerScan()
 	h.jsonResponse(w, r, map[string]string{"status": "scanning_started"}, http.StatusOK)
 }
+
+type SelfUpdateRequest struct {
+	DownloadURL string `json:"download_url"`
+	Version     string `json:"version"`
+}
+
+func (h *Handler) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	var req SelfUpdateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	downloadURL := strings.TrimSpace(req.DownloadURL)
+	version := strings.TrimSpace(req.Version)
+
+	if downloadURL == "" {
+		h.versionCheckMu.Lock()
+		cached := h.versionCheckCached
+		h.versionCheckMu.Unlock()
+		if cached != nil && cached.DownloadURL != "" {
+			downloadURL = cached.DownloadURL
+			if version == "" {
+				version = cached.LatestVersion
+			}
+		}
+	}
+
+	if downloadURL == "" {
+		h.jsonResponse(w, r, map[string]string{"error": "未提供安装包下载地址且未能自动检测到可用版本"}, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.updater.StartUpdate(downloadURL, version); err != nil {
+		h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	h.jsonResponse(w, r, map[string]interface{}{
+		"success": true,
+		"message": "更新任务已启动",
+	}, http.StatusOK)
+}
+
+func (h *Handler) handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+	st := h.updater.GetStatus()
+	h.jsonResponse(w, r, st, http.StatusOK)
+}
+
+func (h *Handler) handleSelfUpdateCancel(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuth(r) {
+		h.jsonResponse(w, r, map[string]string{"error": "unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+	h.updater.Cancel()
+	h.jsonResponse(w, r, map[string]interface{}{
+		"success": true,
+		"message": "已取消更新",
+	}, http.StatusOK)
+}
+
+// GetUpdater returns the updater instance (used in tests).
+func (h *Handler) GetUpdater() *updater.Updater {
+	return h.updater
+}
+
 
