@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.83';
+  const ver = state.settings?.version || '1.1.84';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1140,6 +1140,27 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
           if (changelogEl) {
             changelogEl.textContent = (data.release_notes || '').trim() || '暂无更新日志说明';
           }
+          const linkArch = document.getElementById('update-dl-link-arch');
+          if (linkArch) {
+            if (data.download_url) {
+              linkArch.href = data.download_url;
+              const archName = (data.arch || '').toUpperCase();
+              linkArch.textContent = `下载 ${archName} 专属安装包 (v${data.latest_version})`;
+              linkArch.style.display = 'inline';
+            } else {
+              linkArch.style.display = 'none';
+            }
+          }
+          const linkUni = document.getElementById('update-dl-link-universal');
+          if (linkUni) {
+            if (data.universal_url) {
+              linkUni.href = data.universal_url;
+              linkUni.textContent = `下载全架构通用包 all.fpk (v${data.latest_version})`;
+              linkUni.style.display = 'inline';
+            } else {
+              linkUni.style.display = 'none';
+            }
+          }
         }
 
         if (triggerDownload) {
@@ -1229,7 +1250,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.83';
+  const ver = state.settings?.version || '1.1.84';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5445,7 +5466,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.83';
+      const ver = state.settings?.version || '1.1.84';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

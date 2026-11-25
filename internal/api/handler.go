@@ -2972,6 +2972,7 @@ type VersionCheckResponse struct {
 	HTMLURL        string `json:"html_url"`
 	Arch           string `json:"arch"`
 	DownloadURL    string `json:"download_url"`
+	UniversalURL   string `json:"universal_url,omitempty"`
 	AcceleratedURL string `json:"accelerated_url"`
 	CheckedAt      string `json:"checked_at"`
 	Error          string `json:"error,omitempty"`
@@ -3114,7 +3115,7 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Match download URL for host architecture
-	// Priorities:
+	// Priorities for DownloadURL:
 	// 1. Versioned package for host arch: fn-docker-to-desktop_<version>_<arch>.fpk
 	// 2. Versioned universal package: fn-docker-to-desktop_<version>_all.fpk
 	// 3. Legacy unversioned package for host arch: fn-docker-to-desktop-<arch>.fpk
@@ -3125,30 +3126,32 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	targetAssetLegacyUniversal := "fn-docker-to-desktop-all.fpk"
 
 	for _, asset := range ghRelease.Assets {
+		if asset.Name == targetAssetUniversal {
+			res.UniversalURL = asset.BrowserDownloadURL
+			break
+		}
+	}
+	if res.UniversalURL == "" {
+		for _, asset := range ghRelease.Assets {
+			if asset.Name == targetAssetLegacyUniversal {
+				res.UniversalURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+	}
+
+	for _, asset := range ghRelease.Assets {
 		if asset.Name == targetAssetVersioned {
 			res.DownloadURL = asset.BrowserDownloadURL
 			break
 		}
 	}
 	if res.DownloadURL == "" {
-		for _, asset := range ghRelease.Assets {
-			if asset.Name == targetAssetUniversal {
-				res.DownloadURL = asset.BrowserDownloadURL
-				break
-			}
-		}
+		res.DownloadURL = res.UniversalURL
 	}
 	if res.DownloadURL == "" {
 		for _, asset := range ghRelease.Assets {
 			if asset.Name == targetAssetLegacy {
-				res.DownloadURL = asset.BrowserDownloadURL
-				break
-			}
-		}
-	}
-	if res.DownloadURL == "" {
-		for _, asset := range ghRelease.Assets {
-			if asset.Name == targetAssetLegacyUniversal {
 				res.DownloadURL = asset.BrowserDownloadURL
 				break
 			}
