@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -45,8 +46,19 @@ type Updater struct {
 	execCommand func(name string, arg ...string) *exec.Cmd
 }
 
+// ErrAlreadyRunning indicates an update task is already actively in progress.
+var ErrAlreadyRunning = errors.New("更新任务已在进行中，请勿重复操作")
+
 // NewUpdater creates a new Updater instance.
 func NewUpdater(cliPath string) *Updater {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
 	return &Updater{
 		status: UpdateStatus{
 			State:   "idle",
@@ -58,7 +70,8 @@ func NewUpdater(cliPath string) *Updater {
 		scriptPath: "/tmp/fn-docker-to-desktop-upgrade.sh",
 		logPath:    "/tmp/fn-docker-to-desktop-upgrade.log",
 		httpClient: &http.Client{
-			Timeout: 30 * time.Minute,
+			Transport: transport,
+			Timeout:   10 * time.Minute,
 		},
 		execCommand: exec.Command,
 	}
@@ -126,8 +139,21 @@ func (u *Updater) StartUpdate(downloadURL, targetVersion string) error {
 
 	u.mu.Lock()
 	if u.status.State == "downloading" || u.status.State == "installing" {
-		u.mu.Unlock()
-		return errors.New("更新任务已在进行中，请勿重复操作")
+		// Allow recovery if the previous task has been stalled for more than 3 minutes
+		isStale := false
+		if u.status.UpdatedAt != "" {
+			if t, parseErr := time.Parse(time.RFC3339, u.status.UpdatedAt); parseErr == nil && time.Since(t) > 3*time.Minute {
+				isStale = true
+			}
+		}
+		if !isStale {
+			u.mu.Unlock()
+			return ErrAlreadyRunning
+		}
+		if u.cancelFunc != nil {
+			u.cancelFunc()
+			u.cancelFunc = nil
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

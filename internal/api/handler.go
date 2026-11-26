@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -3008,9 +3009,10 @@ type VersionCheckResponse struct {
 	Arch           string `json:"arch"`
 	DownloadURL    string `json:"download_url"`
 	UniversalURL   string `json:"universal_url,omitempty"`
-	AcceleratedURL string `json:"accelerated_url"`
-	CheckedAt      string `json:"checked_at"`
-	Error          string `json:"error,omitempty"`
+	AcceleratedURL      string `json:"accelerated_url"`
+	SelfUpdateSupported bool   `json:"self_update_supported"`
+	CheckedAt           string `json:"checked_at"`
+	Error               string `json:"error,omitempty"`
 }
 
 type ghReleaseAsset struct {
@@ -3089,9 +3091,10 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := VersionCheckResponse{
-		CurrentVersion: h.appVersion,
-		Arch:           arch,
-		CheckedAt:      time.Now().Format("2006-01-02 15:04:05"),
+		CurrentVersion:      h.appVersion,
+		Arch:                arch,
+		SelfUpdateSupported: h.updater != nil,
+		CheckedAt:           time.Now().Format("2006-01-02 15:04:05"),
 	}
 
 	client := &http.Client{
@@ -3640,6 +3643,14 @@ func (h *Handler) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.updater.StartUpdate(downloadURL, version); err != nil {
+		if errors.Is(err, updater.ErrAlreadyRunning) {
+			h.jsonResponse(w, r, map[string]interface{}{
+				"success":         true,
+				"already_running": true,
+				"message":         "更新任务正在进行中，已自动恢复进度监控",
+			}, http.StatusOK)
+			return
+		}
 		h.jsonResponse(w, r, map[string]string{"error": err.Error()}, http.StatusBadRequest)
 		return
 	}

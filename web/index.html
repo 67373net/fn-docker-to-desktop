@@ -10,7 +10,7 @@
     }
   </script>
   <link rel="icon" type="image/png" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=1.1.87">
+  <link rel="stylesheet" href="style.css?v=1.1.88">
 </head>
 <body>
   <!-- Prevent browser credential managers from misidentifying search boxes as username fields -->
@@ -517,7 +517,7 @@
       <div class="about-container">
         <div class="about-content">
           <div class="about-header-row">
-            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.87</span></h3>
+            <h3 class="about-md-h3" style="margin: 0;">把 Docker 放到桌面 <span id="about-app-version">v1.1.88</span></h3>
             <div class="version-check-bar" id="version-check-bar">
               <span class="version-status-badge" id="version-status-badge" style="display: none;" title="点击检查更新"></span>
               <button type="button" class="btn btn-sm btn-secondary" id="btn-check-update">检查更新</button>
@@ -526,17 +526,6 @@
 
           <!-- 新版本提示卡片 (检测到新版本时动态展示) -->
           <div class="update-notice-card" id="update-notice-card" style="display: none;">
-            <div class="update-guide-tip">
-              <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                <div>
-                  <strong>新版本就绪：</strong>支持在应用内一键在线自动更新，无需手动上传安装包。
-                </div>
-                <div style="display: flex; gap: 8px;">
-                  <button type="button" class="btn btn-sm btn-primary" id="btn-start-self-update">一键在线更新</button>
-                  <a href="#" class="btn btn-sm btn-secondary" id="btn-download-update-fpk" target="_blank" rel="noopener noreferrer">下载离线包</a>
-                </div>
-              </div>
-            </div>
             <div class="update-changelog-box">
               <div class="update-changelog-title">更新日志</div>
               <div class="update-changelog-body" id="update-changelog-body"></div>
@@ -1110,7 +1099,7 @@
         <div class="self-update-header-box" style="margin-bottom: 1rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
             <span style="font-weight: 600; font-size: 0.95rem;">把 Docker 放到桌面</span>
-            <span class="badge badge-primary" id="self-update-target-badge" style="font-size: 0.8rem; font-weight: 600;">v1.1.87</span>
+            <span class="badge badge-primary" id="self-update-target-badge" style="font-size: 0.8rem; font-weight: 600;">v1.1.88</span>
           </div>
           <div style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.5;">
             更新期间系统将自动下载对应架构的飞牛安装包，并由飞牛应用中心后台完成无缝升级与服务重启。
@@ -1143,6 +1132,7 @@
       </div>
       <div class="modal-footer" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 1rem 1.25rem 1.25rem 1.25rem;">
         <button type="button" class="btn btn-secondary" id="btn-self-update-cancel">取消</button>
+        <a href="#" class="btn btn-secondary" id="btn-self-update-offline-dl" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">下载离线安装包</a>
         <button type="button" class="btn btn-primary" id="btn-self-update-retry" style="display: none;">重试</button>
         <button type="button" class="btn btn-secondary" id="btn-self-update-close" style="display: none;">关闭</button>
       </div>
@@ -1152,6 +1142,6 @@
   <!-- Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.1.87"></script>
+  <script src="app.js?v=1.1.88"></script>
 </body>
 </html>

@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.87';
+  const ver = state.settings?.version || '1.1.88';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1234,9 +1234,25 @@ async function checkAppUpdate(force = false, triggerDownload = false) {
 // --- Self Update State and Functions ---
 let selfUpdatePollTimer = null;
 let isUpdating = false;
+let isStartingSelfUpdate = false;
 let lastSelfUpdateState = 'idle';
 
+function triggerOfflinePackageDownload(url) {
+  if (!url) {
+    showToast('未找到安装包下载链接', 'warn');
+    return;
+  }
+  const dlLink = document.createElement('a');
+  dlLink.href = url;
+  dlLink.target = '_blank';
+  dlLink.rel = 'noopener noreferrer';
+  document.body.appendChild(dlLink);
+  dlLink.click();
+  dlLink.remove();
+}
+
 async function startSelfUpdate() {
+  if (isStartingSelfUpdate) return;
   if (isUpdating && lastSelfUpdateState !== 'error') {
     openModal('modal-self-update');
     return;
@@ -1248,6 +1264,13 @@ async function startSelfUpdate() {
 
   const dlUrl = updateCheckResult.download_url || '';
   const targetVer = updateCheckResult.latest_version || '';
+  const curVer = updateCheckResult.current_version || state.settings?.version || '1.1.88';
+
+  // If current backend explicitly reports self-update is unsupported, fallback to offline download
+  if (updateCheckResult.self_update_supported === false) {
+    triggerOfflinePackageDownload(dlUrl);
+    return;
+  }
 
   const badgeEl = document.getElementById('self-update-target-badge');
   const fillEl = document.getElementById('self-update-progress-fill');
@@ -1255,11 +1278,12 @@ async function startSelfUpdate() {
   const metricsEl = document.getElementById('self-update-metrics-text');
   const errorBox = document.getElementById('self-update-error-box');
   const cancelBtn = document.getElementById('btn-self-update-cancel');
+  const offlineDlBtn = document.getElementById('btn-self-update-offline-dl');
   const retryBtn = document.getElementById('btn-self-update-retry');
   const closeBtn = document.getElementById('btn-self-update-close');
   const closeX = document.getElementById('btn-close-self-update-x');
 
-  if (badgeEl) badgeEl.textContent = 'v' + targetVer;
+  if (badgeEl) badgeEl.textContent = `v${curVer} -> v${targetVer}`;
   if (fillEl) fillEl.style.width = '0%';
   if (statusEl) statusEl.textContent = '正在连接服务器准备更新...';
   if (metricsEl) metricsEl.textContent = '0 B/s · 0%';
@@ -1268,12 +1292,21 @@ async function startSelfUpdate() {
     cancelBtn.style.display = 'inline-block';
     cancelBtn.disabled = false;
   }
+  if (offlineDlBtn) {
+    if (dlUrl) {
+      offlineDlBtn.href = dlUrl;
+      offlineDlBtn.style.display = 'inline-flex';
+    } else {
+      offlineDlBtn.style.display = 'none';
+    }
+  }
   if (retryBtn) retryBtn.style.display = 'none';
   if (closeBtn) closeBtn.style.display = 'none';
   if (closeX) closeX.style.display = 'inline-flex';
 
   openModal('modal-self-update');
   isUpdating = true;
+  isStartingSelfUpdate = true;
   lastSelfUpdateState = 'downloading';
 
   try {
@@ -1282,9 +1315,20 @@ async function startSelfUpdate() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ download_url: dlUrl, version: targetVer }),
     });
+    if (res.status === 404 || res.status === 405 || res.status === 501) {
+      // Running backend version does not support in-app self-update: fallback to offline download
+      isUpdating = false;
+      closeModal('modal-self-update');
+      triggerOfflinePackageDownload(dlUrl);
+      return;
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || '启动更新任务失败');
+      const errMsg = data.error || '启动更新任务失败';
+      // If backend says task is already running, attach to status polling instead of failing
+      if (!errMsg.includes('已在进行中')) {
+        throw new Error(errMsg);
+      }
     }
   } catch (err) {
     isUpdating = false;
@@ -1301,6 +1345,8 @@ async function startSelfUpdate() {
     if (retryBtn) retryBtn.style.display = 'inline-block';
     if (closeBtn) closeBtn.style.display = 'inline-block';
     return;
+  } finally {
+    isStartingSelfUpdate = false;
   }
 
   if (selfUpdatePollTimer) clearInterval(selfUpdatePollTimer);
@@ -1435,7 +1481,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.87';
+  const ver = state.settings?.version || '1.1.88';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -5749,7 +5795,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.87';
+      const ver = state.settings?.version || '1.1.88';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;
