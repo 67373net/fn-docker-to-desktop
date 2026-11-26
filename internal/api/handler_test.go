@@ -508,7 +508,7 @@ func TestWatchcowEndpoints(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 
 	mux := http.NewServeMux()
@@ -623,7 +623,7 @@ func TestDeleteIcon(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -701,12 +701,12 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 	// Pre-populate cache to simulate cached update response
 	handler.versionCheckCached = &VersionCheckResponse{
-		CurrentVersion: "1.1.86",
-		LatestVersion:  "1.1.86",
+		CurrentVersion: "1.1.87",
+		LatestVersion:  "1.1.87",
 		HasUpdate:      false,
 		Arch:           "x86",
 	}
@@ -729,8 +729,8 @@ func TestCheckUpdateEndpoint(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.CurrentVersion != "1.1.86" {
-		t.Errorf("Expected current version 1.1.86, got %s", resp.CurrentVersion)
+	if resp.CurrentVersion != "1.1.87" {
+		t.Errorf("Expected current version 1.1.87, got %s", resp.CurrentVersion)
 	}
 	if resp.HasUpdate != false {
 		t.Errorf("Expected has_update to be false")
@@ -819,7 +819,7 @@ func TestRemoteHostSaveDuplicateAndEmptyRevert(t *testing.T) {
 		DataDir:       tempDir,
 		RemoteStorage: remoteStore,
 		RemoteLAN:     lanScanner,
-		AppVersion:    "1.1.86",
+		AppVersion:    "1.1.87",
 	})
 
 	mux := http.NewServeMux()
@@ -895,7 +895,7 @@ func TestClearAllDesktopItems(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 
 	mux := http.NewServeMux()
@@ -957,7 +957,7 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 		ProxyMgr:   proxyMgr,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 
 	// Check conflict: checking item.Port for its own item.ID should return nil (NO conflict)
@@ -972,6 +972,10 @@ func TestUpdateProxyItemOwnPortNoConflict(t *testing.T) {
 }
 
 func TestHandleSuggestIcons(t *testing.T) {
+	desktop.SetHomarrIndexForTest(map[string]desktop.HomarrIconMeta{
+		"qbittorrent": {Base: "svg", Aliases: []string{"qbit"}},
+	}, 10*time.Minute)
+
 	tempDir, err := os.MkdirTemp("", "fn-suggest-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -983,7 +987,7 @@ func TestHandleSuggestIcons(t *testing.T) {
 		Storage:    storage,
 		AuthMgr:    auth.NewManager(""),
 		DataDir:    tempDir,
-		AppVersion: "1.1.86",
+		AppVersion: "1.1.87",
 	})
 	_ = os.MkdirAll(filepath.Join(tempDir, "icons"), 0755)
 
@@ -1024,7 +1028,7 @@ func TestHandleSuggestIcons(t *testing.T) {
 
 func TestVersionCheckAssetMatchingPriority(t *testing.T) {
 	// Test matching priorities
-	latestTag := "1.1.86"
+	latestTag := "1.1.87"
 	arch := "x86"
 
 	targetAssetVersioned := fmt.Sprintf("fn-docker-to-desktop_%s_%s.fpk", latestTag, arch)
@@ -1124,7 +1128,7 @@ func TestVersionCheckAssetMatchingPriority(t *testing.T) {
 
 func TestSelfUpdateEndpoints(t *testing.T) {
 	handler := &Handler{
-		appVersion: "1.1.86",
+		appVersion: "1.1.87",
 		updater:    updater.NewUpdater(""),
 	}
 

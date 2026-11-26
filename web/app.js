@@ -203,7 +203,7 @@ function openSubmitGitHubIssue() {
     return;
   }
 
-  const ver = state.settings?.version || '1.1.86';
+  const ver = state.settings?.version || '1.1.87';
   const actionPrefix = err.action ? `[${err.action}] ` : '';
   const issueTitle = `[Bug 报错] ${actionPrefix}${err.message}`.slice(0, 100);
 
@@ -1435,7 +1435,7 @@ function updateSettingsForm() {
   const elName = document.getElementById('setting-portal-name');
   if (elName) elName.value = portalName;
 
-  const ver = state.settings?.version || '1.1.86';
+  const ver = state.settings?.version || '1.1.87';
   const titleEl = document.getElementById('settings-card-title');
   if (titleEl) {
     titleEl.textContent = `v${ver} - 系统设置`;
@@ -3100,20 +3100,30 @@ function triggerIconSuggestions(delay = 350) {
 }
 
 function getDesktopModalTargetUrl() {
-  const mode = document.querySelector('input[name="item-mode"]:checked')?.value || 'proxy';
-  if (mode === 'proxy') {
-    const proto = document.getElementById('item-proxy-proto')?.value || 'http';
+  const mode = document.getElementById('item-mode')?.value || state.activeMode || 'local';
+  if (mode === 'local') {
+    const proto = document.getElementById('item-protocol')?.value || 'http';
+    const port = document.getElementById('item-local-port')?.value?.trim() || '';
+    const path = document.getElementById('item-path')?.value?.trim() || '';
+    if (!port) return '';
+    let cleanPath = path;
+    if (cleanPath && !cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+    return `${proto}://127.0.0.1:${port}${cleanPath}`;
+  } else if (mode === 'proxy') {
+    const proto = document.getElementById('item-proxy-protocol')?.value || 'http';
     const host = document.getElementById('item-proxy-host')?.value?.trim() || '';
-    const port = document.getElementById('item-proxy-port')?.value?.trim() || '';
+    const port = document.getElementById('item-proxy-target-port')?.value?.trim() || '';
     const path = document.getElementById('item-proxy-path')?.value?.trim() || '';
     if (!host) return '';
     let cleanPath = path;
     if (cleanPath && !cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
     return `${proto}://${host}${port ? ':' + port : ''}${cleanPath}`;
-  } else if (mode === 'redirect') {
-    return document.getElementById('item-url')?.value?.trim() || '';
   } else if (mode === 'shortcut') {
-    return document.getElementById('item-shortcut-url')?.value?.trim() || '';
+    let url = document.getElementById('item-shortcut-url')?.value?.trim() || '';
+    if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
   }
   return '';
 }
@@ -3185,8 +3195,9 @@ async function fetchAndRenderIconSuggestions(customKeyword = '') {
         gridEl.appendChild(gridCard);
       }
 
-      // Auto-select first match if current icon is empty or default
-      if (idx === 0 && (!currentIconVal || currentIconVal === 'default_item_icon.png' || currentIconVal === 'icon.png' || currentIconVal.includes('dashboard-icons/png/'))) {
+      // Auto-select first match only when it's high-confidence (site favicon or exact official match)
+      const isHighConfidence = sug.source === 'favicon' || (sug.source === 'homarr' && sug.exact === true);
+      if (idx === 0 && isHighConfidence && (!currentIconVal || currentIconVal === 'default_item_icon.png' || currentIconVal === 'icon.png')) {
         applySuggestedIcon(sug, true);
       }
     });
@@ -3574,6 +3585,124 @@ function setupSpectrumPicker(type) {
   });
 
   redraw();
+}
+
+function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360;
+  s = Math.max(0, Math.min(100, s)) / 100;
+  l = Math.max(0, Math.min(100, l)) / 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function getRelativeLuminance(hex) {
+  const [r, g, b] = hexToRgb(hex).map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function getContrastRatio(hex1, hex2) {
+  const l1 = getRelativeLuminance(hex1);
+  const l2 = getRelativeLuminance(hex2);
+  const bright = Math.max(l1, l2);
+  const dark = Math.min(l1, l2);
+  return (bright + 0.05) / (dark + 0.05);
+}
+
+// Generate a random, aesthetically harmonious and WCAG-readable (text, bg) color pair
+function generateHarmoniousColorPair(prevBgHex = '') {
+  let prevHue = -1;
+  if (prevBgHex && /^#[0-9a-fA-F]{6}$/.test(prevBgHex)) {
+    const [r, g, b] = hexToRgb(prevBgHex);
+    const [h] = rgbToHsv(r, g, b);
+    prevHue = h;
+  }
+
+  // Pick a fresh hue at least 35 degrees away from the previous background hue
+  let h = Math.floor(Math.random() * 360);
+  if (prevHue >= 0) {
+    for (let i = 0; i < 10; i++) {
+      const diff = Math.min(Math.abs(h - prevHue), 360 - Math.abs(h - prevHue));
+      if (diff >= 35) break;
+      h = Math.floor(Math.random() * 360);
+    }
+  }
+
+  const randRange = (min, max) => min + Math.random() * (max - min);
+  const roll = Math.random();
+  let bgColor = '#1e293b';
+  let textColor = '#ffffff';
+
+  if (roll < 0.48) {
+    // Scheme 1: Deep Jewel / Dark Rich Tone + Crisp Tinted Light Text
+    const bgS = randRange(44, 78);
+    const bgL = randRange(18, 32);
+    bgColor = hslToHex(h, bgS, bgL);
+    const textH = h + randRange(-18, 18);
+    const textS = randRange(18, 55);
+    const textL = randRange(93, 98);
+    textColor = hslToHex(textH, textS, textL);
+  } else if (roll < 0.80) {
+    // Scheme 2: Vibrant Brand Mid-tone + Pure Crisp White
+    const bgS = randRange(65, 86);
+    // Keep yellow-green hues slightly deeper so white text remains crisp
+    const maxL = (h >= 45 && h <= 165) ? 40 : 47;
+    const bgL = randRange(34, maxL);
+    bgColor = hslToHex(h, bgS, bgL);
+    textColor = '#ffffff';
+  } else {
+    // Scheme 3: Soft Pastel Card + Deep Analogous Ink
+    const bgS = randRange(58, 84);
+    const bgL = randRange(86, 92);
+    bgColor = hslToHex(h, bgS, bgL);
+    const textH = h + randRange(-15, 15);
+    const textS = randRange(65, 88);
+    const textL = randRange(20, 29);
+    textColor = hslToHex(textH, textS, textL);
+  }
+
+  // Enforce WCAG AA readability (>= 4.8:1)
+  if (getContrastRatio(textColor, bgColor) < 4.8) {
+    const whiteContrast = getContrastRatio('#ffffff', bgColor);
+    const darkContrast = getContrastRatio('#0f172a', bgColor);
+    textColor = whiteContrast >= darkContrast ? '#ffffff' : '#0f172a';
+  }
+
+  return { textColor, bgColor };
+}
+
+function randomizeModalTextIconColors(renderIfTextPresent = true) {
+  const prevBg = document.getElementById('icon-bg-color')?.value || '';
+  const { textColor, bgColor } = generateHarmoniousColorPair(prevBg);
+  updateTextColorUI(textColor);
+  updateBgColorUI(bgColor);
+  if (renderIfTextPresent) {
+    const textVal = (document.getElementById('icon-text-input')?.value || '').trim();
+    if (textVal) {
+      renderTextIconCanvas();
+    }
+  }
+}
+
+function randomizeSettingTextIconColors() {
+  const prevBg = document.getElementById('setting-icon-bg-color')?.value || '';
+  const { textColor, bgColor } = generateHarmoniousColorPair(prevBg);
+  updateSettingTextColorUI(textColor);
+  updateSettingBgColorUI(bgColor);
+  const textVal = (document.getElementById('setting-icon-text-input')?.value || '').trim();
+  if (textVal && typeof renderSettingTextIconCanvas === 'function') {
+    renderSettingTextIconCanvas();
+  }
+  if (typeof checkSettingsDirty === 'function') {
+    checkSettingsDirty();
+  }
 }
 
 function updateTextColorUI(val, updateSpectrum = true) {
@@ -4080,6 +4209,13 @@ function initIconEditor() {
   setupSpectrumPicker('bg');
 
   // Popover toggle buttons
+  const btnRefreshPalette = document.getElementById('btn-refresh-text-colors');
+  if (btnRefreshPalette) {
+    btnRefreshPalette.addEventListener('click', () => {
+      randomizeModalTextIconColors(true);
+    });
+  }
+
   const btnTextTrigger = document.getElementById('btn-text-color-trigger');
   const popoverText = document.getElementById('popover-text-color');
   if (btnTextTrigger && popoverText) {
@@ -4445,6 +4581,13 @@ function initSettingIconEditor() {
   setupSpectrumPicker('setting-bg');
 
   // Popover toggle buttons
+  const btnRefreshSettingPalette = document.getElementById('btn-refresh-setting-text-colors');
+  if (btnRefreshSettingPalette) {
+    btnRefreshSettingPalette.addEventListener('click', () => {
+      randomizeSettingTextIconColors();
+    });
+  }
+
   const btnTextTrigger = document.getElementById('setting-btn-text-color-trigger');
   const popoverText = document.getElementById('setting-popover-text-color');
   if (btnTextTrigger && popoverText) {
@@ -4613,8 +4756,7 @@ function resetDesktopForm() {
 
   const textInput = document.getElementById('icon-text-input');
   if (textInput) textInput.value = '';
-  updateTextColorUI('#ffffff');
-  updateBgColorUI('#1e293b');
+  randomizeModalTextIconColors(false);
   closeColorPopovers();
 
   const urlInput = document.getElementById('icon-url-input');
@@ -4695,50 +4837,6 @@ function openCreateDesktopModalWithPort(port, name, containerName, image) {
   if (elAppName) elAppName.value = defaultAppName;
   state.appNameDirty = false;
   checkAppNameDuplicate();
-
-  // Auto-resolve or recommend official icon from Homarr CDN for Docker containers or port services
-  let iconCandidate = '';
-  if (image) {
-    let imgPart = image.split('/').pop().split(':')[0].split('@')[0];
-    iconCandidate = imgPart;
-  }
-  if (!iconCandidate) {
-    iconCandidate = containerName || name;
-  }
-  if (iconCandidate) {
-    const cleanName = iconCandidate.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[_-]+|[_-]+$/g, '');
-    const genericWords = ['image', 'images', 'icon', 'icons', 'default', 'app', 'apps', 'logo', 'pic', 'picture', 'portal', 'dashboard', 'service', 'server', 'container', 'test'];
-    if (cleanName && !genericWords.includes(cleanName) && !cleanName.startsWith('copy_')) {
-      const cdnUrl = `https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${cleanName}.png`;
-      setIconModalTab('url');
-      const urlInput = document.getElementById('icon-url-input');
-      if (urlInput) urlInput.value = cdnUrl;
-      const imgEl = document.getElementById('icon-preview-img');
-      imgEl.src = cdnUrl;
-      const elIcon = document.getElementById('item-icon');
-      if (elIcon) elIcon.value = cdnUrl;
-      imgEl.onerror = () => {
-        imgEl.src = apiUrl('/default_item_icon.png');
-        if (urlInput) urlInput.value = '';
-        if (elIcon && elIcon.value === cdnUrl) {
-          elIcon.value = '';
-          if (state.desktopItemFormSnapshot) {
-            try {
-              let snapObj = JSON.parse(state.desktopItemFormSnapshot);
-              if (snapObj.iconVal === cdnUrl) {
-                snapObj.iconVal = '';
-                state.desktopItemFormSnapshot = JSON.stringify(snapObj);
-              }
-            } catch (_) {}
-          }
-          if (state.initialModalIcon && state.initialModalIcon.iconVal === cdnUrl) {
-            state.initialModalIcon.iconVal = '';
-            state.initialModalIcon.url = '';
-          }
-        }
-      };
-    }
-  }
 
   const isRemote = state.currentHostId && state.currentHostId !== 'localhost';
   if (isRemote) {
@@ -5651,7 +5749,7 @@ async function handleSaveSettingsManual() {
       state.isSettingsDirty = false;
       const savedName = '把 Docker 放到桌面';
       document.title = `${savedName} - 容器与端口管理`;
-      const ver = state.settings?.version || '1.1.86';
+      const ver = state.settings?.version || '1.1.87';
       const titleEl = document.getElementById('settings-card-title');
       if (titleEl) {
         titleEl.textContent = `v${ver} - 系统设置`;

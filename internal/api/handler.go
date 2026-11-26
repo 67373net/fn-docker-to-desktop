@@ -1637,6 +1637,7 @@ type IconSuggestion struct {
 	Name   string `json:"name"`
 	Title  string `json:"title"`
 	URL    string `json:"url"`
+	Exact  bool   `json:"exact,omitempty"`
 }
 
 // /api/icons/suggest
@@ -1645,59 +1646,71 @@ func (h *Handler) handleSuggestIcons(w http.ResponseWriter, r *http.Request) {
 	image := strings.TrimSpace(r.URL.Query().Get("image"))
 	targetURL := strings.TrimSpace(r.URL.Query().Get("url"))
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
+
+	var (
+		wg              sync.WaitGroup
+		faviconDataURL  string
+		homarrMatches   []desktop.HomarrSearchResult
+	)
+
+	// Run target site favicon fetch and Homarr metadata index search concurrently
+	if targetURL != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if dataURL, err := desktop.FetchFaviconFromURL(ctx, targetURL); err == nil && dataURL != "" {
+				faviconDataURL = dataURL
+			}
+		}()
+	}
+
+	if name != "" || image != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			homarrMatches = desktop.SearchHomarrIcons(ctx, name, image, 12)
+		}()
+	}
+
+	wg.Wait()
 
 	var suggestions []IconSuggestion
 	seenURLs := make(map[string]bool)
 
-	// 1. Homarr / Dashboard Icons
-	var rawCandidates []string
-	if name != "" {
-		rawCandidates = append(rawCandidates, desktop.GetIconCandidates(name)...)
-	}
-	if image != "" {
-		rawCandidates = append(rawCandidates, desktop.GetIconCandidates(image)...)
+	// 1. Target Service Favicon (highest accuracy when service is reachable)
+	if faviconDataURL != "" && !seenURLs[faviconDataURL] {
+		seenURLs[faviconDataURL] = true
+		suggestions = append(suggestions, IconSuggestion{
+			ID:     "favicon-site",
+			Source: "favicon",
+			Badge:  "站点",
+			Name:   "favicon",
+			Title:  "站点图标 (Favicon)",
+			URL:    faviconDataURL,
+			Exact:  true,
+		})
 	}
 
-	seenNames := make(map[string]bool)
-	for _, c := range rawCandidates {
-		c = strings.TrimSpace(strings.ToLower(c))
-		if c == "" || seenNames[c] {
-			continue
-		}
-		seenNames[c] = true
-		cdnURL := fmt.Sprintf("https://fastly.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", c)
-		if !seenURLs[cdnURL] {
-			seenURLs[cdnURL] = true
+	// 2. Homarr / Dashboard Icons (verified via metadata.json index, relevance-ranked)
+	for _, m := range homarrMatches {
+		if !seenURLs[m.URL] {
+			seenURLs[m.URL] = true
 			suggestions = append(suggestions, IconSuggestion{
-				ID:     "homarr-" + c,
+				ID:     "homarr-" + m.ID,
 				Source: "homarr",
 				Badge:  "官方",
-				Name:   c,
-				Title:  c,
-				URL:    cdnURL,
+				Name:   m.ID,
+				Title:  m.Title,
+				URL:    m.URL,
+				Exact:  m.Exact,
 			})
 		}
 	}
 
-	// 2. Target Service Favicon
+	// 3. Domain Favicon for public hostnames
 	if targetURL != "" {
-		if faviconDataURL, err := desktop.FetchFaviconFromURL(ctx, targetURL); err == nil && faviconDataURL != "" {
-			if !seenURLs[faviconDataURL] {
-				seenURLs[faviconDataURL] = true
-				suggestions = append(suggestions, IconSuggestion{
-					ID:     "favicon-site",
-					Source: "favicon",
-					Badge:  "站点",
-					Name:   "favicon",
-					Title:  "站点图标 (Favicon)",
-					URL:    faviconDataURL,
-				})
-			}
-		}
-
-		// 3. Domain Favicon for public hostnames
 		if u, err := url.Parse(targetURL); err == nil && u.Hostname() != "" {
 			host := strings.ToLower(u.Hostname())
 			ip := net.ParseIP(host)
@@ -1718,29 +1731,39 @@ func (h *Handler) handleSuggestIcons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. Local icons matching keywords
-	if h.iconsDir != "" && len(seenNames) > 0 {
-		if entries, err := os.ReadDir(h.iconsDir); err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-					continue
+	// 4. Local icons matching high-signal keywords (avoid short substring false positives)
+	if h.iconsDir != "" && (name != "" || image != "") {
+		var localTokens []string
+		for _, raw := range []string{image, name} {
+			for _, c := range desktop.GetIconCandidates(raw) {
+				if len(c) >= 3 {
+					localTokens = append(localTokens, c)
 				}
-				lowerName := strings.ToLower(entry.Name())
-				for candidate := range seenNames {
-					if strings.Contains(lowerName, candidate) {
-						localURL := "/icons/" + entry.Name()
-						if !seenURLs[localURL] {
-							seenURLs[localURL] = true
-							suggestions = append(suggestions, IconSuggestion{
-								ID:     "local-" + entry.Name(),
-								Source: "local",
-								Badge:  "本地",
-								Name:   entry.Name(),
-								Title:  entry.Name(),
-								URL:    localURL,
-							})
+			}
+		}
+		if len(localTokens) > 0 {
+			if entries, err := os.ReadDir(h.iconsDir); err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "copy_") {
+						continue
+					}
+					lowerName := strings.ToLower(entry.Name())
+					for _, tok := range localTokens {
+						if strings.Contains(lowerName, tok) {
+							localURL := "/icons/" + entry.Name()
+							if !seenURLs[localURL] {
+								seenURLs[localURL] = true
+								suggestions = append(suggestions, IconSuggestion{
+									ID:     "local-" + entry.Name(),
+									Source: "local",
+									Badge:  "本地",
+									Name:   entry.Name(),
+									Title:  entry.Name(),
+									URL:    localURL,
+								})
+							}
+							break
 						}
-						break
 					}
 				}
 			}

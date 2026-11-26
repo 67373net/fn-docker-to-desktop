@@ -3289,5 +3289,24 @@ tr.row-updating {
   }
 }
 
+.btn-refresh-palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.btn-refresh-palette svg {
+  transition: transform 0.35s ease;
+}
+
+.btn-refresh-palette:hover svg {
+  transform: rotate(90deg);
+}
+
+
 
 
